@@ -41,6 +41,7 @@ const LABEL: Record<ExploreChipKey, string> = {
   genres: 'Genres',
   radio: 'Radio',
   history: 'Recently played',
+  audiobooks: 'Audiobooks',
 };
 
 function ChipRow({ chip, disabled }: { chip: ExploreChip; disabled?: boolean }) {

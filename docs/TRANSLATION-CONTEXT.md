@@ -6,6 +6,7 @@
      code, so both are fixed at the source and this page follows. -->
 
 Every string the app can show, under the screen it shows up on. 664 of them.
+Every string the app can show, under the screen it shows up on. 669 of them.
 The second column is only filled in where the English is ambiguous on its own
 If one tripped you up and the column is empty, that is worth telling us, and
 the answer goes into `src/i18n/context.jsonc` where the next translator of the
@@ -19,11 +20,13 @@ you are actually typing into, which is easier than reading it here.
 
 | String | What it is |
 | --- | --- |
-| `Album` | In search results, the little word under a result saying what kind of thing it is |
+| `Audiobook` |  |
+| `Continue playing` |  |
 | `Couldn't load the album.` | Error on the screen, with a Retry button |
 | `Disc {n}` | Heading over the songs of one disc of a multi-disc album. `{n}` is its number |
 | `Find in playlist` | Placeholder of the search box hidden above a tracklist, for finding a song within it |
 | `More from {artist}` | Heading under an album: their other records. `{artist}` is the name |
+| `No saved audiobook progress yet.` |  |
 | `View cover` | The same as `View image`, for album and playlist artwork |
 
 ## Anywhere in the app
@@ -126,7 +129,6 @@ you are actually typing into, which is easier than reading it here.
 | `All songs` |  |
 | `Appears on` | Albums the artist appears on: features, compilations |
 | `Audio dramas` | Shelf heading: a play performed for the ear, with several voices rather than one narrator. Radio drama is the same thing where that name is the familiar one |
-| `Audiobooks` | Shelf heading: a book read aloud by one narrator, no music |
 | `Broadcasts` | Shelf heading: records of something first put out on radio, television or as a podcast |
 | `Compilations` | Shelf heading: records collecting older recordings, a “best of” or a various-artists collection |
 | `Couldn't load the artist.` | Error on the screen, with a Retry button |
@@ -158,7 +160,6 @@ you are actually typing into, which is easier than reading it here.
 | --- | --- |
 | `Appears on` | Albums the artist appears on: features, compilations |
 | `Audio dramas` | Shelf heading: a play performed for the ear, with several voices rather than one narrator. Radio drama is the same thing where that name is the familiar one |
-| `Audiobooks` | Shelf heading: a book read aloud by one narrator, no music |
 | `Broadcasts` | Shelf heading: records of something first put out on radio, television or as a podcast |
 | `Compilations` | Shelf heading: records collecting older recordings, a “best of” or a various-artists collection |
 | `Couldn't load the artist.` | Error on the screen, with a Retry button |
@@ -181,6 +182,15 @@ you are actually typing into, which is easier than reading it here.
 | --- | --- |
 | `No songs here yet` |  |
 | `Try exploring another artist.` |  |
+
+## Audiobooks
+
+| String | What it is |
+| --- | --- |
+| `Audiobooks` | Shelf heading: a book read aloud by one narrator, no music |
+| `No audiobooks yet` |  |
+| `Records whose genre says audiobook, spoken word or audio drama show up here.` |  |
+| `Your downloaded music is in Library.` |  |
 
 ## Browse › Albums
 
@@ -426,7 +436,6 @@ you are actually typing into, which is easier than reading it here.
 | `Delete “{name}”?` | Dialog title. `{name}` is the playlist or station |
 | `Delete playlist` | Menu action, in red |
 | `Description` | The playlist's own description: what whoever made it wrote about it |
-| `Done` | The button that leaves drag-to-reorder, or accepts a fine-tuned number |
 | `Edit playlist` | Menu action, and the title of the sheet it opens |
 | `Find in playlist` | Placeholder of the search box hidden above a tracklist, for finding a song within it |
 | `Name` | The Name field when editing a playlist or a station |
@@ -553,6 +562,18 @@ you are actually typing into, which is easier than reading it here.
 | `What's new` | Opens what changed in this version |
 | `You're on the latest version` | Answer when that check finds nothing newer |
 | `Your preferences will go back to their defaults. Your language stays.` | The line under that dialog |
+
+## Settings › Audiobooks
+
+| String | What it is |
+| --- | --- |
+| `Audiobook progress deleted` |  |
+| `Audiobooks` | Shelf heading: a book read aloud by one narrator, no music |
+| `Continue starts this far back from where you stopped. Long enough, and it reaches into the chapters before it.` |  |
+| `Delete audiobook progress` |  |
+| `Remember where you stopped in audiobooks so you can continue later. Stored on this device only.` |  |
+| `Rewind on resume` |  |
+| `Save audiobook progress` |  |
 
 ## Settings › Diagnostics
 
@@ -745,7 +766,6 @@ you are actually typing into, which is easier than reading it here.
 | `Keep Home, Search and Library at the bottom of every screen. Holding the back arrow goes back to the one you came from either way.` |  |
 | `Language` |  |
 | `Navigation` | Section header: how you move around the app |
-| `Off` | A setting value meaning disabled (crossfade, normalization…) |
 | `Open the app on` | Which tab the app opens on, and comes back to after a while away |
 | `Play next` | Action: put this song right after the one playing, without clearing the rest |
 | `Quick grid` | The grid of shortcut tiles on Home |
@@ -772,6 +792,7 @@ you are actually typing into, which is easier than reading it here.
 | `“Original” is the file exactly as it is on the server, with nothing transcoded. A lower bitrate saves data and may cost audible quality.` |  |
 | `A downloaded song normally plays from the file, which costs no data. Choose otherwise if your downloads are smaller copies and you would rather stream the good one when you can. Without a connection the file is always used.` |  |
 | `Always` | A value of when a downloaded song is played from the file instead of streamed |
+| `Audiobooks` | Shelf heading: a book read aloud by one narrator, no music |
 | `Automatic` | A value of `Normalize volume`: let the app decide between per track and per album |
 | `Autoplay` | When the queue runs out, keep playing with similar songs instead of stopping |
 | `By album` | Volume normalization (ReplayGain) mode: even out loudness album by album |
@@ -780,7 +801,6 @@ you are actually typing into, which is easier than reading it here.
 | `Codec to transcode to. At “Original” quality nothing is transcoded.` |  |
 | `Codec to transcode to. Your server must support it.` |  |
 | `Crossfade` | One song fading into the next |
-| `Done` | The button that leaves drag-to-reorder, or accepts a fine-tuned number |
 | `Equalizer` |  |
 | `Evens out loudness between songs using your files' ReplayGain tags.` | The line under “Normalize volume”, explaining it |
 | `Keep playing similar songs when your queue ends. A mix you start yourself always does, even with this off.` | The line under “Autoplay”, explaining it |
@@ -790,7 +810,6 @@ you are actually typing into, which is easier than reading it here.
 | `No` | A setting value meaning none or zero, not the answer to a question: no crossfade, no seek buttons |
 | `Normalize volume` |  |
 | `Not used` | Replaces the codec's value when that network's quality is `Original`. Nothing is transcoded then, so the codec setting has nothing to do and the row is greyed out |
-| `Off` | A setting value meaning disabled (crossfade, normalization…) |
 | `On mobile data only` | A value of when a downloaded song is played from the file instead of streamed |
 | `Only if it is the original file` | One of the values of “Play downloaded songs from the phone” |
 | `Original` | Quality option: the file exactly as it is on the server, nothing transcoded. It also appears in quotes inside two descriptions on those screens, so use the same wording in all three |
@@ -799,6 +818,7 @@ you are actually typing into, which is easier than reading it here.
 | `Pre-amp` | A gain in decibels applied on top of normalization, for when everything ends up too quiet |
 | `Preload upcoming tracks` |  |
 | `Quality & playback` |  |
+| `Remembering where you left a book.` | The line under “Audiobooks”, explaining it |
 | `Request the next few tracks ahead of time so they start instantly. Helps with proxy servers like Octo-Fiesta or slow sources that fetch tracks on demand.` | The line under “Preload upcoming tracks”, explaining it |
 | `Scrobbling` | Reporting a song as played, to the user's own server and from there to Last.fm or ListenBrainz. The title of its own screen and the row that opens it. The word comes from Last.fm and most languages keep it; use whatever those services call it in yours if they do |
 | `Songs blend into each other when one ends.` | The line under “Crossfade”, explaining it |
@@ -892,9 +912,7 @@ you are actually typing into, which is easier than reading it here.
 
 | String | What it is |
 | --- | --- |
-| `Done` | The button that leaves drag-to-reorder, or accepts a fine-tuned number |
 | `How far into a song it counts as played. Whichever of the two comes first.` | At the top of the `Scrobbling` screen, over the two rows below it |
-| `Off` | A setting value meaning disabled (crossfade, normalization…) |
 | `Part of the song` | How much of a song must have played before it counts, as a percentage. One of the two scrobble rules, and it can be `Off` |
 | `Restore defaults` | Button at the end of the `Scrobbling` screen, putting both rules back to what they came as |
 | `Scrobbling` | Reporting a song as played, to the user's own server and from there to Last.fm or ListenBrainz. The title of its own screen and the row that opens it. The word comes from Last.fm and most languages keep it; use whatever those services call it in yours if they do |
@@ -984,6 +1002,7 @@ you are actually typing into, which is easier than reading it here.
 | `Delete downloads` | Menu action: delete the downloaded files of everything here |
 | `Descending` | Sort option: the order of a list |
 | `Direction` | Sort sheet: the ascending vs descending toggle. Not a compass direction |
+| `Done` | The button that leaves drag-to-reorder, or accepts a fine-tuned number |
 | `Download` | The confirm button of the download dialog, and what the screen reader calls the download button. A verb |
 | `Download “{name}”?` | Dialog title. `{name}` is an album, artist or playlist |
 | `Download stopped` | Toast: the download was stopped part way |
@@ -1000,6 +1019,7 @@ you are actually typing into, which is easier than reading it here.
 | `No results for “{q}”` | Empty state. `{q}` is what was typed |
 | `Not available offline` | This one is not downloaded, so it cannot play without a connection |
 | `Nothing here is downloaded` | Toast when playing something that is not downloaded, offline |
+| `Off` | A setting value meaning disabled (crossfade, normalization…) |
 | `Offline` | The toast shown when the app falls into offline mode by itself, and the badge that says it is in it |
 | `Pause` | Read out by the screen reader for the pause button. A verb |
 | `Play` | Read out by the screen reader for the play button. A verb |
