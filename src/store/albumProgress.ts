@@ -19,49 +19,145 @@ const WRITE_EVERY_SEC = 30;
  * Genres that mean the record is something read aloud rather than music.
  *
  * Matched whole, never as a substring of something longer, and only against
- * genre fields. That is a deliberate retreat from where this started: a
- * substring search that also read titles and album names makes Thriller an
- * audiobook, My Beautiful Dark Twisted Fantasy an audiobook and any track
- * called Chapter 24 a chapter of one. Being wrong here is not a cosmetic
- * mislabel, since it takes over the play button and switches off the mix.
+ * genre fields. This must stay explicit and medium-specific: story genres
+ * (thriller, fantasy, crime) are not audiobook genres and must not trigger
+ * audiobook mode.
  *
  * Spellings are normalized first (see `normGenre`), so the umlauts in Hörbuch
  * and Hörspiel are already gone by the time they are looked up.
  */
 const AUDIOBOOK_GENRES = new Set([
+  // English
   'audiobook',
   'audiobooks',
   'audio book',
+  'audio books',
+  'book on tape',
+  'books on tape',
+  'talking book',
+  'talking books',
+  'narrated book',
+  'narrated books',
+  'narrated audiobook',
+  'narrated audiobooks',
+  'audio novel',
+  'audio novels',
+  'audio fiction',
   'audio drama',
+  'audio dramas',
   'audio theatre',
+  'audio theatre drama',
   'audio theater',
+  'audio theater drama',
   'radio play',
+  'radio plays',
   'radio drama',
+  'radio dramas',
   'radioplay',
-  'spoken',
-  'spoken word',
-  'spokenword',
-  'speech',
-  'narration',
-  'storytelling',
-  'podcast',
-  // German, which is where this came from: a Hörbuch is a book read aloud and
-  // a Hörspiel the dramatised kind, and neither is shelved with music.
+  'dramatized audiobook',
+  'dramatized audiobooks',
+  // German
   'horbuch',
+  'horbucher',
   'hoerbuch',
+  'hoerbuecher',
   'horspiel',
+  'horspiele',
   'hoerspiel',
-  // The same word in the other languages the app is likely to meet.
+  'hoerspiele',
+  'lesung',
+  'lesungen',
+  'bucher zum horen',
+  'buch zum horen',
+  // Spanish
   'audiolibro',
+  'audiolibros',
+  'libro hablado',
+  'libros hablados',
+  'libro narrado',
+  'libros narrados',
+  'drama radiofonico',
+  'radioteatro',
+  'radionovela',
+  // Catalan
+  'audiollibre',
+  'audiollibres',
+  'llibre parlat',
+  // Portuguese
   'audiolivro',
+  'audiolivros',
+  'livro narrado',
   'livre audio',
+  'livres audio',
   'livro falado',
+  'livros falados',
+  'drama radiofonico',
+  'radioteatro',
+  // French
+  'livre parle',
+  'livres parles',
+  'roman audio',
+  'romans audio',
+  'fiction sonore',
+  'drame radiophonique',
+  // Italian
+  'audiolibri',
+  'libro parlato',
+  'libri parlati',
+  'romanzo audio',
+  'drammi radiofonici',
+  // Dutch / Flemish
   'luisterboek',
+  'luisterboeken',
+  'gesproken boek',
+  'gesproken boeken',
+  'hoorspel',
+  'hoorspelen',
+  // Scandinavian
   'ljudbok',
+  'ljudbocker',
+  'talbok',
+  'radioteater',
   'lydbok',
+  'lydboker',
+  'horespill',
   'lydbog',
+  'lydboger',
+  'horspil',
+  // Finnish / Estonian
+  'aanikirja',
+  'aanikirjat',
+  'kuunnelma',
+  'kuunnelmat',
+  'heliraamat',
+  'heliraamatud',
+  // Slavic (Latin transliterations where commonly seen in tags)
   'audiokniha',
+  'audioknihy',
+  'zvukova kniha',
+  'zvukove knihy',
+  'audiokniga',
+  'kniga audio',
+  // Romanian / Hungarian / Turkish
+  'carte audio',
+  'carti audio',
+  'hangoskonyv',
+  'hangos konyv',
   'sesli kitap',
+  'sesli kitaplar',
+  // Greek (transliterated)
+  'ichitiko vivlio',
+  'ixitiko vivlio',
+  // East Asian labels commonly written in Latin tags
+  'ting shu',
+  'you sheng shu',
+  'yuseisho',
+  'audiobukku',
+  // Generic labels that still denote spoken long-form content (medium, not story)
+  'spoken audio',
+  'spoken literature',
+  'spokenword book',
+  'spokenword audiobook',
 ]);
 
 /**
