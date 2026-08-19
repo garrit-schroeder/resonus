@@ -53,3 +53,4 @@ modules/*/android/.kotlin/
 
 # translation work files (pnpm i18n:scaffold)
 /translate-*.jsonc
+build-myrelease-arm64.sh
