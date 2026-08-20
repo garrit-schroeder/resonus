@@ -1085,7 +1085,7 @@ const DEFAULTS = {
   // nowhere, and where it does draw it is the tag the file was given.
   showExplicitTag: true,
   autoplaySimilar: true,
-  saveAudiobookProgress: true,
+  saveAudiobookProgress: false,
   audiobookContinueRewindSec: AUDIOBOOK_CONTINUE_REWIND_DEFAULT,
   // Off: measuring is for somebody who is being asked to measure. Everyone
   // else was paying for a report they will never send.
