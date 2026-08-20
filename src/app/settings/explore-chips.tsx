@@ -14,6 +14,8 @@ import ReorderableList, {
 } from 'react-native-reorderable-list';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { centredPadding, useScreenSize } from '@/hooks/useScreenSize';
+
 import { ScreenHeader, settingsStyles, SwitchList } from '@/components/SettingsUI';
 import { useLocalProfile } from '@/hooks/useLocalProfile';
 import { useT } from '@/i18n';
@@ -91,6 +93,7 @@ export default function ExploreChipsSettings() {
   // mounted while you are on another one, out of reach of anything else.
   useTheme();
   const bottomPad = useScreenBottomPadding();
+  const { width } = useScreenSize();
   const t = useT();
   const offline = useAuthStore((s) => s.offline);
   const local = useLocalProfile();
@@ -134,7 +137,12 @@ export default function ExploreChipsSettings() {
           );
           setExploreChips(next);
         }}
-        contentContainerStyle={[styles.list, { paddingBottom: bottomPad }]}
+        contentContainerStyle={[
+          styles.list,
+          // Centred once the screen is wider than a list wants to be, like
+          // every other settings screen (#131).
+          { paddingBottom: bottomPad, paddingHorizontal: centredPadding(width, spacing.lg) },
+        ]}
       />
     </SafeAreaView>
   );

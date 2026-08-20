@@ -4,7 +4,12 @@
  * from the server or the local catalog based on the mode (online/offline).
  */
 import { profileScopeId, useAuthStore } from '@/store/auth';
-import { getDownloadShelf, getDownloadsCatalog, useDownloads } from '@/store/downloads';
+import {
+  getDownloadShelf,
+  getDownloadsCatalog,
+  noteDownloadedArtist,
+  useDownloads,
+} from '@/store/downloads';
 import {
   enabledFolderIds,
   profileKeyOf,
@@ -767,10 +772,24 @@ export function getArtist(id: string): Promise<{ artist: Subsonic.Artist; albums
     if (serverOffline()) return mirrorArtist(id);
     return Local.getArtist(id);
   }
-  return Subsonic.getArtist(auth(), id).then((res) => {
-    useLibraryMirror.getState().saveArtist(id, res.artist, res.albums);
-    return res;
-  });
+  return Subsonic.getArtist(auth(), id)
+    .catch(async (e: unknown) => {
+      // An id the server does not know, which happens with an artist opened
+      // from something that was written down offline: down there they are
+      // keyed by their name, and that key means nothing up here. The catalog
+      // holds both, so this is one lookup away from being the right artist
+      // rather than an error message (see `Local.serverArtistId`).
+      const mapped = await Local.serverArtistId(id);
+      if (!mapped || mapped === id) throw e;
+      return Subsonic.getArtist(auth(), mapped);
+    })
+    .then((res) => {
+      useLibraryMirror.getState().saveArtist(res.artist.id, res.artist, res.albums);
+      // Their picture, for the downloads, while there is a connection to get
+      // it with. Only if their music is on the phone; it decides that itself.
+      void noteDownloadedArtist(auth(), res.artist);
+      return res;
+    });
 }
 
 async function mirrorArtist(

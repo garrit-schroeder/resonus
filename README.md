@@ -47,13 +47,13 @@ Also available on [Obtainium](https://apps.obtainium.imranr.dev/redirect?r=obtai
 - **Make it yours**: reorder and show/hide Home sections and explore chips, accent colors, app fonts, configurable swipe and ⋯ menu actions
 - **Android Auto** (experimental)
 - **Queue sync across devices**
-- **In 7 languages**: English, Spanish, German, Catalan, Russian, Italian, Simplified Chinese
+- **In 8 languages**: English, Spanish, German, Catalan, Russian, Italian, Simplified Chinese, Ukrainian
 
 ## FAQ
 
-The questions that come up most often, about Android Auto, casting or offline
-mode, are answered in [docs/FAQ.md](./docs/FAQ.md). The app links to it too,
-from Settings › About.
+The questions that come up most often are answered in
+[docs/FAQ.md](./docs/FAQ.md), starting with how to get Resonus to show up in
+Android Auto. The app links to it too, from Settings › About.
 
 ## Translations
 
@@ -72,6 +72,7 @@ Thanks to the people who have translated the app:
 | Русский | [ztx-lyghters](https://github.com/ztx-lyghters) |
 | Italiano | [Anakin-bb8](https://github.com/Anakin-bb8) |
 | 简体中文 | [xcdmrCHP](https://github.com/xcdmrCHP) |
+| Українська | [albedych](https://github.com/albedych) |
 
 ## Community
 
@@ -80,7 +81,7 @@ report bugs, ask questions, or just follow along with development.
 
 ## Contributing
 
-Contributions are welcome! See [CONTRIBUTING.md](./CONTRIBUTING.md) for how to
+Contributions are welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md) for how to
 set up the project, run it on an emulator, and open a pull request.
 
 ## Support

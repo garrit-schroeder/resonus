@@ -64,6 +64,7 @@ import {
 } from '@/theme';
 import { useGridColumns } from '@/hooks/useGridColumns';
 import { useScreenBottomPadding } from '@/hooks/useScreenBottomPadding';
+import { useListPadding } from '@/hooks/useScreenSize';
 import { BackChevron } from '@/components/BackChevron';
 
 const PAGE = 50;
@@ -105,6 +106,8 @@ export default function BrowseSongsScreen() {
   // mounted while you are on another one, out of reach of anything else.
   useTheme();
   const bottomPad = useScreenBottomPadding();
+  // Rows stop growing at a reading measure and centre themselves (#131).
+  const listPad = useListPadding(spacing.lg);
   const t = useT();
   // Through the hook, not straight off `colors`: it is what the light
   // appearance darkens, and what the marked pill and the card ticks repaint on.
@@ -372,7 +375,12 @@ export default function BrowseSongsScreen() {
                 columnWrapperStyle: { gap: GAP },
                 contentContainerStyle: [styles.grid, { paddingBottom: bottomPad }],
               }
-            : { contentContainerStyle: [styles.list, { paddingBottom: bottomPad }] })}
+            : {
+                contentContainerStyle: [
+                  styles.list,
+                  { paddingBottom: bottomPad, paddingHorizontal: listPad },
+                ],
+              })}
           extraData={selectedIds}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
@@ -510,7 +518,7 @@ const styles = themed((colors) => ({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
   },
-  title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '800' },
+  title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '600' },
   // The same width as the back chevron, so the title stays centred.
   headerAction: { width: 26, alignItems: 'flex-end' },
   searchRow: {

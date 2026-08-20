@@ -1,22 +1,22 @@
 /**
  * Spotify-style playback queue, in sections:
- *   · Now playing — the current song (fixed, can't be dragged or removed).
+ *   · Previous — what is behind the cursor (optional setting).
+ *   · Now playing — the current song.
  *   · Next up — manually added items (`queuedCount` block).
  *   · Next from: {source} — the rest of what was playing.
- * Only current and upcoming are shown (the previous ones don't appear).
- * Drag to reorder, remove and clear. Section headers are derived from the
- * position, so they reposition themselves on reorder.
+ * Every row can be dragged and removed, the one playing included (#157).
+ * Section headers are derived from the position, so they reposition themselves
+ * on reorder.
  */
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useRouter } from 'expo-router';
 import { useMemo, useRef, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
-import Animated, { FadeInDown } from 'react-native-reanimated';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import ReorderableList, {
   useReorderableDrag,
   type ReorderableListReorderEvent,
 } from 'react-native-reorderable-list';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { COVER, songCoverUrl } from '@/api/data';
 import { type Song } from '@/api/subsonic';
@@ -25,15 +25,16 @@ import { Dialog } from '@/components/Dialog';
 import { EmptyState } from '@/components/EmptyState';
 import { ExplicitBadge, useExplicitBadge } from '@/components/ExplicitBadge';
 import { SheetModal } from '@/components/SheetModal';
+import { useListPadding } from '@/hooks/useScreenSize';
+import { songsLabel, useT } from '@/i18n';
 import { formatTotalDuration } from '@/lib/format';
+import { haptic } from '@/lib/haptics';
+import { listPerf } from '@/lib/listPerf';
 import { mixSeedOf, SOURCE_FAVORITES, SOURCE_HISTORY, usePlayerStore } from '@/store/player';
 import { usePlaylistPicker } from '@/store/playlistPicker';
 import { useSettings } from '@/store/settings';
 import { useToast } from '@/store/toast';
-import { songsLabel, useT } from '@/i18n';
-import { haptic } from '@/lib/haptics';
 import { colors, fontSize, spacing, themed, useTheme } from '@/theme';
-import { listPerf } from '@/lib/listPerf';
 
 // ReorderableList doesn't support removeClippedSubviews (needs cells mounted
 // to animate the drag); we use the rest of the performance props.
@@ -67,76 +68,49 @@ function ArtistLine({ song }: { song: Song }) {
   );
 }
 
-/** Current song: fixed at the top, highlighted, no controls. */
-function NowPlayingRow({ song }: { song: Song }) {
-  const showListArtwork = useSettings((s) => s.showListArtwork);
-  return (
-    <View style={styles.row}>
-      <View style={styles.main}>
-        {showListArtwork ? (
-          <View style={styles.artwork}>
-            <Cover uri={songCoverUrl(song, COVER.thumb)} size={44} />
-          </View>
-        ) : null}
-        <View style={styles.info}>
-          <Text style={[styles.title, { color: colors.accent }]} numberOfLines={1}>
-            {song.title}
-          </Text>
-          <ArtistLine song={song} />
-        </View>
-      </View>
-      <Ionicons name="volume-medium" size={20} color={colors.accent} />
-    </View>
-  );
-}
-
-/** Row behind the cursor (optional setting): dimmed, tap → jump back to it. */
-function PreviousRow({ item, absIndex }: { item: Song; absIndex: number }) {
-  const jumpTo = usePlayerStore((s) => s.jumpTo);
-  const showListArtwork = useSettings((s) => s.showListArtwork);
-  return (
-    <Pressable style={[styles.row, styles.previous]} onPress={() => jumpTo(absIndex)}>
-      <View style={styles.main}>
-        {showListArtwork ? (
-          <View style={styles.artwork}>
-            <Cover uri={songCoverUrl(item, COVER.thumb)} size={44} />
-          </View>
-        ) : null}
-        <View style={styles.info}>
-          <Text style={styles.title} numberOfLines={1}>
-            {item.title}
-          </Text>
-          <ArtistLine song={item} />
-        </View>
-      </View>
-    </Pressable>
-  );
-}
-
-/** Row for upcoming tracks: can be tapped (skip), dragged and removed. */
-function UpcomingRow({ item, absIndex }: { item: Song; absIndex: number }) {
+/**
+ * A row of the queue: the one playing, one behind the cursor or one ahead. All
+ * three drag and remove the same way (#157); the state only decides how the row
+ * reads and what a tap does.
+ */
+function QueueRow({
+  item,
+  absIndex,
+  state,
+}: {
+  item: Song;
+  absIndex: number;
+  state: 'previous' | 'current' | 'upcoming';
+}) {
   const jumpTo = usePlayerStore((s) => s.jumpTo);
   const removeAt = usePlayerStore((s) => s.removeAt);
   const showListArtwork = useSettings((s) => s.showListArtwork);
   const toast = useToast((s) => s.show);
   const t = useT();
   const drag = useReorderableDrag();
+  const current = state === 'current';
 
   const remove = async () => {
+    // Removing the one playing moves on to the next, which is loud enough on
+    // its own and cannot be undone: `removeAt` returns nothing there.
     const undo = await removeAt(absIndex);
     if (undo) toast(t('Removed from queue'), { label: t('Undo'), run: undo });
   };
 
   return (
-    <View style={styles.row}>
-      <Pressable style={styles.main} onPress={() => jumpTo(absIndex)} onLongPress={() => { haptic('medium'); drag(); }}>
+    <View style={[styles.row, state === 'previous' && styles.previous]}>
+      <Pressable
+        style={styles.main}
+        onPress={current ? undefined : () => jumpTo(absIndex)}
+        onLongPress={() => { haptic('medium'); drag(); }}
+      >
         {showListArtwork ? (
           <View style={styles.artwork}>
             <Cover uri={songCoverUrl(item, COVER.thumb)} size={44} />
           </View>
         ) : null}
         <View style={styles.info}>
-          <Text style={styles.title} numberOfLines={1}>
+          <Text style={[styles.title, current && { color: colors.accent }]} numberOfLines={1}>
             {item.title}
           </Text>
           <ArtistLine song={item} />
@@ -144,6 +118,7 @@ function UpcomingRow({ item, absIndex }: { item: Song; absIndex: number }) {
       </Pressable>
 
       <View style={styles.actions}>
+        {current ? <Ionicons name="volume-medium" size={20} color={colors.accent} /> : null}
         <Pressable hitSlop={6} onPress={() => void remove()}>
           <Ionicons name="close" size={22} color={colors.textSecondary} />
         </Pressable>
@@ -157,6 +132,9 @@ function UpcomingRow({ item, absIndex }: { item: Song; absIndex: number }) {
 
 export default function QueueScreen() {
   useSettings((s) => s.appFont); // re-render when font changes
+  // The queue is a list of songs like any other: centred on a wide screen
+  // rather than one name per 1280 points (#131).
+  const listPad = useListPadding(spacing.lg);
   const t = useT();
   const lang = useSettings((s) => s.language);
   const router = useRouter();
@@ -181,10 +159,19 @@ export default function QueueScreen() {
   const showPrevious = useSettings((s) => s.showPlayedInQueue);
   const current = queue[index] ?? null;
   const upcoming = queue.slice(index + 1);
-  // Everything behind the cursor (setting): its absolute index is its own
-  // position 0..index-1. Not necessarily heard — jumping forward leaves the
-  // skipped ones here too, which is why this isn't called "played".
-  const previous = showPrevious ? queue.slice(0, index) : [];
+  /**
+   * Where the list starts. With the played ones hidden it is the current song;
+   * with them shown it is the whole queue, and then everything behind the
+   * cursor is in the list like anything else, which is what lets it be dragged
+   * and removed (#157). Its absolute index is its own position, so `start` is
+   * all that stands between a list position and a queue one.
+   *
+   * Not necessarily heard, by the way — jumping forward leaves the skipped ones
+   * behind the cursor too, which is why that section isn't called "played".
+   */
+  const start = showPrevious ? 0 : index;
+  // Memoised: `data` changing identity on every render re-renders every row.
+  const rows = useMemo(() => queue.slice(start), [queue, start]);
   /**
    * A stable key per queue entry: its id plus which occurrence of that id it is
    * within the WHOLE queue, so the same song twice still gets distinct keys.
@@ -228,7 +215,7 @@ export default function QueueScreen() {
       : null;
 
   /**
-   * Section header for upcoming row `rel` (or null).
+   * Section header for the row at queue position `abs` (or null).
    *
    * Headers live inside the rows, not as items of their own. That's why the
    * list has no `itemLayoutAnimation`: when a track ends every row shifts, the
@@ -237,13 +224,15 @@ export default function QueueScreen() {
    * itself. Making them real items would mean remapping the drag-to-reorder
    * indices around them.
    */
-  const headerFor = (rel: number): string | null => {
-    if (queuedCount > 0 && rel === 0) return t('Next in queue');
+  const headerFor = (abs: number): string | null => {
+    if (abs === start && start < index) return t('Previous::queue');
+    if (abs === index) return t('Now playing');
+    if (queuedCount > 0 && abs === index + 1) return t('Next in queue');
     // Before the source's: with the queue ending right where the mix starts,
     // both fall on the same row and the one that still applies below it is
     // this one.
-    if (mixHeader && index + 1 + rel === mixStart) return mixHeader;
-    if (rel === queuedCount && contextHeader) return contextHeader;
+    if (mixHeader && abs === mixStart) return mixHeader;
+    if (abs === index + 1 + queuedCount && contextHeader) return contextHeader;
     return null;
   };
 
@@ -308,41 +297,30 @@ export default function QueueScreen() {
       {current ? (
         <ReorderableList
           {...queueListPerf}
-          data={upcoming}
-          keyExtractor={(item, i) => rowKeys[index + 1 + i] ?? `${item.id}-${i}`}
-          ListHeaderComponent={
-            <View>
-              {previous.length > 0 ? (
-                <View>
-                  <SectionHeader title={t('Previous::queue')} />
-                  {previous.map((s, i) => (
-                    <PreviousRow key={rowKeys[i] ?? `${s.id}-${i}`} item={s} absIndex={i} />
-                  ))}
-                </View>
-              ) : null}
-              <SectionHeader title={t('Now playing')} gap={previous.length > 0} />
-              {/* Keyed by song so changing track remounts it and the entrance
-                  plays: it slides up from below, the direction the next song
-                  actually comes from. The rest of the list can't animate — its
-                  keys carry the position, so every row is rebuilt on advance. */}
-              <Animated.View key={current.id} entering={FadeInDown.duration(240)}>
-                <NowPlayingRow song={current} />
-              </Animated.View>
-            </View>
-          }
+          data={rows}
+          // The cursor is not in `data`: without this, advancing a track would
+          // leave the accent and the speaker on the row that just ended.
+          extraData={index}
+          keyExtractor={(item, i) => rowKeys[start + i] ?? `${item.id}-${i}`}
           renderItem={({ item, index: rel }) => {
-            const header = headerFor(rel);
+            const abs = start + rel;
+            const header = headerFor(abs);
             return (
               <View style={styles.cell}>
-                {header ? <SectionHeader title={header} gap /> : null}
-                <UpcomingRow item={item} absIndex={index + 1 + rel} />
+                {/* No gap above the first one: it is already at the top. */}
+                {header ? <SectionHeader title={header} gap={abs !== start} /> : null}
+                <QueueRow
+                  item={item}
+                  absIndex={abs}
+                  state={abs === index ? 'current' : abs < index ? 'previous' : 'upcoming'}
+                />
               </View>
             );
           }}
           onReorder={({ from, to }: ReorderableListReorderEvent) => {
-            moveTrack(index + 1 + from, index + 1 + to);
+            moveTrack(start + from, start + to);
           }}
-          contentContainerStyle={styles.list}
+          contentContainerStyle={[styles.list, { paddingHorizontal: listPad }]}
         />
       ) : (
         <View style={styles.emptyWrap}>
@@ -415,7 +393,7 @@ const styles = themed((colors) => ({
   headerAction: { width: 28, alignItems: 'center' },
   headerTitle: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
   headerSub: { color: colors.textSecondary, fontSize: fontSize.xs, marginTop: 2 },
-  list: { flexGrow: 1, paddingHorizontal: spacing.lg, paddingBottom: spacing.xl },
+  list: { flexGrow: 1, paddingBottom: spacing.xl },
   emptyWrap: { flex: 1, justifyContent: 'center' },
   sectionHeader: {
     color: colors.textSecondary,

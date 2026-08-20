@@ -27,7 +27,7 @@ import { useDownloads } from '@/store/downloads';
 import { useNetworkType } from '@/store/networkType';
 import { useSettings } from '@/store/settings';
 import { useSongInfo } from '@/store/songInfo';
-import { fontSize, radius, spacing, themed } from '@/theme';
+import { fontSize, radius, SHEET_MAX_WIDTH, spacing, themed } from '@/theme';
 import { Cover } from './Cover';
 import { CoverViewer } from './CoverViewer';
 
@@ -287,9 +287,11 @@ const styles = themed((colors) => ({
   backdrop: { ...StyleSheet.absoluteFill, backgroundColor: colors.backdrop },
   sheet: {
     position: 'absolute',
-    left: 0,
-    right: 0,
     bottom: 0,
+    // Centred and no wider than a sheet wants to be (#131).
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: SHEET_MAX_WIDTH,
     backgroundColor: colors.surface,
     borderTopLeftRadius: radius.lg,
     borderTopRightRadius: radius.lg,

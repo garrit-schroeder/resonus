@@ -148,7 +148,7 @@ const styles = themed((colors) => ({
     padding: spacing.xl,
     gap: spacing.md,
   },
-  title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '800' },
+  title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '600' },
   message: { color: colors.textSecondary, fontSize: fontSize.md },
   input: {
     backgroundColor: colors.surface,

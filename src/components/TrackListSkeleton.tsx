@@ -4,7 +4,7 @@
  * over an empty screen.
  */
 import { useEffect } from 'react';
-import { Dimensions, View } from 'react-native';
+import { View } from 'react-native';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -14,15 +14,19 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { radius, spacing, themed } from '@/theme';
+import { useScreenSize } from '@/hooks/useScreenSize';
 import { BackButton } from './BackButton';
 
-// Same cover art and top bar as TrackListView so the skeleton → content
-// transition doesn't jump.
-const COVER = Math.min(Dimensions.get('window').width * 0.58, 250);
+// Same top bar as TrackListView so the skeleton → content transition doesn't
+// jump. The cover is the same size too, and worked out the same way: measured
+// while rendering, or the placeholder is the size of a screen nobody is
+// looking at any more (#131).
 const TOPBAR_H = 48;
 
 export function TrackListSkeleton() {
   const insets = useSafeAreaInsets();
+  const { width, height } = useScreenSize();
+  const cover = Math.round(Math.min(width * 0.58, height * 0.4, 250));
   const pulse = useSharedValue(1);
   useEffect(() => {
     pulse.value = withRepeat(withTiming(0.45, { duration: 700 }), -1, true);
@@ -38,7 +42,7 @@ export function TrackListSkeleton() {
         style={[styles.content, { paddingTop: insets.top + TOPBAR_H + spacing.md }, pulseStyle]}
       >
         <View style={styles.coverWrap}>
-          <View style={styles.cover} />
+          <View style={[styles.cover, { width: cover, height: cover }]} />
         </View>
         <View style={styles.title} />
         <View style={styles.meta} />
@@ -70,7 +74,7 @@ const styles = themed((colors) => {
     root: { flex: 1, backgroundColor: colors.background },
     content: { paddingHorizontal: spacing.lg },
     coverWrap: { alignItems: 'center', marginBottom: spacing.lg },
-    cover: { ...block, width: COVER, height: COVER, borderRadius: radius.md },
+    cover: { ...block, borderRadius: radius.md },
     title: { ...block, height: 24, width: '60%', marginBottom: spacing.md },
     meta: { ...block, height: 12, width: '35%' },
     actions: {

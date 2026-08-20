@@ -11,6 +11,8 @@ import ReorderableList, {
 } from 'react-native-reorderable-list';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { centredPadding, useScreenSize } from '@/hooks/useScreenSize';
+
 import { ScreenHeader, settingsStyles } from '@/components/SettingsUI';
 import { useT } from '@/i18n';
 import { haptic } from '@/lib/haptics';
@@ -79,6 +81,7 @@ export default function HomeSectionsSettings() {
   // mounted while you are on another one, out of reach of anything else.
   useTheme();
   const bottomPad = useScreenBottomPadding();
+  const { width } = useScreenSize();
   const t = useT();
   const offline = useAuthStore((s) => s.offline);
   const homeSections = useSettings((s) => s.homeSections);
@@ -107,7 +110,12 @@ export default function HomeSectionsSettings() {
           );
           setHomeSections(next);
         }}
-        contentContainerStyle={[styles.list, { paddingBottom: bottomPad }]}
+        contentContainerStyle={[
+          styles.list,
+          // Centred once the screen is wider than a list wants to be, like
+          // every other settings screen (#131).
+          { paddingBottom: bottomPad, paddingHorizontal: centredPadding(width, spacing.lg) },
+        ]}
       />
     </SafeAreaView>
   );

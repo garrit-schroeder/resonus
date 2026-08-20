@@ -1,6 +1,6 @@
 # Translating Resonus
 
-Thanks for helping translate Resonus! If anything here is unclear, open an issue
+Thanks for helping translate Resonus. If anything here is unclear, open an issue
 or ask on [Discord](https://discord.gg/pecE8MTPVr).
 
 ## How it works
@@ -220,3 +220,4 @@ missing, so it is much better said early than translated around.
 | Русский | [ztx-lyghters](https://github.com/ztx-lyghters) |
 | Italiano | [Anakin-bb8](https://github.com/Anakin-bb8) |
 | 简体中文 | [xcdmrCHP](https://github.com/xcdmrCHP) |
+| Українська | [albedych](https://github.com/albedych) |

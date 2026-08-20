@@ -728,6 +728,17 @@ export function registerCover(id: string, uri?: string) {
   if (uri && !coverIndex.has(id)) coverIndex.set(id, uri);
 }
 
+/**
+ * The same, for a picture that is meant to replace whatever was registered
+ * first. The index is first come first served on purpose — a scan should not
+ * undo a download — so taking a place that is already filled has to say so.
+ * An artist's own picture arriving where an album cover was standing in for it
+ * is the case this exists for.
+ */
+export function replaceCover(id: string, uri?: string) {
+  if (uri) coverIndex.set(id, uri);
+}
+
 export function localCoverUrl(id: string | undefined): string | undefined {
   if (!id) return undefined;
   // A playlist's own uploaded cover already arrives as a file URI.

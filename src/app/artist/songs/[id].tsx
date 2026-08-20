@@ -44,6 +44,7 @@ import { TrackRow } from '@/components/TrackRow';
 import { useAccent } from '@/hooks/useAccent';
 import { useDownloadMessage } from '@/hooks/useDownloadMessage';
 import { useScreenBottomPadding } from '@/hooks/useScreenBottomPadding';
+import { useListPadding } from '@/hooks/useScreenSize';
 import { useSongSort } from '@/hooks/useSongSort';
 import { songsLabel, useT } from '@/i18n';
 import { splitArtistAlbums } from '@/lib/artistAlbums';
@@ -78,6 +79,8 @@ export default function ArtistSongsScreen() {
   // saved settings came back from disk.
   const accent = useAccent();
   const bottomPad = useScreenBottomPadding();
+  // Rows stop growing at a reading measure and centre themselves (#131).
+  const listPad = useListPadding(spacing.lg);
   const canFetch = useAuthStore((s) => !!s.auth || s.offline);
   const offline = useAuthStore((s) => s.offline);
   const lang = useSettings((s) => s.language);
@@ -327,7 +330,10 @@ export default function ArtistSongsScreen() {
         {...listPerf}
         data={shown}
         keyExtractor={(item, i) => `${item.id}-${i}`}
-        contentContainerStyle={[styles.list, { paddingBottom: bottomPad }]}
+        contentContainerStyle={[
+          styles.list,
+          { paddingBottom: bottomPad, paddingHorizontal: listPad },
+        ]}
         extraData={selectedIds}
         renderItem={({ item, index }) => (
           <TrackRow
@@ -460,7 +466,7 @@ const styles = themed((colors) => ({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
   },
-  title: { flex: 1, color: colors.text, fontSize: fontSize.lg, fontWeight: '800' },
+  title: { flex: 1, color: colors.text, fontSize: fontSize.lg, fontWeight: '600' },
   meta: {
     color: colors.textSecondary,
     fontSize: fontSize.sm,

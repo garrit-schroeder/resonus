@@ -19,6 +19,7 @@ import { formatDuration } from '@/lib/format';
 import { currentSong, usePlayerStore } from '@/store/player';
 import { useSettings } from '@/store/settings';
 import { colors, fontSize, spacing, themed, useTheme } from '@/theme';
+import { centredPadding, useScreenSize } from '@/hooks/useScreenSize';
 
 export default function LyricsScreen() {
   // Repaints on a change of appearance or accent: a stack keeps this screen
@@ -26,6 +27,7 @@ export default function LyricsScreen() {
   useTheme();
   const router = useRouter();
   const t = useT();
+  const { width } = useScreenSize();
   const song = usePlayerStore(currentSong);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
   const positionSec = usePlayerStore((s) => s.positionSec);
@@ -84,7 +86,9 @@ export default function LyricsScreen() {
         <View style={{ width: 26 }} />
       </View>
 
-      <View style={styles.body}>
+      {/* Lyrics are a column of text: across a tablet a line runs the whole
+          width and the eye loses the next one on the way back (#131). */}
+      <View style={[styles.body, { paddingHorizontal: centredPadding(width, spacing.xl) }]}>
         {isLoading ? (
           <ActivityIndicator style={{ marginTop: spacing.xxl }} color={colors.text} />
         ) : data?.synced ? (
@@ -166,7 +170,7 @@ const styles = themed((colors) => ({
   titleBox: { flex: 1, alignItems: 'center' },
   title: { color: colors.text, fontSize: fontSize.md, fontWeight: '700' },
   artist: { color: colors.textSecondary, fontSize: fontSize.xs },
-  body: { flex: 1, paddingHorizontal: spacing.xl },
+  body: { flex: 1 },
   plainContent: { paddingVertical: spacing.lg, paddingBottom: spacing.xxl },
   empty: {
     color: colors.textSecondary,

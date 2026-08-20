@@ -6,6 +6,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useLocalSearchParams } from 'expo-router';
+import { useMemo } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
@@ -32,8 +33,10 @@ import { useAuthStore } from '@/store/auth';
 import { useSettings } from '@/store/settings';
 import { colors, fontSize, spacing, SCREEN_BOTTOM_PADDING, themed, useTheme } from '@/theme';
 import { BackChevron } from '@/components/BackChevron';
+import { useAlbumSort } from '@/hooks/useAlbumSort';
 import { useGridColumns } from '@/hooks/useGridColumns';
 import { useScreenBottomPadding } from '@/hooks/useScreenBottomPadding';
+import { useListPadding } from '@/hooks/useScreenSize';
 
 // Same measurements as browsing albums: both are full-screen album grids and
 // cards of different sizes between them would look like an accident. That is
@@ -50,6 +53,8 @@ export default function DiscographyScreen() {
   // mounted while you are on another one, out of reach of anything else.
   useTheme();
   const bottomPad = useScreenBottomPadding();
+  // Rows stop growing at a reading measure and centre themselves (#131).
+  const listPad = useListPadding(spacing.lg);
   const { id, section, group } = useLocalSearchParams<{
     id: string;
     section?: string;
@@ -94,11 +99,20 @@ export default function DiscographyScreen() {
     enabled: canFetch && !!id && !!name,
   });
 
-  const split = splitArtistAlbums(data?.albums ?? [], appearsOn ?? []);
+  const split = useMemo(
+    () => splitArtistAlbums(data?.albums ?? [], appearsOn ?? []),
+    [data?.albums, appearsOn],
+  );
   // Kept to the kind of record the row that opened this was showing, so "Show
   // all" on the EPs answers with the EPs.
-  const own = only ? split.own.filter((a) => releaseGroupOf(a) === only) : split.own;
-  const albums = guestsOnly ? split.guest : own;
+  const listed = useMemo<Album[]>(() => {
+    const own = only ? split.own.filter((a) => releaseGroupOf(a) === only) : split.own;
+    return guestsOnly ? split.guest : own;
+  }, [split, only, guestsOnly]);
+  // One preference for all of these lists rather than one per shelf: they are
+  // the same screen with a different filter, and asking again for the EPs what
+  // was already answered for the albums is asking twice (#147).
+  const { albums, openSort, sortSheet } = useAlbumSort(listed, 'discography');
   /** What this list is, under the artist's name. */
   const what = guestsOnly
     ? t('Appears on')
@@ -123,6 +137,18 @@ export default function DiscographyScreen() {
             </Text>
           ) : null}
         </View>
+        {/* Beside the one that changes the view, since both are about how this
+            same list is laid out. Nothing to order with a single album. */}
+        {albums.length > 1 ? (
+          <Pressable
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel={t('Sort')}
+            onPress={openSort}
+          >
+            <Ionicons name="swap-vertical" size={20} color={colors.textSecondary} />
+          </Pressable>
+        ) : null}
         <Pressable
           hitSlop={10}
           accessibilityRole="button"
@@ -157,7 +183,12 @@ export default function DiscographyScreen() {
                 columnWrapperStyle: { gap: GAP },
                 contentContainerStyle: [styles.gridList, { paddingBottom: bottomPad }],
               }
-            : { contentContainerStyle: [styles.list, { paddingBottom: bottomPad }] })}
+            : {
+                contentContainerStyle: [
+                  styles.list,
+                  { paddingBottom: bottomPad, paddingHorizontal: listPad },
+                ],
+              })}
           renderItem={({ item }: { item: Album }) =>
             grid ? (
               <AlbumCard album={item} width={card} />
@@ -178,6 +209,7 @@ export default function DiscographyScreen() {
         />
       )}
       {gridSheet}
+      {sortSheet}
     </SafeAreaView>
   );
 }

@@ -46,5 +46,5 @@ const styles = themed((colors) => ({
   // `onArtwork`, not `text`: what is behind the label is the card's own colour,
   // which does not follow the appearance. Under the light theme `text` is nearly
   // black, and on these cards that reads between 2.0:1 and 3.9:1.
-  text: { color: colors.onArtwork, fontSize: fontSize.md, fontWeight: '800' },
+  text: { color: colors.onArtwork, fontSize: fontSize.md, fontWeight: '600' },
 }));

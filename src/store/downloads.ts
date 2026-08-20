@@ -34,7 +34,13 @@ import {
   type SubsonicAuth,
 } from '@/api/backend';
 import { tg } from '@/i18n';
-import { hashKey, normKey, registerCover, UNKNOWN_ARTIST } from '@/lib/localLibrary';
+import {
+  hashKey,
+  normKey,
+  registerCover,
+  replaceCover,
+  UNKNOWN_ARTIST,
+} from '@/lib/localLibrary';
 import { serializeLrc } from '@/lib/lrc';
 import { siblingLrcUri } from '@/lib/localLyrics';
 import * as Db from '@/lib/downloadsDb';
@@ -179,7 +185,11 @@ export function activeServerDir(): string | null {
   return auth ? serverDir(auth) : null;
 }
 
-function deriveArtists(albums: DlAlbum[]): (Artist & { coverUri?: string })[] {
+function deriveArtists(
+  albums: DlAlbum[],
+  /** What the catalog knows about them beyond their records: their picture. */
+  known: Map<string, Db.DlArtist>,
+): (Artist & { coverUri?: string })[] {
   const map = new Map<string, Artist & { coverUri?: string }>();
   for (const al of albums) {
     // The key is the untranslatable one (it is the artist's id, see
@@ -193,6 +203,13 @@ function deriveArtists(albums: DlAlbum[]): (Artist & { coverUri?: string })[] {
     } else {
       map.set(key, { id: key, name, coverArt: key, albumCount: 1, coverUri: al.coverUri });
     }
+  }
+  // Their own picture wins over the album cover that was standing in for it.
+  // The stand-in is kept where there is none: a face nobody has is not a
+  // reason to show a grey square instead of the record it belongs to.
+  for (const [key, artist] of map) {
+    const cover = known.get(key)?.coverUri;
+    if (cover) artist.coverUri = cover;
   }
   return Array.from(map.values());
 }
@@ -242,10 +259,10 @@ export async function getDownloadShelf(): Promise<Omit<DownloadsCatalog, 'songs'
     if (!shelfReading || shelfReading.dir !== dir) {
       shelfReading = {
         dir,
-        work: timed('offline shelf', () => Db.allAlbums(dir)).then((albums) => ({
-          albums,
-          artists: deriveArtists(albums),
-        })),
+        work: timed('offline shelf', async () => {
+          const [albums, known] = await Promise.all([Db.allAlbums(dir), Db.allArtists(dir)]);
+          return { albums, artists: deriveArtists(albums, new Map(known.map((a) => [a.id, a]))) };
+        }),
       };
     }
     try {
@@ -267,6 +284,45 @@ export async function hasDownloads(): Promise<boolean> {
   const dir = activeServerDir();
   if (!dir) return false;
   return (await Db.songCount(dir)) > 0;
+}
+
+/**
+ * Keeps a downloaded artist's picture and their server id, from the artist
+ * screen while there is a connection.
+ *
+ * The download itself writes the row, but at that moment all it has is what
+ * the album says about them. This is the other half, and the half that covers
+ * everything downloaded before any of this existed: opening an artist online
+ * is when the app holds the real thing, so that is when it is written down.
+ *
+ * Only for artists whose music is actually on the phone. Everything else that
+ * gets browsed belongs to the library mirror, which has its own rules about
+ * what is worth keeping; the download catalog is about the files.
+ */
+export async function noteDownloadedArtist(auth: SubsonicAuth, artist: Artist): Promise<void> {
+  const dir = activeServerDir();
+  if (!dir || !artist.name) return;
+  const key = normKey(artist.name);
+  try {
+    const known = await Db.artistByServerId(dir, artist.id);
+    // Nothing to add: their picture is already here, under either id.
+    if (known?.coverUri) return;
+    // An indexed lookup, and the answer is almost always no.
+    if ((await Db.artistAlbums(dir, key)).length === 0) return;
+    const art = await downloadArtistArt(auth, dir, key, artist.coverArt ?? artist.id);
+    await Db.saveArtists(dir, [
+      { id: key, name: artist.name, serverId: artist.id, coverUri: art?.uri, dlBytes: art?.bytes },
+    ]);
+    // The shelf in memory was built before this, and the cover index already
+    // has the album that was standing in for them. Without both of these the
+    // picture only turns up on the next start, which is the bug this is fixing.
+    if (art) {
+      replaceCover(key, art.uri);
+      resetCatalogCache();
+    }
+  } catch {
+    // Best effort, like the covers: the artist screen has already been drawn.
+  }
 }
 
 /** Has this album got anything downloaded? One row, not the whole library. */
@@ -394,17 +450,81 @@ function toLocalAlbum(album: Album, coverUri?: string, dlBytes?: number): DlAlbu
  */
 async function mirrorAlbumTracklists(auth: SubsonicAuth, songs: Song[]): Promise<void> {
   const mirror = useLibraryMirror.getState();
+  const dir = activeServerDir();
   const ids = [...new Set(songs.map((s) => s.albumId).filter((id): id is string => !!id))];
+  let refreshed = false;
   for (const id of ids) {
     // Already mirrored: asked one at a time, which is a row lookup.
     if (await mirror.albumDetail(id)) continue;
     try {
       const res = await getAlbum(auth, id);
       mirror.saveAlbum(id, res.album, res.songs, useDownloads.getState());
+      if (dir) refreshed = (await refreshCatalogAlbum(auth, dir, res.album)) || refreshed;
     } catch {
       // best-effort: if the album can't be requested, it stays unmirrored.
     }
   }
+  // The catalog in memory was read before any of that: this runs after the
+  // group has finished and its own invalidation has already gone by.
+  if (refreshed) resetCatalogCache();
+}
+
+/**
+ * Puts the server's own album over the one the catalog wrote down, when the
+ * catalog only had a stand-in.
+ *
+ * Downloading a playlist never sees an album: each row is a song, and the
+ * album that goes into the catalog is assembled from what the song says (see
+ * `albumFromSong`). That is a name and a year, so offline those records said
+ * nothing about what kind of release they are and their artist had no id the
+ * server would recognize. This is the same request the mirror was making
+ * anyway, so the real album costs nothing extra here.
+ *
+ * The cover and the date stay: they are this phone's, not the server's.
+ */
+async function refreshCatalogAlbum(
+  auth: SubsonicAuth,
+  dir: string,
+  album: Album,
+): Promise<boolean> {
+  const [existing] = await Db.albumsByIds(dir, [album.id]);
+  if (!existing) return false;
+  await Db.addToCatalog(dir, {
+    albums: [
+      {
+        ...toLocalAlbum(album, existing.coverUri, existing.dlBytes),
+        addedAt: existing.addedAt ?? Date.now(),
+      },
+    ],
+  });
+  await saveAlbumArtist(auth, dir, album);
+  return true;
+}
+
+/**
+ * Writes down who an album is by.
+ *
+ * Their picture is what stands between an album cover standing in for a face
+ * and a real artist screen offline, and the id the server knows them by is
+ * what lets that screen be reached from anything that remembers them from when
+ * there was a connection — a recent search, a mirrored album.
+ *
+ * Servers answer for an artist's picture by their id, so without one there is
+ * nothing to ask for. The row is still worth writing: opening the artist while
+ * online fills the rest in (see `noteDownloadedArtist`).
+ */
+async function saveAlbumArtist(auth: SubsonicAuth, dir: string, album: Album): Promise<void> {
+  const key = normKey(album.artist || UNKNOWN_ARTIST);
+  const art = album.artistId ? await downloadArtistArt(auth, dir, key, album.artistId) : undefined;
+  await Db.saveArtists(dir, [
+    {
+      id: key,
+      name: album.artist ?? '',
+      serverId: album.artistId,
+      coverUri: art?.uri,
+      dlBytes: art?.bytes,
+    },
+  ]);
 }
 
 /** Synthesized album from a song (playlists with partially downloaded albums). */
@@ -484,14 +604,38 @@ async function fileSize(uri: string): Promise<number> {
 
 /** The cover, with what it takes on disk: measured here, once per album, so
  *  Storage used never has to measure anything. */
-async function downloadCover(
+function downloadCover(
   auth: SubsonicAuth,
   dir: string,
   album: Album,
 ): Promise<{ uri: string; bytes: number } | undefined> {
-  const url = coverArtUrl(auth, album.coverArt ?? album.id, COVER.card);
+  return downloadArt(auth, dir, `${dir}covers/${hashKey(album.id)}.jpg`, album.coverArt ?? album.id);
+}
+
+/**
+ * The artist's own picture, next to the covers and fetched the same way.
+ *
+ * Under a name of its own, `artist_…`, because the two are keyed by different
+ * things — an album by the server's id, an artist by their name normalized —
+ * and nothing says those can never hash to the same file.
+ */
+function downloadArtistArt(
+  auth: SubsonicAuth,
+  dir: string,
+  artistKey: string,
+  coverId: string,
+): Promise<{ uri: string; bytes: number } | undefined> {
+  return downloadArt(auth, dir, `${dir}covers/artist_${hashKey(artistKey)}.jpg`, coverId);
+}
+
+async function downloadArt(
+  auth: SubsonicAuth,
+  dir: string,
+  file: string,
+  coverId: string,
+): Promise<{ uri: string; bytes: number } | undefined> {
+  const url = coverArtUrl(auth, coverId, COVER.card);
   if (!url) return undefined;
-  const file = `${dir}covers/${hashKey(album.id)}.jpg`;
   try {
     const existing = await FileSystem.getInfoAsync(file);
     if (existing.exists) {
@@ -550,6 +694,23 @@ interface DownloadsState {
   cancelDownload: (groupKey: string) => void;
   /** Deletes files for those songs and removes them from the catalog. */
   deleteSongs: (songIds: string[]) => Promise<void>;
+  /**
+   * Forgets a download whose file is not on the disk any more, and says whether
+   * it did.
+   *
+   * The catalog is what the app goes by: a row here is a badge on the row, a
+   * song that counts as playable offline and a file handed to the player
+   * instead of the stream. A row whose file has gone is all three of those
+   * promises broken at once, and the player is where it shows: it is the one
+   * that gets handed the path (see `onPlaybackError`). An empty file counts as
+   * gone: a download interrupted where nothing noticed is the same nothing to
+   * play.
+   *
+   * Only when the file system answers. Not being able to look is not an answer,
+   * and deleting somebody's download on the strength of it would be worse than
+   * the failure it is trying to explain.
+   */
+  forgetIfMissing: (songId: string) => Promise<boolean>;
   clearAll: () => Promise<void>;
   usageBytes: () => Promise<number>;
 }
@@ -625,6 +786,15 @@ export const useDownloads = create<DownloadsState>((set, get) => {
       // stop is also responsive during that phase.
       const albumById = new Map(albums.map((a) => [a.id, a]));
       const albumDone = new Set<string>();
+      const artistDone = new Set<string>();
+      /** Who the record is by, once per artist while this group runs. */
+      const ensureArtist = async (album: Album): Promise<void> => {
+        const key = normKey(album.artist || UNKNOWN_ARTIST);
+        if (artistDone.has(key)) return;
+        artistDone.add(key);
+        await saveAlbumArtist(auth, dir, album);
+      };
+
       const ensureAlbum = async (song: Song): Promise<void> => {
         const album = song.albumId ? albumById.get(song.albumId) : undefined;
         if (!album || albumDone.has(album.id)) return;
@@ -633,6 +803,7 @@ export const useDownloads = create<DownloadsState>((set, get) => {
         await Db.addToCatalog(dir, {
           albums: [toLocalAlbum(album, cover?.uri, cover?.bytes)],
         });
+        await ensureArtist(album);
       };
 
       // Ongoing tasks, aborted on stop (instant stop).
@@ -925,9 +1096,26 @@ export const useDownloads = create<DownloadsState>((set, get) => {
           for (const a of gone.albums) {
             if (a.coverUri) await FileSystem.deleteAsync(a.coverUri, { idempotent: true }).catch(() => {});
           }
+          // And artists left without a single record, picture and all.
+          for (const a of await Db.dropEmptyArtists(dir)) {
+            if (a.coverUri) await FileSystem.deleteAsync(a.coverUri, { idempotent: true }).catch(() => {});
+          }
         }
       });
       invalidate();
+    },
+
+    forgetIfMissing: async (songId) => {
+      const uri = get().files[songId];
+      if (!uri) return false;
+      try {
+        const info = await FileSystem.getInfoAsync(uri);
+        if (info.exists && ((info as { size?: number }).size ?? 1) > 0) return false;
+      } catch {
+        return false;
+      }
+      await get().deleteSongs([songId]);
+      return true;
     },
 
     clearAll: async () => {

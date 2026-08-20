@@ -23,6 +23,7 @@ import { useToast } from '@/store/toast';
 import { colors, fontSize, spacing, SCREEN_BOTTOM_PADDING, themed, useTheme } from '@/theme';
 import { BackChevron } from '@/components/BackChevron';
 import { useScreenBottomPadding } from '@/hooks/useScreenBottomPadding';
+import { useListPadding } from '@/hooks/useScreenSize';
 
 interface DaySection {
   title: string;
@@ -52,6 +53,8 @@ export default function HistoryScreen() {
   // mounted while you are on another one, out of reach of anything else.
   useTheme();
   const bottomPad = useScreenBottomPadding();
+  // Rows stop growing at a reading measure and centre themselves (#131).
+  const listPad = useListPadding(spacing.lg);
   const t = useT();
   const lang = useSettings((s) => s.language);
   const showListArtwork = useSettings((s) => s.showListArtwork);
@@ -110,7 +113,10 @@ export default function HistoryScreen() {
           sections={sections}
           keyExtractor={(item) => item.song.id}
           stickySectionHeadersEnabled={false}
-          contentContainerStyle={[styles.list, { paddingBottom: bottomPad }]}
+          contentContainerStyle={[
+            styles.list,
+            { paddingBottom: bottomPad, paddingHorizontal: listPad },
+          ]}
           renderSectionHeader={({ section }) => (
             <Text style={styles.sectionTitle}>{section.title}</Text>
           )}

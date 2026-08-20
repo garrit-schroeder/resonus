@@ -83,7 +83,7 @@ const styles = themed((colors) => ({
     paddingTop: spacing.lg,
     paddingBottom: spacing.md,
   },
-  heading: { color: colors.text, fontSize: fontSize.xxl, fontWeight: '800' },
+  heading: { color: colors.text, fontSize: fontSize.xxl, fontWeight: '600' },
   setup: { paddingHorizontal: spacing.lg, gap: spacing.md, marginTop: spacing.lg },
   setupTitle: {
     color: colors.text,
