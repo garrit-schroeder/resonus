@@ -9,6 +9,40 @@ Releases before 0.2.1 are only listed on the
 
 ## [Unreleased]
 
+### Changed
+
+- Headings and screen titles are lighter: Android draws Roboto's 800 as a real ExtraBold, which closes the letters up, so they sit at 600 instead.
+
+### Fixed
+
+- ALAC files play on devices whose own decoder cannot handle them, several Samsung phones among them, through a bundled decoder that only steps in when the system refuses the format (#134).
+- Casting to Sonos survives editing the queue: moving the song that is playing, or any row around it, is now mirrored on the speaker instead of leaving the connection unable to play, pause or seek for the rest of the session.
+- Sonos turns off shuffle in one piece: the whole queue goes back to album order, not just the part after the song playing.
+- Skipping to another song already in the Sonos queue is immediate, because the queue is no longer torn down and sent again song by song.
+- Crossfade set in Resonus is passed on to Sonos, both on connecting and when the setting is changed while casting.
+
+## [0.7.4] - 2026-08-19
+
+### Added
+
+- **Editing the whole queue:** the song playing and the ones behind it are dragged and removed like any other row, so a queue can be trimmed into shape without jumping elsewhere first (#157).
+- **Favorites from the add-to-playlist sheet:** picking songs and choosing to add them offers Favorites above the playlists, and the row is gone when they are all favorites already.
+- **Sorting a discography:** the full lists an artist's shelves open into have a sort button beside the view one, with year or name in either direction, and the choice is remembered.
+
+### Changed
+
+- **Cold start:** the saved track goes into the player as the app opens again, so Play answers the first press; what waits is the handful of requests behind it, which is what the opening was actually spending its second on.
+
+### Fixed
+
+- **The player assembling itself on open:** it remembers what it measured last time, so the artwork is there with everything else instead of turning up a fifth of a second later (#155).
+- **Headers that stuttered while music played:** the artist photo, the album cover fading out and the bar coming in follow the scroll from the native side now, so they no longer wait behind whatever the app is doing twice a second (#154).
+- **A song that will not play:** the player now hears the failure instead of sitting on it, so a stream cut off by a bad connection or a download that is no longer readable is answered with the other copy of the song, then with a second go, and only then with a message.
+- **A stream that stops arriving:** fifteen seconds of a song that is not coming in, with the album downloaded on the phone, and the file takes over from where it stopped.
+- **Downloads that are not there:** one whose file has gone stops being offered by the catalog the moment the player finds out, instead of being promised by its badge for good.
+- **Artists offline:** their picture is downloaded along with their music and what kind of record each release is no longer gets lost on the way into the catalog, so the artist page is the same one after closing the app.
+- **The artist's two names:** an artist opened by the id the other mode uses — a recent search made online, a downloaded album offline — lands on their page instead of on an empty one.
+
 ## [0.7.3] - 2026-08-17
 
 ### Added

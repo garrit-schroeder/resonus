@@ -36,17 +36,10 @@ import { useAuthStore } from '@/store/auth';
 import { MAX_PINS, usePins } from '@/store/pins';
 import { currentSong, usePlayerStore } from '@/store/player';
 import { useToast } from '@/store/toast';
-import {
-  colors,
-  fontSize,
-  radius,
-  spacing,
-  SCREEN_BOTTOM_PADDING,
-  themed,
-  useTheme,
-} from '@/theme';
+import { colors, fontSize, radius, SCREEN_BOTTOM_PADDING, SHEET_MAX_WIDTH, spacing, themed, useTheme } from '@/theme';
 import { BackChevron } from '@/components/BackChevron';
 import { useScreenBottomPadding } from '@/hooks/useScreenBottomPadding';
+import { useListPadding } from '@/hooks/useScreenSize';
 import { listPerf } from '@/lib/listPerf';
 
 const EMPTY_EDIT: RadioEdit = { name: '', streamUrl: '', homePageUrl: '' };
@@ -59,6 +52,8 @@ export default function RadioScreen() {
   // mounted while you are on another one, out of reach of anything else.
   useTheme();
   const bottomPad = useScreenBottomPadding();
+  // Rows stop growing at a reading measure and centre themselves (#131).
+  const listPad = useListPadding(spacing.lg);
   const t = useT();
   const insets = useSafeAreaInsets();
   const auth = useAuthStore((s) => s.auth);
@@ -205,7 +200,10 @@ export default function RadioScreen() {
           keyboardShouldPersistTaps="handled"
           data={stations}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={[styles.list, { paddingBottom: bottomPad }]}
+          contentContainerStyle={[
+            styles.list,
+            { paddingBottom: bottomPad, paddingHorizontal: listPad },
+          ]}
           refreshControl={
             <RefreshControl refreshing={isFetching} onRefresh={refetch} tintColor={colors.accent} />
           }
@@ -383,7 +381,7 @@ const styles = themed((colors) => ({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
   },
-  title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '800' },
+  title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '600' },
   list: { paddingHorizontal: spacing.lg, paddingBottom: SCREEN_BOTTOM_PADDING, gap: spacing.md },
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   rowTitleLine: { flexDirection: 'row', alignItems: 'center', gap: 4 },
@@ -407,9 +405,11 @@ const styles = themed((colors) => ({
   backdrop: { ...StyleSheet.absoluteFill, backgroundColor: colors.backdrop },
   sheet: {
     position: 'absolute',
-    left: 0,
-    right: 0,
     bottom: 0,
+    // Centred and no wider than a sheet wants to be (#131).
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: SHEET_MAX_WIDTH,
     backgroundColor: colors.surface,
     borderTopLeftRadius: radius.lg,
     borderTopRightRadius: radius.lg,

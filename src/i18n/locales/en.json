@@ -528,6 +528,7 @@
   "Your server doesn't support radio covers": "Your server doesn't support radio covers",
   "default": "default",
   "{name} is not available yet 🚧": "{name} is not available yet 🚧",
+  "{n} added to favorites": "{n} added to favorites",
   "{n} added to “{name}”": "{n} added to “{name}”",
   "{n} items": "{n} items",
   "{n} minutes": "{n} minutes",

@@ -23,6 +23,7 @@ import { useT } from '@/i18n';
 import { haptic } from '@/lib/haptics';
 import { pushOnce } from '@/lib/pushOnce';
 import { currentSong, useLiveInfo, usePlayerStore } from '@/store/player';
+import { CONTENT_MAX_WIDTH, useScreenSize } from '@/hooks/useScreenSize';
 import { useSettings } from '@/store/settings';
 import { useToast } from '@/store/toast';
 import { colors, fontSize, radius, spacing, themed } from '@/theme';
@@ -30,10 +31,11 @@ import { Cover } from './Cover';
 import { FavoriteButton } from './FavoriteButton';
 import { MarqueeText } from './MarqueeText';
 
-const SCREEN_W = Dimensions.get('window').width;
-const SCREEN_H = Dimensions.get('window').height;
-// Gesture thresholds: horizontal to change track, vertical to dismiss.
-const SWIPE_X = SCREEN_W * 0.25;
+// Gesture thresholds: a share of the width to change track, a fixed distance
+// downwards to dismiss. Measured while rendering rather than when this file was
+// first imported, so turning the phone does not leave the thresholds — and the
+// distance the card is thrown to get off screen — describing the other one (#131).
+const SWIPE_SHARE = 0.25;
 const DISMISS_Y = 80;
 
 /**
@@ -54,6 +56,7 @@ function MiniProgress({ song }: { song: Song }) {
 }
 
 export function MiniPlayer() {
+  const { width: screenW, height: screenH, wide } = useScreenSize();
   const song = usePlayerStore(currentSong);
   // A radio saying what it plays says it here too: down here there is only room
   // for the track and whoever is playing it, so the station stays in the player.
@@ -85,12 +88,13 @@ export function MiniPlayer() {
     .onEnd((e) => {
       const horizontal = Math.abs(e.translationX) > Math.abs(e.translationY);
       if (horizontal) {
-        if (e.translationX < -SWIPE_X || e.velocityX < -800) scheduleOnRN(next);
-        else if (e.translationX > SWIPE_X || e.velocityX > 800) scheduleOnRN(previous);
+        const swipeX = screenW * SWIPE_SHARE;
+        if (e.translationX < -swipeX || e.velocityX < -800) scheduleOnRN(next);
+        else if (e.translationX > swipeX || e.velocityX > 800) scheduleOnRN(previous);
         translateX.value = withSpring(0, { damping: 20, stiffness: 200 });
         translateY.value = 0;
       } else if (e.translationY > DISMISS_Y || e.velocityY > 800) {
-        translateY.value = withTiming(SCREEN_H, { duration: 220 }, (finished) => {
+        translateY.value = withTiming(screenH, { duration: 220 }, (finished) => {
           if (finished) scheduleOnRN(reset);
         });
       } else {
@@ -101,13 +105,13 @@ export function MiniPlayer() {
   // The entire card only moves (and fades) when dismissed downward.
   const cardStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: translateY.value }],
-    opacity: interpolate(translateY.value, [0, SCREEN_W * 0.6], [1, 0], Extrapolation.CLAMP),
+    opacity: interpolate(translateY.value, [0, screenW * 0.6], [1, 0], Extrapolation.CLAMP),
   }));
   // On horizontal swipe the bar stays fixed: only the song details slide/fade,
   // to read as "changing track", not as dismissing.
   const detailsStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: translateX.value }],
-    opacity: interpolate(Math.abs(translateX.value), [0, SCREEN_W * 0.5], [1, 0.15], Extrapolation.CLAMP),
+    opacity: interpolate(Math.abs(translateX.value), [0, screenW * 0.5], [1, 0.15], Extrapolation.CLAMP),
   }));
 
   // When the song changes (or playback resumes) we return the card to its place
@@ -143,8 +147,12 @@ export function MiniPlayer() {
   return (
     <GestureDetector gesture={pan}>
       <Animated.View style={cardStyle}>
+        {/* It stops growing on a wide screen. Across a tablet the title ends
+            up alone on the left with the buttons a forearm away on the right,
+            and nothing about a bar with three things in it needs 1280 points
+            (#131). */}
         <Pressable
-          style={[styles.container, { backgroundColor: bg }]}
+          style={[styles.container, wide && styles.narrow, { backgroundColor: bg }]}
           onPress={() => pushOnce('/player')}
         >
       <Animated.View style={[styles.details, detailsStyle]}>
@@ -213,6 +221,8 @@ const styles = themed((colors) => ({
     borderRadius: radius.md,
     overflow: 'hidden',
   },
+  /** Centred and no wider than a wide screen wants it. */
+  narrow: { maxWidth: CONTENT_MAX_WIDTH, width: '100%', alignSelf: 'center' },
   progressTrack: {
     position: 'absolute',
     left: 0,

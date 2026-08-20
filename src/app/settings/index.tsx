@@ -110,6 +110,9 @@ export default function SettingsScreen() {
   return (
     <SafeAreaView style={settingsStyles.safe} edges={['top']}>
       <ScreenHeader title={t('Settings')} />
+      {/* The same centred pane every other settings screen gets from
+          `SettingsPage`; this one draws its own header, so it says it here. */}
+      <View style={settingsStyles.pane}>
       <ScrollView contentContainerStyle={settingsStyles.content}>
         <View style={styles.profileRow}>
           <View style={[styles.avatar, { borderColor: accentColor }]}>
@@ -185,6 +188,7 @@ export default function SettingsScreen() {
           </Pressable>
         </View>
       </ScrollView>
+      </View>
     </SafeAreaView>
   );
 }

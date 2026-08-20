@@ -1,22 +1,16 @@
 /**
- * Playback state and control over **expo-audio**.
+ * Playback state and control over expo-audio.
  *
- * The queue lives in JS (this store). Two alternating `AudioPlayer` instances
- * decode: the "active" one plays and owns the notification / lock screen
- * (`setActiveForLockScreen`); the other is kept as a reserve for crossfade (the
- * incoming track starts on it at volume 0 and becomes the active one). Without
- * crossfade only one works, with `replace()` of the source on track change.
+ * The queue lives here, in JS. Two `AudioPlayer` instances alternate: the
+ * active one plays and owns the notification, the other is the reserve a
+ * crossfade starts the next track on.
  *
- * Auto-advance has three paths, and each one leaves the other two with nothing
- * to do: gapless (the next track is queued in the player itself and it jumps on
- * its own, reported by `trackTransition`), crossfade (the change happens early,
- * on the reserve player), and, when neither applies, the end of the track via
- * `playbackStatusUpdate` (`didJustFinish`) with a `loadIndex`.
+ * Auto-advance has three paths and each leaves the others nothing to do:
+ * gapless (queued in the player, reported by `trackTransition`), crossfade (on
+ * the reserve player), and `didJustFinish` when neither applies.
  *
- * (Migrated from react-native-track-player to have a SINGLE
- * MediaSession and thus support Android Auto with the `modules/car-auto` module.
- * Android Auto is not affected by crossfade: it uses its own session with
- * `JsProxyPlayer`, not the expo-audio player.)
+ * One MediaSession on purpose: Android Auto needs it (see `modules/car-auto`),
+ * and it uses its own `JsProxyPlayer`, not this player.
  */
 import {
   createAudioPlayer,
@@ -93,6 +87,7 @@ import {
   upnpPause,
   upnpPlay,
   upnpSeek,
+  upnpSetCrossfade,
   upnpSetSleepTimer,
   upnpSetVolume,
   type RemoteEvents,
@@ -115,14 +110,9 @@ export const SOURCE_HISTORY = '@@history';
 let sleepTimeout: ReturnType<typeof setTimeout> | null = null;
 
 /**
- * Expiry of the sleep timer (`sleepEndsAt` in the store), or null.
- *
- * Lives in the store and not here because the UI also needs it: it's what
- * lets us say how much TIME IS LEFT instead of repeating the chosen minutes,
- * which is a number that ages poorly. And it serves as a backup for setTimeout:
- * Android freezes/delays JS timers in the background with the screen off (the
- * typical sleep timer case), so onStatus —which keeps beating while the
- * native player plays— also checks the time.
+ * Expiry of the sleep timer, or null. In the store because the screen says how
+ * much is left, and because `onStatus` checks it: Android freezes JS timers
+ * with the screen off, which is exactly when a sleep timer runs.
  */
 function sleepDeadline(): number | null {
   return usePlayerStore.getState().sleepEndsAt;
@@ -267,16 +257,11 @@ async function ensureAudioMode() {
   if (audioModeReady) return;
   audioModeReady = true;
   try {
-    // `shouldPlayInBackground` keeps audio when minimizing the app; without it,
-    // expo-audio pauses when going to background. `doNotMix` gives exclusive focus
-    // (needed for lock screen controls to associate with our player).
-    //
-    // `playsInSilentMode` says out loud what a music player means: the ringer
-    // switch is about being interrupted, not about the album somebody just
-    // pressed play on. SDK 56 added a check for it inside `play()`, so leaving
-    // it to be inferred meant that on a phone set to vibrate the play button
-    // did nothing at all, silently, while the same track started fine from the
-    // notification, which reaches the player without passing through there.
+    // `shouldPlayInBackground` or expo-audio pauses on minimize; `doNotMix` for
+    // exclusive focus, which is what ties the lock screen controls to us.
+    // `playsInSilentMode` because the ringer switch is about interruptions, not
+    // about the album somebody pressed play on: SDK 56 checks it inside
+    // `play()`, so on a phone set to vibrate the button did nothing at all.
     await setAudioModeAsync({
       interruptionMode: 'doNotMix',
       shouldPlayInBackground: true,
@@ -334,29 +319,37 @@ function effectiveStreamFormat(): TranscodeFormat {
   return useNetworkType.getState().cellular ? s.streamFormatCellular : s.streamFormat;
 }
 
+/**
+ * The copy of a song that already failed, this run only: `file` sends it to the
+ * server, `stream` back to the disk whatever the setting says. Read by
+ * `localSourceFor`. Not written down, since neither is a property of the song;
+ * a file that is not there is dropped from the catalog (`forgetIfMissing`).
+ */
+const failedSource = new Map<string, 'file' | 'stream'>();
+
 /** Source for expo-audio: radio (url), local (file/content) or Subsonic stream. */
 /**
  * Does this song play from the file on disk, and which file?
  *
- * A download exists so the song does not have to be fetched again, and that is
- * the default. But a library downloaded at 128 kbps to save room is a worse
- * copy than the server's, and somebody may want the good one when the data is
- * free and the small one when it is not: hence the setting (#108).
- *
- * Offline the question does not arise. The file is the only thing that can
- * play, and a queue of songs that cannot play is refused before it gets here.
- *
- * Everything that asks "is this a stream?" asks this, and not whether a
- * download exists: seeking, warming and the transcode-offset dance all depend
- * on where the audio actually comes from.
+ * The download is the default, but a library kept at 128 kbps is a worse copy
+ * than the server's, hence the setting (#108). Offline the question does not
+ * arise. Everything asking "is this a stream?" asks this and not whether a
+ * download exists: seeking, warming and the transcode offset all depend on
+ * where the audio actually comes from.
  */
 export function localSourceFor(song: Song): string | undefined {
+  const { auth, offline } = useAuthStore.getState();
+  // What the player has already tried and failed to play beats both the setting
+  // and the phone's own copy: one of the two is silence, and the other one may
+  // not be. See `onPlaybackError`.
+  const failed = failedSource.get(song.id);
+  if (failed === 'file' && auth && !offline) return undefined;
   // The phone's own library is not a download and there is nothing to stream.
   if (song.localUri) return song.localUri;
   const file = downloadedUri(song);
   if (!file) return undefined;
-  const { auth, offline } = useAuthStore.getState();
   if (offline || !auth) return file;
+  if (failed === 'stream') return file;
   switch (useSettings.getState().preferDownloads) {
     case 'never':
       return undefined;
@@ -382,7 +375,20 @@ function sourceFor(song: Song, timeOffsetSec = 0): AudioSource {
   const mediaId = song.id;
   if (song.url) return { uri: song.url, metadata, mediaId };
   const local = localSourceFor(song);
-  if (local) return { uri: local, metadata, mediaId };
+  // Counted where the decision is acted on, once per install, and not inside
+  // `localSourceFor`, which every render and every heartbeat asks. "Streamed
+  // although downloaded" is the one that answers the report this exists for:
+  // somebody with the album on the phone hearing it cut out on a bad
+  // connection, which cannot happen to a file.
+  if (local) {
+    bump('player · played the file on disk');
+    return { uri: local, metadata, mediaId };
+  }
+  bump(
+    downloadedUri(song)
+      ? 'player · streamed although downloaded'
+      : 'player · streamed, nothing downloaded',
+  );
   const auth = useAuthStore.getState().auth!;
   const format = effectiveStreamFormat();
   return {
@@ -403,17 +409,11 @@ function sourceFor(song: Song, timeOffsetSec = 0): AudioSource {
 let streamOffsetSec = 0;
 
 /**
- * Moves that offset, here and on the native player.
- *
- * The media session reads the position off the player itself, and a stream
- * re-requested at 2:00 is a new source the player counts from zero: without
- * telling it, the notification and the car went back to 0:00 on every seek
- * while the app carried on (#135). Every place that installs a source goes
- * through here, including the ones that put it back to zero, so no player is
- * left with the offset of the song before it.
- *
- * `p` is the player the source belongs to, which during a crossfade is not
- * the one still playing.
+ * Moves that offset, here and on the native player, which is where the media
+ * session reads the position from: a stream re-requested at 2:00 counts from
+ * zero, and the notification and the car went back to 0:00 on every seek
+ * (#135). Every source install comes through here, zeros included. `p` is the
+ * player the source belongs to, not always the one still playing.
  */
 function setStreamOffset(sec: number, p: AudioPlayer | null = activePlayer()) {
   streamOffsetSec = sec;
@@ -425,14 +425,10 @@ function setStreamOffset(sec: number, p: AudioPlayer | null = activePlayer()) {
 }
 
 /**
- * Points the native `loop` at the source the player holds.
- *
- * Repeating one song is the player's own `loop`, which repeats THE SOURCE. A
- * stream re-requested at 3:25 is a source that starts there, so looping it
- * replayed the last few seconds of the song over and over and the track never
- * ended. Whoever installs a source says here what it is: only a source that
- * starts at the beginning is the whole song. The rest end for real, and their
- * `didJustFinish` restarts the song from zero (see `onStatus`).
+ * Points the native `loop` at the source the player holds. `loop` repeats THE
+ * SOURCE, and a stream re-requested at 3:25 is not the whole song: looping it
+ * replayed its last seconds forever. Only a source starting at zero may loop;
+ * the rest end and `didJustFinish` restarts the song (see `onStatus`).
  */
 function applyLoop(p: AudioPlayer | null, offsetSec = streamOffsetSec) {
   if (!p) return;
@@ -446,19 +442,13 @@ function applyLoop(p: AudioPlayer | null, offsetSec = streamOffsetSec) {
 /** `transcodeOffset` support of the active server (null = unchecked). */
 let transcodeOffsetSupported: boolean | null = null;
 /**
- * Does the source the player is playing have a known length? (null = not loaded yet)
+ * Does the source have a known length? (null = not loaded yet)
  *
- * `isTranscoded` only knows what WE asked for, and the server may transcode
- * without being asked: Navidrome applies the transcoding configured for the
- * player, so with "original" settings the stream can still arrive re-encoded
- * on the fly (`Accept-Ranges: none`, no `Content-Length`). The player then
- * doesn't know the duration and a native seek restarts the track from zero.
- * An unknown duration on a server stream is precisely that signal, so we use
- * it to send those seeks through `timeOffset` as well.
- *
- * It also explains the confusing part of the report: the second time, the same
- * track seeks fine. Navidrome caches the transcode and serves the cached copy
- * WITH length and ranges, so only the first play of each track was broken.
+ * `isTranscoded` only knows what WE asked for, and Navidrome transcodes on its
+ * own settings too: no `Content-Length`, no ranges, and a native seek restarts
+ * the track. No length on a server stream is that signal, so those seeks also
+ * go through `timeOffset`. Second time round it seeks fine because Navidrome
+ * serves the cached transcode, with length.
  */
 let sourceHasLength: boolean | null = null;
 
@@ -580,13 +570,9 @@ function seekActive(sec: number) {
 }
 
 /**
- * Cover art for the notification and the media session.
- *
- * Resolved like every screen resolves it, which is the point: that path hands
- * back the file on disk when the album is downloaded, and the disk is the only
- * place a cover can come from with no connection. Asking the server for it is
- * what left the notification, the car and the system's own controls with an
- * empty square offline, and local music without a cover at all.
+ * Cover art for the notification and the media session, resolved like every
+ * screen resolves it: that path hands back the file on disk, which is the only
+ * place a cover comes from with no connection.
  */
 function artworkUrlFor(song: Song): string | undefined {
   // A radio has no album to fall back to, but the server may hold an image for
@@ -595,21 +581,16 @@ function artworkUrlFor(song: Song): string | undefined {
 }
 
 /**
- * What the media session says this track is. Bluetooth, Android Auto and the
- * system's own controls read this and not the notification's metadata, and it
- * beats whatever tags the stream carries — which is none of them once a server
- * transcodes it (#78).
+ * What the media session says this track is. Bluetooth, the car and the
+ * system's controls read this, not the notification, and it beats the stream's
+ * tags, which a transcode strips (#78).
  *
- * A radio goes without title or artist on purpose: those belong to the stream,
- * which fills them in track by track (see `onStreamMetadata`), and anything set
- * here would win over them for as long as the station played.
+ * A radio goes without title or artist on purpose: the stream fills those in
+ * track by track (`onStreamMetadata`) and anything here would outrank it.
  *
- * How long the song is goes with it, which the queue knows and a stream being
- * transcoded on the fly cannot say: with no length and no seek table the player
- * has no duration to report, and the system's controls answer that by showing
- * neither the times nor the progress bar (#116). It is only ever a fallback,
- * so a file, or a stream that does have a length, still speaks for itself. A
- * radio has no duration to give and is not supposed to.
+ * The duration goes with it because a transcode cannot report one, and without
+ * it the system's controls show no times and no progress bar (#116). Only a
+ * fallback: a source with a length still speaks for itself.
  */
 function itemMetadataFor(song: Song): AudioMetadata {
   const artworkUrl = artworkUrlFor(song);
@@ -825,28 +806,20 @@ let loadToken = 0;
 /**
  * Loads the track at `index` and (optionally) plays it.
  *
- * False means nothing was installed and whatever was playing before still is,
- * which is what lets a caller that installed a queue around this put back the
- * one it replaced. Anything that goes wrong AFTER the source is in the player
- * says true: by then what was playing is gone, and a screen put back to
- * describe it would be describing nothing. That is the one thing this must
- * never do — show one song while another one sounds.
+ * False means nothing was installed and what was playing still is, so a caller
+ * can put its queue back. Anything failing AFTER the source is in the player
+ * says true: showing one song while another sounds is the one thing this must
+ * never do.
  */
 async function loadIndex(index: number, autoplay: boolean): Promise<boolean> {
   const token = ++loadToken;
-  // Whatever was waiting from the restore is superseded by this: the queue may
-  // not even be the same one any more, and an index into the old one would drop
-  // a stranger's song into the player five seconds later.
-  pendingRestore = null;
   // Anything asked to play is the app in use, whoever asked: the button, the
   // notification, the car, a headset. The window is only for the track the
   // saved queue brings back on its own.
   if (autoplay) endBootQuiet();
-  // Offline, a track that only exists as a server stream cannot be played:
-  // we skip forward to the next downloaded one instead of getting stuck (covers
-  // "previous", manual taps and queue restore). If none is playable, we stop.
-  // `nextIndex` already avoids reaching here during normal advance, so this is
-  // the safety net for all other paths.
+  // Offline, a stream-only track cannot play: skip to the next one that can
+  // rather than get stuck. `nextIndex` already avoids this during a normal
+  // advance, so this covers the rest (previous, taps, queue restore).
   if (useAuthStore.getState().offline) {
     const q = usePlayerStore.getState().queue;
     if (q[index] && !playableOffline(q[index])) {
@@ -899,7 +872,12 @@ async function loadIndex(index: number, autoplay: boolean): Promise<boolean> {
   useEqualizer.getState().attach(p.audioSessionId);
   try {
     replaceSource(p, sourceFor(song));
-  } catch {
+  } catch (e) {
+    // Counted apart from the failures the player reports on its own: this one
+    // never got as far as the player, and the two look identical from the
+    // outside: the same toast over a song that does not start. A report of one
+    // is unanswerable without knowing which it was (see `onPlaybackError`).
+    bump(`player · could not install the source (${errorTag(String(e))})`);
     useToast.getState().show(tg("Couldn't play the song"));
     return false;
   }
@@ -938,10 +916,11 @@ async function loadIndex(index: number, autoplay: boolean): Promise<boolean> {
         void ensureTranscodeOffsetSupport();
       }
     }
-  } catch {
+  } catch (e) {
     // The song is in the player: say so, whatever went wrong on the way to
     // making it sound. Answering false here is what left the screen describing
     // the song before it while this one played.
+    bump(`player · loaded but did not start (${errorTag(String(e))})`);
     useToast.getState().show(tg("Couldn't play the song"));
   }
   return true;
@@ -975,14 +954,10 @@ let playedHistory: HistoryEntry[] = [];
 export type JumpKind = 'pick' | 'skip';
 
 /**
- * Whether a skip should start playback.
- *
- * `true` always, until somebody turns the setting on: skipping has started the
- * music here since the first version, and media3 underneath does the opposite
- * (`seekToNext` never touches `playWhenReady`), so this is the app's own doing
- * and four years of muscle memory rest on it. With it on, a skip carries the
- * playing state across, which is what ⏭ means everywhere else and what somebody
- * pausing to step past a track in the car is asking for (#110).
+ * Whether a skip should start playback. `true` until the setting is on:
+ * skipping has started the music here since the first version, media3 does the
+ * opposite, and the muscle memory is ours. With it on, the paused state carries
+ * across the skip, which is what somebody stepping past a track wants (#110).
  */
 function skipAutoplay(playing: boolean): boolean {
   return useSettings.getState().keepPausedOnSkip ? playing : true;
@@ -1004,26 +979,19 @@ function contextKey(source: string | null, sourceHref: string | null) {
 }
 
 /**
- * Forgets the back history of a list that is being started again. Every entry
- * of that list points into the queue about to be replaced, so returning to one
- * put you back inside the queue you had just discarded, and what played after
- * it were the old songs (#100). Pressing "Shuffle play" twice is the way to
- * see it: the second shuffle is the queue, but ⏮️ still walked into the first.
- * Other lists keep their entries, so going back to what was playing before
- * this one still works.
+ * Forgets the back history of a list being started again: its entries point
+ * into the queue about to be replaced, so ⏮ walked back into the discarded one
+ * (#100). Other lists keep theirs.
  */
 function forgetHistoryOf(key: string) {
   playedHistory = playedHistory.filter((e) => contextKey(e.source, e.sourceHref) !== key);
 }
 
 // ── Honest scrobble ──────────────────────────────────────────────────────────
-// Starting a track only announces that it is playing (see the section below);
-// the actual listen is sent when crossing the threshold in the settings, which
-// starts out as the classic one: 50% of duration or 4 minutes, whichever comes
-// first. This way skipping songs doesn't inflate counters or the
-// Last.fm/ListenBrainz history. The local offline mode counter follows the same
-// rule, and so does the outbox, so a trip without a connection reports the same
-// listens it would have reported with one.
+// Starting a track only announces it; the listen is sent on crossing the
+// threshold in the settings (50% or 4 minutes by default), so skipping does not
+// inflate anybody's history. The offline counter and the outbox follow the same
+// rule.
 let scrobbledThisTrack = false;
 
 // ── What the server's Now Playing panel shows ────────────────────────────────
@@ -1186,18 +1154,14 @@ let nextLyricsTimer: ReturnType<typeof setTimeout> | null = null;
 const NEXT_LYRICS_DELAY_MS = 5000;
 
 // ── The first seconds of the app ────────────────────────────────────────────
-// Restoring the saved queue does not only put it on screen: it loads its track
-// into the player (see `restoreFromStorage`), and everything that normally
-// follows a track change goes with it. On a downloaded song none of that
-// touches the network. On one that lives on the server it is the Now Playing
-// report, the lyrics, the warming of the next five, the "is this a transcode?"
-// probe and the source queued behind it: seven requests with their DNS and
-// their TLS, fired in the instant the app is trying to paint itself.
+// Restoring the queue loads its track, and everything that follows a track
+// change goes with it: Now Playing, lyrics, the warming, the transcode probe
+// and the queued source. Seven requests in the instant the app is painting
+// itself, worth a second of opening on a song from the server.
 //
-// Measured on a phone with the same queue: with a downloaded song the app
-// opens instantly, with one from the server it takes a second. None of it is
-// needed before somebody presses play, so it waits for the first sign the app
-// is in use, or for the window below to run out.
+// So they wait for the first sign the app is in use, or for the window below.
+// The track does NOT wait: held back, it left a queue on screen with no player
+// behind it, and Play from the notification or the car found none.
 
 const BOOT_QUIET_MS = 5000;
 
@@ -1228,49 +1192,12 @@ function endBootQuiet(catchUp = false) {
   if (bootQuietTimer) clearTimeout(bootQuietTimer);
   bootQuietTimer = null;
   if (!catchUp) return;
-  // The track itself, if it is still waiting: five seconds in, the app is open
-  // and the notification and the play button have something behind them.
-  if (pendingRestore != null) {
-    void loadRestored(false);
-    return; // its own load does the rest of this, for the song it installs
-  }
   const song = currentSong(usePlayerStore.getState());
   if (!song) return;
   if (!song.url && !localSourceFor(song)) void ensureTranscodeOffsetSupport();
   scheduleNextSource();
   prefetchLyrics(song);
   warmUpcoming();
-}
-
-/**
- * The track the saved queue came back with, waiting to be installed in the
- * player, or null.
- *
- * Restoring used to load it there and then, and loading a song that lives on
- * the server means opening its stream: a connection, headers and a first
- * buffer, in the middle of the app opening, for a song nobody has asked to
- * hear. It is held until the app is in use or the boot window runs out, the
- * same as everything else on the way in.
- *
- * Only the index travels. The position is read from the store when the load
- * finally happens, so a seek made in the meantime is the one that survives.
- */
-let pendingRestore: number | null = null;
-
-/** Installs the restored track, at the position the queue was left at. */
-async function loadRestored(autoplay: boolean): Promise<void> {
-  const index = pendingRestore;
-  if (index == null) return;
-  pendingRestore = null;
-  const { queue, positionSec } = usePlayerStore.getState();
-  if (!queue[index]) return;
-  if (!(await loadIndex(index, autoplay))) return;
-  // `loadIndex` starts the song at zero, which is right for every other caller
-  // and wrong for this one.
-  if (positionSec > 0) {
-    seekActive(positionSec);
-    usePlayerStore.setState({ positionSec });
-  }
 }
 
 /** Now playing / history + syncs the queue on track change. */
@@ -1315,25 +1242,18 @@ function onTrackChanged(song: Song) {
 }
 
 // ── Preload upcoming tracks (warms up the stream in advance) ──────────────────
-// For proxies like Octo Fiesta or slow origins that download the track on the
-// fly: the stream URL of upcoming tracks is requested in advance, so the server
-// already has it cached when it arrives (or when skipping several). It goes out
-// on the track change, which beats via the native event, and it survives
-// background. Off by default (see preloadUpcoming setting); on a normal server
-// it adds nothing and only generates extra transcodes/statistics.
+// For proxies like Octo Fiesta that fetch the track on demand: asking for the
+// next few in advance leaves them cached before playback arrives. Off by
+// default; a normal server only gets extra transcodes out of it.
 //
-// Reaching the server is NOT enough, which is what the first two goes at this
-// assumed. The request has to be held open until the server answers: Octo
-// Fiesta cancels the provider download when the client hangs up, and throws
-// away what it had written. See `WARM_TIMEOUT_MS`.
+// Reaching the server is not enough. The request has to be held open until it
+// answers, or Octo Fiesta cancels the download and throws away what it wrote
+// (see `WARM_TIMEOUT_MS`).
 //
-// A track change is not the only moment the window moves, though. Putting a
-// song next, or at the end of the queued block, changes what is coming without
-// changing what is playing, and warming only on the change meant precisely the
-// song somebody had just asked for was the one nobody had warmed: no request
-// left the phone until playback reached it, which is the whole wait this exists
-// to remove (#137). The queue itself is watched for that, at the bottom of this
-// file, alongside the gapless memo which has the same reason to re-evaluate.
+// And the window also moves when a song is put next, not only on a track
+// change: warming only on the change left the song somebody had just asked for
+// as the one nobody warmed (#137). The queue is watched for that at the bottom
+// of this file.
 const PRELOAD_AHEAD = 5;
 /** Already-warmed ids: as the window slides only the new one entering is warmed
  *  (~1 request per advance), not all five each time. Cleared on queue change
@@ -1513,22 +1433,14 @@ async function genreCandidates(auth: SubsonicAuth, seed: Song): Promise<Song[]> 
 /**
  * Songs to extend a radio from `seed`.
  *
- * The three affinity sources (similar songs, similar artists' top songs, the
- * seed artist's own top songs) are asked at once and go into a SINGLE pool that
- * is shuffled and capped at `MAX_PER_ARTIST`. Taking the first non-empty tier
- * whole, as this used to, meant a single request for the artist's top 20 could
- * fill the batch with twenty consecutive tracks by the same artist.
+ * The three affinity sources are asked at once into a single pool, shuffled and
+ * capped at `MAX_PER_ARTIST`: taking the first non-empty tier whole filled the
+ * batch with twenty consecutive tracks by one artist. Genre and random only top
+ * up what affinity left, and they are the safety net, since on Navidrome the
+ * affinity tiers all go through Last.fm.
  *
- * Genre and plain random only top up what affinity couldn't fill. They're the
- * safety net: on Navidrome both similar songs and top songs go through Last.fm,
- * so without the agent every affinity tier answers nothing at all.
- *
- * Only the random tiers honour the library filter, because only they can. The
- * API takes a music folder on `getRandomSongs` and on neither of the other two,
- * and a song doesn't say which library it came from, so there is nothing to
- * filter by afterwards either. What that leaves is a disabled library still
- * reachable through affinity, which at least is music related to the track that
- * was playing rather than a handful pulled out of it at random (issue #39).
+ * Only the random tiers honour the library filter, because only `getRandomSongs`
+ * takes a folder and a song does not say which library it came from (#39).
  */
 async function radioCandidates(auth: SubsonicAuth, seed: Song, have: Set<string>): Promise<Song[]> {
   const picked: Song[] = [];
@@ -1729,16 +1641,11 @@ function nextIndex(_manual: boolean): number | null {
 }
 
 // ── Gapless ─────────────────────────────────────────────────────────────────
-// Advancing with `didJustFinish` → `loadIndex` → `replace()` means the next
-// track only starts being fetched once the previous one has ENDED: connection,
-// headers and initial buffer all land in the silence between songs, and that
-// silence is the gap (#8).
-//
-// Instead the next track is queued INSIDE the native player (`setNextSource`,
-// added in patches/expo-audio.patch), which buffers it while the current one
-// plays and joins them by itself. The jump arrives as `trackTransition` and JS
-// only follows: no `replace()` and no reload. `didJustFinish` doesn't fire on
-// these, since it needs the player to run out of things to play.
+// Advancing on `didJustFinish` fetches the next track only once the previous
+// one has ended, and that connection is the gap (#8). Instead it is queued
+// inside the native player (`setNextSource`, in patches/expo-audio.patch),
+// which buffers it and joins them itself; the jump arrives as
+// `trackTransition` and JS only follows.
 //
 // The join is as tight as the format allows: with no transcoding, or
 // transcoding to Opus, the encoder padding is described in the file and gets
@@ -2057,15 +1964,12 @@ function cutCrossfade() {
 }
 
 // ── Seamless server handoff ──────────────────────────────────────────────────
-// When switching servers (manual or automatic by network) the current track
-// points to the old host, which may be dead. The cheap path was to reload it
-// abruptly on the active player: that leaves an audible silence (the "blip")
-// while the new host buffers from scratch. Instead we load the stream from the
-// new host on the reserve player at volume 0 and let the old one keep playing
-// from its buffer; when the new one is actually playing we align it with the
-// current position of the old one and do the switch instantaneously. No fade on
-// purpose: it's the same song, and crossing two nearly equal positions would
-// cause phase issues.
+// On a server switch the playing track points at the old host, which may be
+// dead. Reloading it on the active player leaves an audible hole while the new
+// host buffers, so the new stream starts on the reserve player at volume 0,
+// and once it is really playing it is aligned with the old position and takes
+// over. No fade on purpose: it's the same song, and crossing two nearly equal
+// positions would cause phase issues.
 //
 // It's driven by the NATIVE event of the reserve player itself (not a timer), so
 // it survives background, which is where the automatic switch happens. It's
@@ -2381,17 +2285,19 @@ let pendingSeek: { sec: number; at: number } | null = null;
 
 /** expo-audio state listener: progress, play/pause and track end. */
 // ── Server-down detection during playback ───────────────────────────────────
-// The network engine (autoUrl) reacts to network state changes and to Home query
-// failures, but if the server goes down while a streaming track is playing
-// (without changing network and outside Home) nothing would notice it. Here we
-// detect it by STALL: if a track playing via streaming gets stuck buffering
-// without position advancing for several seconds, we request a probe; if it
-// truly doesn't reach and there are downloads, autoUrl falls back to offline
-// only.
+// autoUrl reacts to the network changing and to Home failing, so a server going
+// down mid-track goes unnoticed. A stall says it: a stream stuck buffering with
+// the position not moving asks for a probe.
+//
+// It is also the shape a bad connection takes when it does not fail outright,
+// the socket open and nothing arriving, so past `STALL_FALLBACK_MS` the
+// downloaded file takes over (see `onPlaybackError` for the failing case).
 const STALL_PROBE_MS = 6000;
+const STALL_FALLBACK_MS = 15000;
 let stallSince = 0;
 let stallPos = -1;
 let stallProbed = false;
+let stallFellBack = false;
 
 function maybeDetectStall(intendPlay: boolean, buffering: boolean, positionSec: number): void {
   const st = usePlayerStore.getState();
@@ -2402,6 +2308,7 @@ function maybeDetectStall(intendPlay: boolean, buffering: boolean, positionSec: 
   if (useAuthStore.getState().offline || !intendPlay || !streamed || !buffering) {
     stallSince = 0;
     stallProbed = false;
+    stallFellBack = false;
     stallPos = positionSec;
     return;
   }
@@ -2409,15 +2316,120 @@ function maybeDetectStall(intendPlay: boolean, buffering: boolean, positionSec: 
   if (Math.abs(positionSec - stallPos) > 0.5) {
     stallSince = 0;
     stallProbed = false;
+    stallFellBack = false;
     stallPos = positionSec;
     return;
   }
   const now = Date.now();
   if (stallSince === 0) {
     stallSince = now;
-  } else if (!stallProbed && now - stallSince >= STALL_PROBE_MS) {
+    return;
+  }
+  if (!stallProbed && now - stallSince >= STALL_PROBE_MS) {
     stallProbed = true; // once per stall; autoUrl already retries
     checkAutoUrlNow();
+  }
+  // Fifteen seconds of a stream that is not arriving, with the song sitting on
+  // the disk: play that instead, from where it stopped. Only once per stall, and
+  // only for a song that has a file. For the rest there is nothing to move to,
+  // and the probe above is already asking whether the server is there at all.
+  if (!stallFellBack && now - stallSince >= STALL_FALLBACK_MS && song && downloadedUri(song)) {
+    stallFellBack = true;
+    bump('player · fell back to the file after a stall');
+    failedSource.set(song.id, 'stream');
+    void reloadCurrent(positionSec, true);
+  }
+}
+
+// ── When the player cannot play what it was given ────────────────────────────
+// media3 reports it (`error` on the status), and nothing here used to read it:
+// the app kept its playing state, the position stopped moving, and that was the
+// whole of it. A stream cut off by a bad connection and a downloaded file that
+// is no longer readable both ended the same way, as silence waiting for
+// somebody to press the next track.
+
+/** Which track the attempts below belong to, and how many it has had. */
+let errorTrackId: string | null = null;
+let errorAttempts = 0;
+/** Two: enough to ride out a hiccup, few enough not to retry a dead source. */
+const MAX_ERROR_ATTEMPTS = 2;
+
+/**
+ * The error in its own words, with anything that looks like an address taken
+ * out: this is counted, and counts are what the Diagnostics report is made of.
+ * A stream URL carries the credentials, so none of them can go in it.
+ */
+function errorTag(message: string): string {
+  const clean = message
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/\S*/gi, 'url')
+    .replace(/\/[\w./-]{16,}/g, 'path')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return clean.length > 80 ? `${clean.slice(0, 80)}…` : clean;
+}
+
+/**
+ * Answers a playback failure: the other copy of the song if it has one, a
+ * second go at the same one if it does not, and the truth if neither sounds.
+ *
+ * Deliberately not the next track. A failure that skips walks a whole album in
+ * silence, and the one thing the person watching needs to know is that this
+ * song is not playing, which a toast says and an advancing queue hides.
+ */
+function onPlaybackError(message: string, wasPlaying: boolean): void {
+  const st = usePlayerStore.getState();
+  const song = st.queue[st.index];
+  bump(`player · playback error (${errorTag(message)})`);
+  if (!song) return;
+  if (errorTrackId !== song.id) {
+    errorTrackId = song.id;
+    errorAttempts = 0;
+  }
+  if (errorAttempts >= MAX_ERROR_ATTEMPTS) {
+    bump('player · gave up on the track');
+    usePlayerStore.setState({ isPlaying: false, isBuffering: false });
+    useToast.getState().show(tg("Couldn't play the song"));
+    return;
+  }
+  errorAttempts++;
+  // The other copy, and only the first time round: once it is marked, what just
+  // failed IS the other copy, and swapping back would be a loop.
+  if (!failedSource.has(song.id) && !song.url) {
+    const { auth, offline } = useAuthStore.getState();
+    if (localSourceFor(song)) {
+      // The phone's own library has no stream behind it, and neither has a
+      // download with no connection: the mark is only worth putting on when
+      // there is somewhere else to play from. A song of the phone's own is the
+      // one with a `localUri` and no download: the mark of a download built
+      // offline is that same field (see `markUnplayableOffline`), and behind
+      // that one there is a server.
+      const phoneOnly = !!song.localUri && !downloadedUri(song);
+      if (!phoneOnly && auth && !offline) failedSource.set(song.id, 'file');
+      // And a download whose file is not there at all should stop being
+      // promised, by its badge and by the catalog behind it.
+      void useDownloads.getState().forgetIfMissing(song.id);
+    } else if (downloadedUri(song)) {
+      failedSource.set(song.id, 'stream');
+    }
+  }
+  void reloadCurrent(st.positionSec, wasPlaying);
+}
+
+/** Installs the current track again, at the second it had got to. */
+async function reloadCurrent(atSec: number, autoplay: boolean): Promise<void> {
+  const { index, queue } = usePlayerStore.getState();
+  const song = queue[index];
+  if (!song) return;
+  if (!(await loadIndex(index, autoplay))) return;
+  // `loadIndex` starts the song at zero, which is right for everything else
+  // that calls it: what failed here was in the middle of one. And only if it is
+  // still the same song, since anything the person did while this loaded owns
+  // the player now.
+  const now = usePlayerStore.getState();
+  if (now.queue[now.index]?.id !== song.id) return;
+  if (atSec > 0) {
+    seekActive(atSec);
+    usePlayerStore.setState({ positionSec: atSec });
   }
 }
 
@@ -2451,6 +2463,18 @@ function onStatus(status: AudioStatus) {
   // Buffering if we want to play but audio isn't flowing yet (initial load,
   // streaming rebuffer, seek…). If paused, it's not buffering.
   const intendPlay = status.playing || prev.isPlaying;
+  // The player could not play what it was handed. Nothing below this applies:
+  // the status that comes with a failure is a stopped player at a position that
+  // is not going to move, and what to do about that is its own question.
+  if (status.error) {
+    onPlaybackError(status.error, intendPlay);
+    return;
+  }
+  // Sound: whatever it took, this track is not the failing one any more.
+  if (status.playing && errorTrackId) {
+    errorTrackId = null;
+    errorAttempts = 0;
+  }
   const buffering =
     intendPlay && !status.didJustFinish && (status.isBuffering || !status.isLoaded);
   // Only once loaded: while buffering the duration is still unknown and would
@@ -2790,6 +2814,8 @@ export function initRemoteIntegration() {
         const remainingSec = Math.max(0, Math.round((sleepEndsAt - Date.now()) / 1000));
         void upnpSetSleepTimer(remainingSec);
       }
+      const { crossfadeSec } = useSettings.getState();
+      void upnpSetCrossfade(crossfadeSec > 0);
       if (queue[index]) void remoteLoadIndex(index, isPlaying, positionSec);
     },
     onTrackChanged: (index, positionSec, durationSec) => {
@@ -2864,6 +2890,14 @@ export function initRemoteIntegration() {
   };
   initUpnp(events);
   initJukebox(events);
+  // Sync crossfade toggle to Sonos whenever the setting changes.
+  let lastCrossfadeSec = useSettings.getState().crossfadeSec;
+  useSettings.subscribe((s) => {
+    if (s.crossfadeSec !== lastCrossfadeSec) {
+      lastCrossfadeSec = s.crossfadeSec;
+      if (isUpnpConnected()) void upnpSetCrossfade(s.crossfadeSec > 0);
+    }
+  });
   // Controls pressed in the notification/lock screen or volume buttons during
   // casting: the store actions are already routed to the renderer (remoteKind()).
   initCastMedia((action, value) => {
@@ -3051,24 +3085,15 @@ export function currentSong(state: PlayerState): Song | null {
 }
 
 /**
- * The song the mix now playing was built from, or null when what is playing is
- * still the queue's own album, playlist or artist.
+ * The song the mix now playing was built from, or null while what plays is
+ * still the queue's own album or playlist. Once playback crosses into the block
+ * autoplay appended, the header was still naming the album and linking to it
+ * (#65).
  *
- * Autoplay hands the queue a block of similar songs when it is about to run
- * out, and from the moment playback crosses into that block the source the
- * player is announcing has stopped being true: those songs are not in the
- * album, and the header is a link, so tapping it walked to a place that had
- * nothing to do with what was sounding (#65).
- *
- * The seed is worked out rather than stored: the block is appended in one
- * piece at the end, so the song right before it is the one the server was
- * asked about. That costs a short walk backwards and buys two things — the
- * name survives a restart with no field to persist, since the queue is saved
- * song by song, and skipping back into the album puts the album's name back on
- * its own.
- *
- * Not for radios: there the whole queue is the mix and the name it was started
- * with is already in `source`.
+ * Worked out rather than stored: the block goes on the end in one piece, so the
+ * song before it is the seed. That survives a restart with no field to persist,
+ * and skipping back puts the album's name back. Not for radios, where the whole
+ * queue is the mix.
  */
 export function mixSeedOf(state: Pick<PlayerState, 'queue' | 'index'>): Song | null {
   if (!state.queue[state.index]?.fromMix) return null;
@@ -3299,17 +3324,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   },
 
   toggle: () => {
-    // The restored track, if it is still waiting to go into the player: this
-    // press is what it was waiting for, so it goes in playing and at the
-    // position the queue was left at. Before the line below and not after it,
-    // because `endBootQuiet` installs it too and installs it PAUSED, which left
-    // this press with no player to act on and a second load racing the first
-    // one from zero.
-    if (pendingRestore != null && !remoteKind()) {
-      endBootQuiet(); // no catch-up: the load below does it, for its own song
-      void loadRestored(true);
-      return;
-    }
     // The one press that does not change track: what was restored is about to
     // be heard, so what the opening held back is due now.
     endBootQuiet(true);
@@ -3325,10 +3339,9 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     }
     const p = activePlayer();
     if (!p) {
-      // No player, and nothing waiting to become one (that was answered at the
-      // top): nothing could be loaded, which offline means none of the queue is
-      // on disk. `loadIndex` plays what can be played and says so when nothing
-      // can.
+      // No player yet: the restored queue never got as far as loading a track,
+      // which offline means none of it is on disk. Going through `loadIndex`
+      // plays what can be played, and says so when nothing can.
       const { queue, index } = get();
       if (queue[index]) void loadIndex(index, true);
       return;
@@ -3783,9 +3796,15 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       radioSeed: null,
       queueDealt: false,
     });
-    // The track waits, like the one the device's own copy brings back: this
-    // runs while the app is opening too (see `pendingRestore`).
-    pendingRestore = index;
+    // Load the track (without playing) and leave the position ready.
+    await loadIndex(index, false);
+    // A tap that landed while this was loading owns the player now (`loadToken`
+    // saw to that). What is left here belongs to the queue being restored, and
+    // running it against another one would drop somebody else's song at the
+    // position this one was left at, paused.
+    if (get().queue !== songs) return;
+    if (positionSec > 0) seekActive(positionSec);
+    usePlayerStore.setState({ positionSec, isPlaying: false });
   },
 
   restoreFromStorage: async () => {
@@ -3842,11 +3861,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       queueDealt: saved.dealt === true,
       repeat: isRepeatMode(saved.repeat) ? saved.repeat : 'off',
     });
-    // Not loaded here: the queue is on screen and the track goes into the
-    // player when the app is in use or the boot window runs out (see
-    // `pendingRestore`). The position is already in the store, which is where
-    // the load will read it from.
-    pendingRestore = index;
+    await loadIndex(index, false);
+    // Same as the server restore above: only if this queue is still the one.
+    if (get().queue !== saved.queue) return true;
+    if (positionSec > 0) seekActive(positionSec);
+    usePlayerStore.setState({ positionSec, isPlaying: false });
     return true;
   },
 
@@ -3904,8 +3923,6 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       // ignore
     }
     clearLockScreen();
-    // Nothing left to install: the queue it belonged to is going away.
-    pendingRestore = null;
     playedHistory = [];
     setStreamOffset(0);
     sourceHasLength = null;
@@ -3914,6 +3931,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     // goes with it, or the next profile would be handed this one's answer.
     transcodeOffsetSupported = null;
     transcodeOffsetAsking = null;
+    // What failed to play belonged to the queue that is going away, and song
+    // ids are only unique within the account that issued them.
+    failedSource.clear();
+    errorTrackId = null;
+    errorAttempts = 0;
     set({
       queue: [],
       index: 0,

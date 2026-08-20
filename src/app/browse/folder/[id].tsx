@@ -22,6 +22,7 @@ import { useSettings } from '@/store/settings';
 import { colors, fontSize, spacing, SCREEN_BOTTOM_PADDING, themed, useTheme } from '@/theme';
 import { BackChevron } from '@/components/BackChevron';
 import { useScreenBottomPadding } from '@/hooks/useScreenBottomPadding';
+import { useListPadding } from '@/hooks/useScreenSize';
 
 type Row =
   | { kind: 'dir'; id: string; name: string; year?: number; coverArt?: string }
@@ -29,6 +30,8 @@ type Row =
 
 export default function FolderBrowseScreen() {
   const bottomPad = useScreenBottomPadding();
+  // Rows stop growing at a reading measure and centre themselves (#131).
+  const listPad = useListPadding(spacing.lg);
   // Repaints on a change of appearance or accent: a stack keeps this screen
   // mounted while you are on another one, out of reach of anything else.
   useTheme();
@@ -91,7 +94,10 @@ export default function FolderBrowseScreen() {
           {...listPerf}
           data={rows}
           keyExtractor={(item) => (item.kind === 'dir' ? `d:${item.id}` : `s:${item.song.id}`)}
-          contentContainerStyle={[styles.list, { paddingBottom: bottomPad }]}
+          contentContainerStyle={[
+            styles.list,
+            { paddingBottom: bottomPad, paddingHorizontal: listPad },
+          ]}
           renderItem={({ item }) =>
             item.kind === 'dir' ? (
               <Pressable
@@ -143,7 +149,7 @@ const styles = themed((colors) => ({
     paddingVertical: spacing.md,
     gap: spacing.md,
   },
-  title: { flex: 1, color: colors.text, fontSize: fontSize.lg, fontWeight: '800', textAlign: 'center' },
+  title: { flex: 1, color: colors.text, fontSize: fontSize.lg, fontWeight: '600', textAlign: 'center' },
   list: { paddingHorizontal: spacing.lg, paddingBottom: SCREEN_BOTTOM_PADDING },
   // Same rhythm as TrackRow so folders and songs line up when a directory
   // holds both.

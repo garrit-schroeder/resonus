@@ -427,6 +427,16 @@ export const fontSize = {
   xxl: 32,
 } as const;
 
+/**
+ * How wide a bottom sheet is allowed to get.
+ *
+ * A phone never reaches it, so nothing moves there. On a tablet it is what
+ * keeps a list of six actions from being stretched across 1280 points, which
+ * is a menu you read by turning your head (#131). The sheets pair it with
+ * `alignSelf: 'center'` instead of pinning themselves to both edges.
+ */
+export const SHEET_MAX_WIDTH = 560;
+
 /** Height of the tab bar (not including the bottom safe area). */
 export const TAB_BAR_HEIGHT = 60;
 

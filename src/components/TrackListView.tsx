@@ -10,7 +10,6 @@ import { useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Animated,
-  Dimensions,
   Keyboard,
   Pressable,
   ScrollView,
@@ -45,14 +44,43 @@ import { BackChevron } from './BackChevron';
 import { Cover } from './Cover';
 import { ExplicitBadge, useExplicitBadge } from './ExplicitBadge';
 import { FavoriteButton } from './FavoriteButton';
+import { centredPadding, useScreenSize } from '@/hooks/useScreenSize';
 import { SelectionBar } from './SelectionBar';
 import { TrackRow } from './TrackRow';
 
-const COVER = Math.min(Dimensions.get('window').width * 0.58, 250);
+/**
+ * The cover across the top of an album or a playlist.
+ *
+ * A share of the width, capped, and measured while rendering rather than once
+ * when the file was imported: turning the phone used to leave it at the size
+ * it had when the app started. The height matters as much as the width on a
+ * screen lying on its side, where 250 points of picture is most of the page
+ * and the tracklist is what people came for (#131).
+ */
+function coverSize(width: number, height: number): number {
+  return Math.round(Math.min(width * 0.58, height * 0.4, 250));
+}
 const TOPBAR_H = 48;
 /** Height of the hidden search bar ("Find in playlist" Spotify style),
  * including the separation gap from the cover. */
 const SEARCH_H = 72;
+
+/**
+ * The list, with its scroll wired straight to what the scroll animates.
+ *
+ * The cover fading, the bar coming in and the gradient following the scroll all
+ * hang off the scroll position, and every frame of them used to go through JS:
+ * the list moved natively while they waited behind whatever else the thread was
+ * doing. With music playing there is always something else, and what it looks
+ * like is a header stuttering against a list that does not (#154). Native, they
+ * cannot be late whatever JS is up to.
+ *
+ * The search bar is the one thing that stays on this side: it animates a
+ * height, which the native side does not do, so it is kept in a wrapper of its
+ * own rather than added to the scroll (mixing the two in one expression is what
+ * would break both).
+ */
+const AnimatedList = Animated.createAnimatedComponent(GHFlatList) as typeof GHFlatList;
 
 /** Normalizes for searching: lowercase and without accents. */
 function normQ(s: string): string {
@@ -206,6 +234,7 @@ export function TrackListView({
   const router = useRouter();
   const t = useT();
   const insets = useSafeAreaInsets();
+  const { width: screenW, height: screenH } = useScreenSize();
   const bottomPad = useScreenBottomPadding();
   const dominant = useDominantColor(coverUri);
   const headerColor = accentColor ?? dominant;
@@ -346,8 +375,9 @@ export function TrackListView({
 
   // Without cover, the header is shorter: the gradient and bar collapse adjust
   // to a smaller distance so the transition fits.
-  const cover = hideCover ? 0 : COVER;
-  const collapse = hideCover ? 120 : COVER;
+  const art = coverSize(screenW, screenH);
+  const cover = hideCover ? 0 : art;
+  const collapse = hideCover ? 120 : art;
   // The gradient tail dies roughly where the header ends (title + actions):
   // it blends the color with the list's black without tinting the first row
   // (tested: extending it to the rows looked messy).
@@ -412,26 +442,37 @@ export function TrackListView({
             styles.gradientWrap,
             {
               height: gradientH,
-              // Follows the scroll 1:1 and moves down with the revealed search bar
-              // (which pushes the header down without moving the scroll offset).
-              transform: [{ translateY: Animated.add(searchH, Animated.multiply(scrollY, -1)) }],
+              // Moves down with the revealed search bar, which pushes the header
+              // down without moving the scroll offset. On its own view, because
+              // this is a height animated from JS and the scroll below is not:
+              // one expression holding both would drag the scroll back onto this
+              // side, which is the whole thing being avoided (see `AnimatedList`).
+              transform: [{ translateY: searchH }],
             },
           ]}
         >
-          {/* Color band above the gradient: when the search bar is revealed,
-              content shifts down SEARCH_H px and this fills the gap at the top. */}
-          {searchable ? (
-            <View style={[styles.gradientAbove, { backgroundColor: headerColor }]} />
-          ) : null}
-          <LinearGradient
-            colors={[headerColor, colors.background]}
-            style={StyleSheet.absoluteFill}
-          />
+          <Animated.View
+            style={[
+              StyleSheet.absoluteFill,
+              // And follows the scroll 1:1, natively.
+              { transform: [{ translateY: Animated.multiply(scrollY, -1) }] },
+            ]}
+          >
+            {/* Color band above the gradient: when the search bar is revealed,
+                content shifts down SEARCH_H px and this fills the gap at the top. */}
+            {searchable ? (
+              <View style={[styles.gradientAbove, { backgroundColor: headerColor }]} />
+            ) : null}
+            <LinearGradient
+              colors={[headerColor, colors.background]}
+              style={StyleSheet.absoluteFill}
+            />
+          </Animated.View>
         </Animated.View>
       )}
 
       <GestureDetector gesture={revealPan}>
-      <GHFlatList
+      <AnimatedList
         ref={listRef}
         simultaneousHandlers={revealPanRef}
         {...listPerf}
@@ -448,11 +489,20 @@ export function TrackListView({
         keyboardDismissMode="on-drag"
         contentContainerStyle={[
           styles.list,
-          { paddingTop: insets.top + TOPBAR_H + spacing.md, paddingBottom: bottomPad },
+          {
+            paddingTop: insets.top + TOPBAR_H + spacing.md,
+            paddingBottom: bottomPad,
+            // Centred on a wide screen instead of stretched across it: a row
+            // whose title is at one edge and whose duration is at the other,
+            // a hand's width apart, is a phone screen that was pulled (#131).
+            paddingHorizontal: centredPadding(screenW, spacing.lg),
+          },
         ]}
         scrollEventThrottle={16}
         onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
-          useNativeDriver: false,
+          // The listener still runs on this side: a native event is delivered to
+          // JS as well, it just no longer has to be for the animation to move.
+          useNativeDriver: true,
           listener: (e: NativeSyntheticEvent<NativeScrollEvent>) => {
             const y = e.nativeEvent.contentOffset.y;
             lastOffsetY.current = y;
@@ -511,12 +561,12 @@ export function TrackListView({
                     accessibilityRole="imagebutton"
                     accessibilityLabel={t('View cover')}
                   >
-                    {renderCover ? renderCover(COVER) : <Cover uri={coverUri} size={COVER} />}
+                    {renderCover ? renderCover(art) : <Cover uri={coverUri} size={art} />}
                   </Pressable>
                 ) : renderCover ? (
-                  renderCover(COVER)
+                  renderCover(art)
                 ) : (
-                  <Cover uri={coverUri} size={COVER} />
+                  <Cover uri={coverUri} size={art} />
                 )}
               </Animated.View>
             )}
@@ -963,7 +1013,7 @@ const styles = themed((colors) => ({
   title: {
     color: colors.text,
     fontSize: fontSize.xxl,
-    fontWeight: '800',
+    fontWeight: '600',
   },
   subtitle: {
     color: colors.textSecondary,

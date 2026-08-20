@@ -294,10 +294,10 @@ index 992239ba7631ce0c97c0b41c5fbf61cc842386fe..04a46b5a1c184260d41bbd458d66622d
      runBlocking(appContext.mainQueue.coroutineContext) { block() }
  
 diff --git a/android/src/main/java/expo/modules/audio/AudioPlayer.kt b/android/src/main/java/expo/modules/audio/AudioPlayer.kt
-index c76a9fd2a53743a691782e0f67d0d71401df58f6..e3140c63b3f338b95b5f95ac62246440aa034864 100644
+index c76a9fd2a53743a691782e0f67d0d71401df58f6..460b21db9173c33be03e03c661649b833f8cfbc8 100644
 --- a/android/src/main/java/expo/modules/audio/AudioPlayer.kt
 +++ b/android/src/main/java/expo/modules/audio/AudioPlayer.kt
-@@ -8,6 +8,8 @@ import android.util.Log
+@@ -8,11 +8,14 @@ import android.util.Log
  import androidx.core.content.ContextCompat
  import androidx.media3.common.AudioAttributes
  import androidx.media3.common.C
@@ -306,7 +306,13 @@ index c76a9fd2a53743a691782e0f67d0d71401df58f6..e3140c63b3f338b95b5f95ac62246440
  import androidx.media3.common.PlaybackException
  import androidx.media3.common.PlaybackParameters
  import androidx.media3.common.Player
-@@ -24,6 +26,11 @@ import java.lang.ref.WeakReference
+ import androidx.media3.common.util.UnstableApi
+ import androidx.media3.exoplayer.DefaultLoadControl
++import androidx.media3.exoplayer.DefaultRenderersFactory
+ import androidx.media3.exoplayer.ExoPlayer
+ import androidx.media3.exoplayer.source.MediaSource
+ import androidx.media3.session.MediaSession
+@@ -24,6 +27,11 @@ import java.lang.ref.WeakReference
  
  private const val PLAYBACK_STATUS_UPDATE = "playbackStatusUpdate"
  private const val AUDIO_SAMPLE_UPDATE = "audioSampleUpdate"
@@ -318,11 +324,20 @@ index c76a9fd2a53743a691782e0f67d0d71401df58f6..e3140c63b3f338b95b5f95ac62246440
  private const val SEEK_JUMP_INTERVAL_MS: Long = 10_000
  
  @UnstableApi
-@@ -36,7 +43,30 @@ class AudioPlayer(
+@@ -36,7 +44,39 @@ class AudioPlayer(
  ) : BaseAudioPlayer(
    player = ExoPlayer.Builder(context)
      .setLooper(context.mainLooper)
 -    .setAudioAttributes(AudioAttributes.DEFAULT, false)
++    // Android does not require devices to ship an ALAC decoder, and Samsung's
++    // codec list does not include one. Keep every platform decoder first, then
++    // let Media3 load the bundled FFmpeg extension only for an unsupported
++    // format. That extension contains ALAC and no other codec.
++    .setRenderersFactory(
++      DefaultRenderersFactory(context).setExtensionRendererMode(
++        DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
++      )
++    )
 +    // Say what this is. AudioAttributes.DEFAULT leaves the content type as
 +    // UNKNOWN, and the system reads it to decide how to treat the audio: which
 +    // volume it belongs to, and whether it can go down the low power path
@@ -350,7 +365,7 @@ index c76a9fd2a53743a691782e0f67d0d71401df58f6..e3140c63b3f338b95b5f95ac62246440
      .setSeekForwardIncrementMs(SEEK_JUMP_INTERVAL_MS)
      .setSeekBackIncrementMs(SEEK_JUMP_INTERVAL_MS)
      .apply {
-@@ -64,7 +94,20 @@ class AudioPlayer(
+@@ -64,7 +104,20 @@ class AudioPlayer(
    var isActiveForLockScreen = false
    internal var metadata: Metadata? = null
    internal var lockScreenOptions: AudioLockScreenOptions? = null
@@ -372,7 +387,7 @@ index c76a9fd2a53743a691782e0f67d0d71401df58f6..e3140c63b3f338b95b5f95ac62246440
    val serviceConnection = AudioPlaybackServiceConnection(WeakReference(this), appContext)
  
    val isLive: Boolean
-@@ -85,11 +128,46 @@ class AudioPlayer(
+@@ -85,11 +138,46 @@ class AudioPlayer(
  
    init {
      installPlayerListeners()
@@ -419,7 +434,7 @@ index c76a9fd2a53743a691782e0f67d0d71401df58f6..e3140c63b3f338b95b5f95ac62246440
    fun setMediaSource(source: MediaSource) {
      previousPlaybackState = Player.STATE_IDLE
      ref.setMediaSource(source)
-@@ -97,6 +175,50 @@ class AudioPlayer(
+@@ -97,6 +185,50 @@ class AudioPlayer(
      startUpdating()
    }
  
@@ -470,7 +485,7 @@ index c76a9fd2a53743a691782e0f67d0d71401df58f6..e3140c63b3f338b95b5f95ac62246440
    fun setActiveForLockScreen(active: Boolean, metadata: Metadata? = null, options: AudioLockScreenOptions? = null) {
      if (active) {
        this.metadata = metadata
-@@ -221,7 +343,8 @@ class AudioPlayer(
+@@ -221,7 +353,8 @@ class AudioPlayer(
  
    internal fun assignBasicMediaSession() {
      mediaSession.release()

@@ -29,6 +29,30 @@ import { timed } from './perfLog';
 /** Downloaded album: the server's, plus its local cover and download date. */
 export type DlAlbum = Album & { coverUri?: string; addedAt?: number; dlBytes?: number };
 
+/**
+ * A downloaded album's artist, with their own picture.
+ *
+ * Artists used to be worked out from the albums alone, which gives their name
+ * and their record count but no likeness of them: offline, the artist screen
+ * wore whichever album cover came first. So this table holds the one thing the
+ * albums cannot say. It has no `data` column, unlike the other two, because
+ * there is nothing else of an artist to keep: the discography is the albums.
+ *
+ * `serverId` is what the server calls them. Everything else here is keyed by
+ * `id`, which is their name normalized, because that is the id a scan of the
+ * phone would give them and downloads have always merged with a scan. Keeping
+ * both is what lets an artist opened by the server's id — from the mirror, or
+ * from a search made while online — land on this same artist offline instead
+ * of on an empty screen.
+ */
+export interface DlArtist {
+  id: string;
+  name: string;
+  serverId?: string;
+  coverUri?: string;
+  dlBytes?: number;
+}
+
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
 -- The write-ahead log is only truncated back down when a checkpoint is told
@@ -60,6 +84,14 @@ CREATE TABLE IF NOT EXISTS albums (
   data TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS albums_artist ON albums(artist_id);
+CREATE TABLE IF NOT EXISTS artists (
+  id TEXT PRIMARY KEY NOT NULL,
+  name TEXT,
+  server_id TEXT,
+  dl_bytes INTEGER,
+  cover_uri TEXT
+);
+CREATE INDEX IF NOT EXISTS artists_server ON artists(server_id);
 `;
 
 /** One handle per profile directory, opened once. */
@@ -233,6 +265,36 @@ export async function addToCatalog(
     db.withTransactionAsync(async () => {
       for (const s of songs) await insertSong(db, s);
       for (const a of albums) await insertAlbum(db, a);
+    }),
+  );
+}
+
+/**
+ * Writes down the artists of what has been downloaded.
+ *
+ * An upsert rather than a replace, and each field kept when the new row says
+ * nothing about it: the artist is written once when their first album is
+ * downloaded, when there may be no picture to be had yet, and again later from
+ * the artist screen, which is where the picture usually comes from. A replace
+ * would have the second write undo the first.
+ */
+export async function saveArtists(dir: string, artists: DlArtist[]): Promise<void> {
+  if (artists.length === 0) return;
+  const db = await catalogDb(dir);
+  await serialized(() =>
+    db.withTransactionAsync(async () => {
+      for (const a of artists) {
+        await db.runAsync(
+          `INSERT INTO artists (id, name, server_id, dl_bytes, cover_uri)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             name = excluded.name,
+             server_id = COALESCE(excluded.server_id, server_id),
+             dl_bytes = COALESCE(excluded.dl_bytes, dl_bytes),
+             cover_uri = COALESCE(excluded.cover_uri, cover_uri)`,
+          [a.id, a.name, a.serverId ?? null, a.dlBytes ?? null, a.coverUri ?? null],
+        );
+      }
     }),
   );
 }
@@ -572,6 +634,84 @@ export async function allAlbums(dir: string): Promise<DlAlbum[]> {
   return rows.map((r) => ({ ...(JSON.parse(r.data) as DlAlbum), songCount: r.n }));
 }
 
+/** Every artist written down, for the shelf that draws them. */
+export async function allArtists(dir: string): Promise<DlArtist[]> {
+  const db = await catalogDb(dir);
+  const rows = await db.getAllAsync<{
+    id: string;
+    name: string | null;
+    server_id: string | null;
+    cover_uri: string | null;
+  }>('SELECT id, name, server_id, cover_uri FROM artists');
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name ?? '',
+    serverId: r.server_id ?? undefined,
+    coverUri: r.cover_uri ?? undefined,
+  }));
+}
+
+/**
+ * The artist the server calls this, if their music is downloaded.
+ *
+ * The crossing between the two ids, and the reason the column exists: offline,
+ * anything that remembers an artist from when there was a connection — a
+ * recent search, a mirrored album — names them the server's way, and that name
+ * means nothing to a catalog keyed by the artist's own.
+ */
+export async function artistByServerId(
+  dir: string,
+  serverId: string,
+): Promise<DlArtist | undefined> {
+  const db = await catalogDb(dir);
+  const row = await db.getFirstAsync<{
+    id: string;
+    name: string | null;
+    cover_uri: string | null;
+  }>('SELECT id, name, cover_uri FROM artists WHERE server_id = ? LIMIT 1', [serverId]);
+  if (!row) return undefined;
+  return {
+    id: row.id,
+    name: row.name ?? '',
+    serverId,
+    coverUri: row.cover_uri ?? undefined,
+  };
+}
+
+/** And back the other way, for an id that only means something on this phone. */
+export async function serverIdOfArtist(dir: string, id: string): Promise<string | undefined> {
+  const db = await catalogDb(dir);
+  const row = await db.getFirstAsync<{ server_id: string | null }>(
+    'SELECT server_id FROM artists WHERE id = ? LIMIT 1',
+    [id],
+  );
+  return row?.server_id ?? undefined;
+}
+
+/**
+ * Artists whose last album has just gone. Returned before they are deleted, so
+ * the caller can take their picture off the disk as well.
+ */
+export async function dropEmptyArtists(dir: string): Promise<DlArtist[]> {
+  const db = await catalogDb(dir);
+  const rows = await db.getAllAsync<{ id: string; name: string | null; cover_uri: string | null }>(
+    `SELECT id, name, cover_uri FROM artists WHERE id NOT IN
+       (SELECT DISTINCT artist_id FROM albums WHERE artist_id IS NOT NULL)`,
+  );
+  if (rows.length === 0) return [];
+  await serialized(() =>
+    db.runAsync(
+      `DELETE FROM artists WHERE id NOT IN
+         (SELECT DISTINCT artist_id FROM albums WHERE artist_id IS NOT NULL)`,
+    ),
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name ?? '',
+    coverUri: r.cover_uri ?? undefined,
+  }));
+}
+
 /** How many songs there are, without reading any of them. */
 export async function songCount(dir: string): Promise<number> {
   const db = await catalogDb(dir);
@@ -596,11 +736,16 @@ export async function usageBytes(
   const albums = await db.getFirstAsync<{ total: number | null }>(
     'SELECT SUM(dl_bytes) AS total FROM albums',
   );
+  // The artists' pictures are files on this disk like any other, and a library
+  // of a few hundred of them is not nothing.
+  const artists = await db.getFirstAsync<{ total: number | null }>(
+    'SELECT SUM(dl_bytes) AS total FROM artists',
+  );
   const missing = await db.getAllAsync<{ id: string; local_uri: string }>(
     'SELECT id, local_uri FROM songs WHERE local_uri IS NOT NULL AND dl_bytes IS NULL',
   );
   return {
-    known: (songs?.total ?? 0) + (albums?.total ?? 0),
+    known: (songs?.total ?? 0) + (albums?.total ?? 0) + (artists?.total ?? 0),
     missing: missing.map((r) => ({ id: r.id, uri: r.local_uri })),
   };
 }

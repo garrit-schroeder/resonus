@@ -575,7 +575,7 @@ const styles = themed((colors) => ({
     // The brand green: on login the accent may be a previous session's.
     color: colors.brand,
     fontSize: fontSize.xxl,
-    fontWeight: '800',
+    fontWeight: '600',
     textAlign: 'center',
   },
   profiles: { gap: spacing.sm, marginBottom: spacing.lg },
@@ -657,7 +657,7 @@ const styles = themed((colors) => ({
   stepTitle: {
     color: colors.text,
     fontSize: fontSize.xl,
-    fontWeight: '800',
+    fontWeight: '600',
     textAlign: 'center',
     marginBottom: spacing.xs,
   },

@@ -5,8 +5,8 @@ import { Link } from 'expo-router';
 import { useEffect, useMemo, useReducer, useState } from 'react';
 import {
   ActivityIndicator,
-  Dimensions,
   FlatList,
+  StyleSheet,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -47,27 +47,55 @@ import { useSettings, type ExploreChipKey, type HomeSectionKey } from '@/store/s
 import { useSongMenu } from '@/store/songMenu';
 import { colors, fontSize, radius, spacing, themed, useTheme } from '@/theme';
 import { useScreenBottomPadding } from '@/hooks/useScreenBottomPadding';
+import { columnsFor, useScreenSize } from '@/hooks/useScreenSize';
 import { listPerf } from '@/lib/listPerf';
 import { haptic } from '@/lib/haptics';
 import { bump } from '@/lib/perfLog';
 import { playShuffle } from '@/lib/playShuffle';
 
-const TILE_W = (Dimensions.get('window').width - spacing.lg * 2 - spacing.sm) / 2;
+/**
+ * How wide a quick tile wants to be, in dp.
+ *
+ * Two of them across a phone is what this grid has always been, and two across
+ * a tablet is two buttons the length of a forearm. What it is really made of
+ * is a cover and a name beside it, so that is what decides how many fit (#131).
+ */
+const TILE_IDEAL = 300;
+
+/**
+ * How big the covers on the shelves are.
+ *
+ * 150 is what a phone has always shown. On a tablet the same number is a row
+ * of stamps: the screen is three times as wide and the shelf answered by
+ * showing three times as many, each no bigger than before (#131).
+ */
+const SHELF_CARD = 150;
+const SHELF_CARD_WIDE = 190;
+
+/** How big this screen's shelf cards are. */
+function useShelfCard(): number {
+  const { wide } = useScreenSize();
+  return wide ? SHELF_CARD_WIDE : SHELF_CARD;
+}
 
 function QuickTile({
   href,
   name,
   cover,
   favorites,
+  width,
 }: {
   href: string;
   name: string;
   cover?: string;
   favorites?: boolean;
+  width: number;
 }) {
   return (
     <Link href={href} asChild>
-      <Pressable style={styles.tile}>
+      {/* Flattened, not an array: expo-router hands the style straight to the
+          child it clones and refuses a list. */}
+      <Pressable style={StyleSheet.flatten([styles.tile, { width }])}>
         {favorites ? (
           <FavoritesArt size={52} />
         ) : (
@@ -82,6 +110,12 @@ function QuickTile({
 }
 
 function QuickGrid() {
+  // Measured on every render, not once when the file was first imported:
+  // otherwise turning the phone leaves the tiles at the width they had when
+  // the app started (#131).
+  const { width } = useScreenSize();
+  const columns = columnsFor(width, TILE_IDEAL, 2, 4);
+  const tile = (width - spacing.lg * 2 - spacing.sm * (columns - 1)) / columns;
   const canFetch = useAuthStore((s) => !!s.auth || s.offline);
   const offline = useAuthStore((s) => s.offline);
   const times = useLastPlayed((s) => s.times);
@@ -169,9 +203,11 @@ function QuickGrid() {
 
   return (
     <View style={styles.grid}>
-      {withFavorites ? <QuickTile href="/favorites" name={t('Favorites')} favorites /> : null}
+      {withFavorites ? (
+        <QuickTile href="/favorites" name={t('Favorites')} favorites width={tile} />
+      ) : null}
       {tiles.map((it) => (
-        <QuickTile key={it.key} href={it.href} name={it.name} cover={it.cover} />
+        <QuickTile key={it.key} href={it.href} name={it.name} cover={it.cover} width={tile} />
       ))}
     </View>
   );
@@ -211,6 +247,7 @@ function AlbumSection({
   type: 'recent' | 'newest' | 'frequent' | 'random';
 }) {
   const canFetch = useAuthStore((s) => !!s.auth || s.offline);
+  const card = useShelfCard();
   const { data, isLoading } = useQuery({
     queryKey: ['albumList', type],
     queryFn: () => getAlbumList(type),
@@ -237,7 +274,7 @@ function AlbumSection({
         keyExtractor={(item: Album) => item.id}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.rowContent}
-        renderItem={({ item }) => <AlbumCard album={item} />}
+        renderItem={({ item }) => <AlbumCard album={item} width={card} />}
       />
     </View>
   );
@@ -260,6 +297,7 @@ const MOST_PLAYED_SONGS = 30;
 function MostPlayedSongsSection({ title }: { title: string }) {
   const openSongMenu = useSongMenu((s) => s.open);
   const canFetch = useAuthStore((s) => !!s.auth || s.offline);
+  const card = useShelfCard();
   const playQueue = usePlayerStore((s) => s.playQueue);
   const currentId = usePlayerStore((s) => s.queue[s.index]?.id);
   const { accent } = useTheme();
@@ -297,7 +335,7 @@ function MostPlayedSongsSection({ title }: { title: string }) {
         renderItem={({ item, index }) => (
           <SongCard
             song={item}
-            width={150}
+            width={card}
             accent={accent}
             isCurrent={item.id === currentId}
             // The whole shelf goes into the queue, not the song on its own:
@@ -323,6 +361,7 @@ function MostPlayedSongsSection({ title }: { title: string }) {
  *  playlists), so it's not filtered like server-only ones. */
 function PlaylistsSection({ title }: { title: string }) {
   const canFetch = useAuthStore((s) => !!s.auth || s.offline);
+  const card = useShelfCard();
   const { data, isLoading } = useQuery({
     queryKey: ['playlists'],
     queryFn: () => getPlaylists(),
@@ -349,7 +388,7 @@ function PlaylistsSection({ title }: { title: string }) {
         keyExtractor={(item: Playlist) => item.id}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.rowContent}
-        renderItem={({ item }) => <PlaylistCard playlist={item} />}
+        renderItem={({ item }) => <PlaylistCard playlist={item} width={card} />}
       />
     </View>
   );
@@ -365,7 +404,9 @@ function shuffled<T>(arr: T[]): T[] {
   return a;
 }
 
+/** And the round ones, which are their own shelf. */
 const ARTIST_SIZE = 130;
+const ARTIST_SIZE_WIDE = 165;
 
 /**
  * How long this shelf waits before asking.
@@ -381,6 +422,8 @@ const ARTISTS_DELAY_MS = 4000;
 /** Row of random artists (rediscovery). */
 function ArtistSection({ title, reshuffleKey }: { title: string; reshuffleKey: number }) {
   const canFetch = useAuthStore((s) => !!s.auth || s.offline);
+  const { wide } = useScreenSize();
+  const artistSize = wide ? ARTIST_SIZE_WIDE : ARTIST_SIZE;
   // Offline the list comes off the device, so there is nothing to keep out of
   // the way of and no reason to wait.
   const [ready, setReady] = useState(() => useAuthStore.getState().offline);
@@ -425,7 +468,7 @@ function ArtistSection({ title, reshuffleKey }: { title: string; reshuffleKey: n
         keyExtractor={(item: Artist) => item.id}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.rowContent}
-        renderItem={({ item }) => <ArtistCard artist={item} width={ARTIST_SIZE} />}
+        renderItem={({ item }) => <ArtistCard artist={item} width={artistSize} />}
       />
     </View>
   );
@@ -439,6 +482,7 @@ const DISCOVER_POOL = 50;
 
 function DiscoverSection({ title, reshuffleKey }: { title: string; reshuffleKey: number }) {
   const canFetch = useAuthStore((s) => !!s.auth || s.offline);
+  const card = useShelfCard();
   const { data, isLoading } = useQuery({
     queryKey: ['albumList', 'discover'],
     queryFn: () => getAlbumList('recent', DISCOVER_POOL, DISCOVER_OFFSET),
@@ -471,7 +515,7 @@ function DiscoverSection({ title, reshuffleKey }: { title: string; reshuffleKey:
         keyExtractor={(item: Album) => item.id}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.rowContent}
-        renderItem={({ item }) => <AlbumCard album={item} />}
+        renderItem={({ item }) => <AlbumCard album={item} width={card} />}
       />
     </View>
   );
@@ -847,7 +891,7 @@ const styles = themed((colors) => ({
     marginBottom: spacing.lg,
   },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flexShrink: 1 },
-  greeting: { color: colors.text, fontSize: fontSize.xxl, fontWeight: '800', flexShrink: 1 },
+  greeting: { color: colors.text, fontSize: fontSize.xxl, fontWeight: '600', flexShrink: 1 },
   headerRight: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -884,7 +928,6 @@ const styles = themed((colors) => ({
     marginBottom: spacing.xl,
   },
   tile: {
-    width: TILE_W,
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,

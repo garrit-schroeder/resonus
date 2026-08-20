@@ -12,7 +12,7 @@ import { type ReactNode, useMemo, useRef, useState } from 'react';
 import { type Song } from '@/api/subsonic';
 import { SortSheet } from '@/components/SortSheet';
 import { useDownloads } from '@/store/downloads';
-import { DEFAULT_SORT, useSortPrefs, type SortField, type SortPref } from '@/store/sortPrefs';
+import { DEFAULT_SORT, useSortPrefs, type SongSortField, type SortPref } from '@/store/sortPrefs';
 
 /**
  * `recent` is the order the list arrived in, which is what "Default" says
@@ -20,7 +20,7 @@ import { DEFAULT_SORT, useSortPrefs, type SortField, type SortPref } from '@/sto
  * means what you played or opened last. Screens where the order it arrived in
  * has a name of its own give it one (see `labels`).
  */
-const SORT_LABEL: Record<SortField, string> = {
+const SORT_LABEL: Record<SongSortField, string> = {
   recent: 'Default',
   added: 'Recently added',
   alpha: 'Alphabetical',
@@ -30,13 +30,13 @@ const SORT_LABEL: Record<SortField, string> = {
 };
 
 /** Default offered fields (favorites): 'recent' = server order. */
-const DEFAULT_FIELDS: SortField[] = ['recent', 'alpha', 'artist', 'album', 'downloaded'];
+const DEFAULT_FIELDS: SongSortField[] = ['recent', 'alpha', 'artist', 'album', 'downloaded'];
 
 interface SortOptions {
   /** Which fields to offer and in which order (the first is equivalent to "unsorted"). */
-  fields?: SortField[];
+  fields?: SongSortField[];
   /** Custom labels per field (e.g. 'recent' → "Custom" in playlists). */
-  labels?: Partial<Record<SortField, string>>;
+  labels?: Partial<Record<SongSortField, string>>;
   /** Default sort if the user hasn't chosen one. */
   defaultSort?: SortPref;
 }
@@ -122,7 +122,7 @@ export function useSongSort(
       options={fields.map((f) => ({ key: f, label: options?.labels?.[f] ?? SORT_LABEL[f] }))}
       field={field}
       dir={dir}
-      onPick={(next, d) => update({ field: next as SortField, dir: d })}
+      onPick={(next, d) => update({ field: next as SongSortField, dir: d })}
       openRef={openRef}
     />
   );

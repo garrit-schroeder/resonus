@@ -513,6 +513,7 @@
   "Your server doesn't support radio covers": "El teu servidor no admet caràtules d'emissora",
   "default": "predeterminada",
   "{name} is not available yet 🚧": "{name} encara no està disponible 🚧",
+  "{n} added to favorites": "{n} afegides als preferits",
   "{n} added to “{name}”": "{n} afegides a «{name}»",
   "{n} items": "{n} elements",
   "{n} minutes": "{n} minuts",

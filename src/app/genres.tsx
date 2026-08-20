@@ -3,7 +3,6 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import {
-  Dimensions,
   FlatList,
   Pressable,
   Text,
@@ -32,16 +31,25 @@ import {
 import { listPerf } from '@/lib/listPerf';
 import { BackChevron } from '@/components/BackChevron';
 import { useScreenBottomPadding } from '@/hooks/useScreenBottomPadding';
+import { columnsFor, useScreenSize } from '@/hooks/useScreenSize';
 
-// Width of each card in the 2-column grid (same as in Search), so the loading
-// skeleton matches the actual cards exactly.
-const GENRE_W = (Dimensions.get('window').width - spacing.lg * 2 - spacing.sm) / 2;
+/**
+ * How wide a genre card wants to be, in dp. The same measure Search uses, so
+ * the two grids match, and it is what decides how many go across: two on a
+ * phone, more on anything wider, and re-worked out on a turn (#131).
+ */
+const GENRE_IDEAL = 220;
 
 export default function GenresScreen() {
   // Repaints on a change of appearance or accent: a stack keeps this screen
   // mounted while you are on another one, out of reach of anything else.
   useTheme();
   const bottomPad = useScreenBottomPadding();
+  const { width } = useScreenSize();
+  const columns = columnsFor(width, GENRE_IDEAL, 2, 5);
+  // The cards themselves stretch to fill their column; this is for the
+  // skeleton, which has to come out the same size as what it stands in for.
+  const cardW = (width - spacing.lg * 2 - spacing.sm * (columns - 1)) / columns;
   const t = useT();
   const auth = useAuthStore((s) => s.auth);
   const [query, setQuery] = useState('');
@@ -86,7 +94,7 @@ export default function GenresScreen() {
 
       {isLoading ? (
         <View style={styles.skeleton}>
-          <GenreGridSkeleton width={GENRE_W} />
+          <GenreGridSkeleton width={cardW} />
         </View>
       ) : isError ? (
         <Message text={t("Couldn't load genres.")} onRetry={() => refetch()} />
@@ -97,7 +105,8 @@ export default function GenresScreen() {
           keyboardShouldPersistTaps="handled"
           data={genres}
           keyExtractor={(item) => item.value}
-          numColumns={2}
+          key={columns}
+          numColumns={columns}
           columnWrapperStyle={{ gap: spacing.sm }}
           contentContainerStyle={[styles.list, { paddingBottom: bottomPad }]}
           renderItem={({ item }: { item: Genre }) => <GenreCard name={item.value} />}
@@ -123,7 +132,7 @@ const styles = themed((colors) => ({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
   },
-  title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '800' },
+  title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '600' },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',

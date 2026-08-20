@@ -39,7 +39,7 @@ import {
   useUpnp,
   type UpnpDevice,
 } from '@/store/upnp';
-import { colors, fontSize, spacing, themed } from '@/theme';
+import { colors, fontSize, SHEET_MAX_WIDTH, spacing, themed } from '@/theme';
 
 export function OutputSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const insets = useSafeAreaInsets();
@@ -413,9 +413,11 @@ const styles = themed((colors) => ({
   backdrop: { ...StyleSheet.absoluteFill, backgroundColor: colors.backdrop },
   sheet: {
     position: 'absolute',
-    left: 0,
-    right: 0,
     bottom: 0,
+    // Centred and no wider than a sheet wants to be (#131).
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: SHEET_MAX_WIDTH,
     maxHeight: '84%',
     backgroundColor: colors.surface,
     borderTopLeftRadius: 16,

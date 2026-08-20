@@ -129,6 +129,11 @@ interface CatAlbum {
   // Persisted by `toLocalAlbum` (it spreads the full server Album), so multi-disc
   // subtitles survive offline; the narrow shape just has to keep them typed.
   discTitles?: Album['discTitles'];
+  // Same story, and the reason an offline discography was one undivided shelf:
+  // what kind of record this is was in the catalog all along and stopped here,
+  // at the shape that describes it (see `releaseGroups`).
+  releaseTypes?: Album['releaseTypes'];
+  isCompilation?: Album['isCompilation'];
 }
 interface CatArtist {
   id: string;
@@ -235,6 +240,8 @@ function toAlbum(local: CatAlbum): Album {
     songCount: local.songCount,
     year: local.year,
     discTitles: local.discTitles,
+    releaseTypes: local.releaseTypes,
+    isCompilation: local.isCompilation,
   };
 }
 
@@ -402,8 +409,14 @@ export async function getArtist(artistId: string): Promise<{ artist: Artist; alb
   const dir = downloadsDir();
   if (dir) {
     try {
-      const shelf = (await getDownloadShelf()).artists.find((a) => a.id === artistId);
-      let rows = await Cat.artistAlbums(dir, artistId);
+      // The id may be the server's, which this catalog is not keyed by: it
+      // comes from anything that remembers the artist from when there was a
+      // connection — a recent search, a mirrored album, the queue. They are
+      // the same artist, and answering "nothing here" for one of their two
+      // names is what left people on an artist screen with no records on it.
+      const id = (await Cat.artistByServerId(dir, artistId))?.id ?? artistId;
+      const shelf = (await getDownloadShelf()).artists.find((a) => a.id === id);
+      let rows = await Cat.artistAlbums(dir, id);
       let name = shelf?.name;
       if (rows.length === 0 || !name) {
         // Nothing under their name, or no name to show. Both happen to an
@@ -411,14 +424,25 @@ export async function getArtist(artistId: string): Promise<{ artist: Artist; alb
         // made from the strings the tags carry, so theirs belongs to the songs
         // and not to any album. Their name and their records are in the songs,
         // and showing the id instead is how "bring me the horizon . dimension
-        // 32" ended up as somebody's name on screen.
+        // 32" ended up as somebody's name on screen. Asked with the id as it
+        // arrived, since a song carries the server's artist id and not ours.
         const found = await Cat.artistFromSongs(dir, artistId);
         name = name ?? found.name;
         if (rows.length === 0) rows = await Cat.albumsByIds(dir, found.albumIds);
       }
       if (rows.length > 0 || name) {
         return {
-          artist: { id: artistId, name: name ?? rows[0]?.artist ?? '', albumCount: rows.length },
+          artist: {
+            // The id as it was asked for, whichever of the two it is: the
+            // screen is already showing it and everything it does next is
+            // keyed by it.
+            id: artistId,
+            name: name ?? rows[0]?.artist ?? '',
+            // Their own picture, saved with the downloads, rather than the
+            // cover of whichever record happened to come first.
+            coverArt: id,
+            albumCount: rows.length,
+          },
           albums: rows.map(toAlbum),
         };
       }
@@ -436,11 +460,37 @@ export async function getArtist(artistId: string): Promise<{ artist: Artist; alb
     // an artist's id is their own normalized name, so the worst case is seeing
     // it lowercased. Better that than an "unknown" that throws the name away.
     // We still prefer the one from their albums, which keeps the capitals.
+    //
+    // Only in local mode, though. On a server account offline the id can be
+    // the server's, and there it is not a name at all: an artist nothing on
+    // this phone knows about was putting `ar-3f9a…` where their name goes.
     artist: artist
       ? toArtist(artist)
-      : { id: artistId, name: albums[0]?.artist || artistId, albumCount: albums.length },
+      : {
+          id: artistId,
+          name: albums[0]?.artist || (useAuthStore.getState().auth ? '' : artistId),
+          albumCount: albums.length,
+        },
     albums: albums.map(toAlbum),
   };
+}
+
+/**
+ * What the server calls an artist whose music is downloaded, for an id that
+ * only means something on this phone.
+ *
+ * The way back from `getArtist` above, and it is needed while ONLINE: a recent
+ * search made offline remembers the artist by the local id, and asking the
+ * server for that gets nothing at all.
+ */
+export async function serverArtistId(artistId: string): Promise<string | undefined> {
+  const dir = downloadsDir();
+  if (!dir) return undefined;
+  try {
+    return await Cat.serverIdOfArtist(dir, artistId);
+  } catch {
+    return undefined;
+  }
 }
 
 /** Albums by other artists containing songs by this one ("Appears on"). */

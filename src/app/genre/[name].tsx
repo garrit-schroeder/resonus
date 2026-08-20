@@ -703,7 +703,7 @@ const styles = themed((colors) => ({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
   },
-  title: { flex: 1, color: colors.text, fontSize: fontSize.lg, fontWeight: '800' },
+  title: { flex: 1, color: colors.text, fontSize: fontSize.lg, fontWeight: '600' },
   // Under the title and to the same margin, like the meta line of an album or
   // a playlist.
   meta: {

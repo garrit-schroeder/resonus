@@ -9,7 +9,12 @@ import { getItem, setItem } from '@/lib/storage';
 
 const KEY = 'resonus.sortPrefs';
 
-export type SortField = 'recent' | 'added' | 'alpha' | 'artist' | 'album' | 'downloaded';
+/** What a list of songs can be ordered by (see `useSongSort`). */
+export type SongSortField = 'recent' | 'added' | 'alpha' | 'artist' | 'album' | 'downloaded';
+/** And a list of albums (see `useAlbumSort`); 'alpha' means the same there. */
+export type AlbumSortField = 'year' | 'alpha';
+/** Anything this map can hold: one store keeps the choice made on every list. */
+export type SortField = SongSortField | AlbumSortField;
 export type SortDir = 'asc' | 'desc';
 
 export interface SortPref {

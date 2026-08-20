@@ -5,8 +5,7 @@
      `src/i18n/context.jsonc`, and where a string shows up is read off the
      code, so both are fixed at the source and this page follows. -->
 
-Every string the app can show, under the screen it shows up on. 664 of them.
-Every string the app can show, under the screen it shows up on. 669 of them.
+Every string the app can show, under the screen it shows up on. 665 of them.
 The second column is only filled in where the English is ambiguous on its own
 If one tripped you up and the column is empty, that is worth telling us, and
 the answer goes into `src/i18n/context.jsonc` where the next translator of the
@@ -962,6 +961,7 @@ you are actually typing into, which is easier than reading it here.
 | --- | --- |
 | `“{name}” will no longer be available offline.` | The line under that title. `{name}` is the album, artist or playlist |
 | `{n} added to “{name}”` | Toast when several songs went in at once. `{n}` is a count of songs |
+| `{n} added to favorites` |  |
 | `{n} columns` | The other options in that menu: cards, this many across. `{n}` is 2, 3 or 4, so it is always plural |
 | `{n} of {songs} are already in “{name}”.` | The same warning when adding several at once and only some of them are already there. `{n}` is how many of them are, and `{songs}` already reads as a count ("12 songs"), so the sentence is like "3 of 12 songs are already in “Rock”." |
 | `{n} selected` | How many songs are ticked right now |

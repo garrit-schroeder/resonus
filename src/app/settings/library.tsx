@@ -16,7 +16,7 @@ import { queryClient } from '@/lib/query';
 import { useAuthStore } from '@/store/auth';
 import { profileKeyOf, useLibraries } from '@/store/libraries';
 import { useToast } from '@/store/toast';
-import { colors, fontSize, radius, spacing, themed, useTheme } from '@/theme';
+import { colors, fontSize, radius, SHEET_MAX_WIDTH, spacing, themed, useTheme } from '@/theme';
 
 export default function LibrarySettings() {
   // Repaints on a change of appearance or accent: a stack keeps this screen
@@ -201,9 +201,11 @@ const sheetStyles = themed((colors) => ({
   backdrop: { ...StyleSheet.absoluteFill, backgroundColor: colors.backdrop },
   sheet: {
     position: 'absolute',
-    left: 0,
-    right: 0,
     bottom: 0,
+    // Centred and no wider than a sheet wants to be (#131).
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: SHEET_MAX_WIDTH,
     backgroundColor: colors.surface,
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,

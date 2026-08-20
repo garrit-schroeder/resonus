@@ -580,6 +580,16 @@ export async function upnpSetPlayMode(playMode: string): Promise<boolean> {
   }
 }
 
+export async function upnpSetCrossfade(enabled: boolean): Promise<boolean> {
+  if (!native || !isUpnpConnected()) return false;
+  if (!currentUpnpDevice()?.isSonos) return true;
+  try {
+    return (await native.setCrossfadeMode(enabled)) as boolean;
+  } catch {
+    return false;
+  }
+}
+
 export async function upnpSetSleepTimer(durationSec: number | null): Promise<boolean> {
   if (!native || !isUpnpConnected()) return false;
   if (!currentUpnpDevice()?.isSonos) return true;

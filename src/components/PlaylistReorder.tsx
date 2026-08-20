@@ -120,7 +120,7 @@ const styles = themed((colors) => ({
   },
   headerTitle: { flex: 1, color: colors.text, fontSize: fontSize.md, fontWeight: '700', textAlign: 'center' },
   action: { fontSize: fontSize.md, fontWeight: '600' },
-  done: { fontWeight: '800' },
+  done: { fontWeight: '600' },
   list: { paddingHorizontal: spacing.lg, paddingBottom: SCREEN_BOTTOM_PADDING },
   row: {
     flexDirection: 'row',

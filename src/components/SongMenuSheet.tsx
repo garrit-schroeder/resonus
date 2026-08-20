@@ -5,7 +5,6 @@ import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Dimensions,
   Modal,
   Platform,
   Pressable,
@@ -20,6 +19,7 @@ import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useBottomSheetAnim } from '@/hooks/useBottomSheetAnim';
+import { useScreenSize } from '@/hooks/useScreenSize';
 import {
   addToPlaylist,
   coverArtUrl,
@@ -51,15 +51,19 @@ import { useSongInfo } from '@/store/songInfo';
 import { useSongMenu } from '@/store/songMenu';
 import { showUndoToast, useToast } from '@/store/toast';
 import { useT } from '@/i18n';
-import { colors, fontSize, radius, spacing, themed } from '@/theme';
+import { colors, fontSize, radius, SHEET_MAX_WIDTH, spacing, themed } from '@/theme';
 import { Cover } from './Cover';
 import { Dialog } from './Dialog';
 import { ExplicitBadge, useExplicitBadge } from './ExplicitBadge';
 import { StarRating } from './StarRating';
 
 /** Maximum height of the playlist list: proportional to the screen so it
- *  doesn't look cramped on large phones (previously a fixed 360). */
-const PLAYLISTS_MAX_H = Math.round(Dimensions.get('window').height * 0.6);
+ *  doesn't look cramped on large phones (previously a fixed 360). Measured
+ *  while rendering, or a phone turned on its side gets a menu taller than the
+ *  screen it is on (#131). */
+function playlistsMaxH(height: number): number {
+  return Math.round(height * 0.6);
+}
 
 /** Height of one action row: its vertical padding plus the icon, the tallest
  *  thing in it (`styles.action`). */
@@ -74,10 +78,9 @@ const ACTION_H = spacing.md * 2 + 24;
  * goes up with the row count, or it would take the half row's place as the
  * limit and cut wherever it happened to land.
  */
-const ACTIONS_MAX_H = Math.min(
-  ACTION_H * 9.5,
-  Math.round(Dimensions.get('window').height * 0.58),
-);
+function actionsMaxH(height: number): number {
+  return Math.min(ACTION_H * 9.5, Math.round(height * 0.58));
+}
 
 /**
  * Minutes remaining until expiration, minimum 1.
@@ -117,6 +120,7 @@ function Action({
 
 export function SongMenuSheet() {
   const insets = useSafeAreaInsets();
+  const { height: screenH } = useScreenSize();
   const router = useRouter();
   const auth = useAuthStore((s) => s.auth);
   const offline = useAuthStore((s) => s.offline);
@@ -382,7 +386,7 @@ export function SongMenuSheet() {
           <GestureDetector gesture={pan.enabled(mode !== 'playlists' && atTop)}>
             <View>
               {mode === 'playlists' ? (
-                <View style={{ maxHeight: PLAYLISTS_MAX_H }}>
+                <View style={{ maxHeight: playlistsMaxH(screenH) }}>
                   <Pressable
                     style={styles.action}
                     onPress={() => setMode('actions')}
@@ -518,7 +522,7 @@ export function SongMenuSheet() {
                 // to the sheet only at the top, so pulling down mid-list scrolls
                 // instead of dismissing.
                 <ScrollView
-                  style={{ maxHeight: ACTIONS_MAX_H }}
+                  style={{ maxHeight: actionsMaxH(screenH) }}
                   scrollEventThrottle={16}
                   onScroll={(e) => setAtTop(e.nativeEvent.contentOffset.y <= 0)}
                 >
@@ -766,9 +770,11 @@ const styles = themed((colors) => ({
   backdrop: { ...StyleSheet.absoluteFill, backgroundColor: colors.backdrop },
   sheet: {
     position: 'absolute',
-    left: 0,
-    right: 0,
     bottom: 0,
+    // Centred and no wider than a sheet wants to be (#131).
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: SHEET_MAX_WIDTH,
     backgroundColor: colors.surface,
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,

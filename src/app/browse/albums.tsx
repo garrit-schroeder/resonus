@@ -324,7 +324,7 @@ const styles = themed((colors) => ({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
   },
-  title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '800' },
+  title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '600' },
   headerAction: { width: 26, alignItems: 'flex-end' },
   searchRow: {
     height: SEARCH_H,

@@ -7,7 +7,6 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import {
   ActivityIndicator,
   BackHandler,
-  Dimensions,
   FlatList,
   Keyboard,
   Modal,
@@ -50,8 +49,10 @@ import { usePins } from '@/store/pins';
 import { useSettings, type LibrarySort } from '@/store/settings';
 import { useAccent } from '@/hooks/useAccent';
 import { useToast } from '@/store/toast';
-import { colors, fontSize, radius, spacing, themed, useTheme } from '@/theme';
+import { colors, fontSize, radius, SHEET_MAX_WIDTH, spacing, themed, useTheme } from '@/theme';
 import { useScreenBottomPadding } from '@/hooks/useScreenBottomPadding';
+import { useListPadding } from '@/hooks/useScreenSize';
+import { columnsFor, useScreenSize } from '@/hooks/useScreenSize';
 import { listPerf } from '@/lib/listPerf';
 import { bump } from '@/lib/perfLog';
 import { haptic } from '@/lib/haptics';
@@ -67,11 +68,26 @@ const SEGMENTS: { key: Segment; label: string }[] = [
 /** Extra "Folders" segment (directory browsing; Subsonic only). */
 const FOLDERS_SEGMENT: { key: Segment; label: string } = { key: 'folders', label: 'Folders' };
 
-// Library grid: 3 columns, same gap as the rest of the grids.
-const GRID_COLUMNS = 3;
+// Library grid: the same gap as the rest of the grids.
+/**
+ * How wide a library card wants to be, in dp.
+ *
+ * Three across a phone, which is what this grid has always been, and the same
+ * measure decides the rest: a tablet gets more of them rather than three
+ * covers the size of a record sleeve (#131).
+ */
+const CARD_IDEAL = 180;
 const GRID_GAP = spacing.sm;
-const GRID_CARD =
-  (Dimensions.get('window').width - spacing.lg * 2 - GRID_GAP * (GRID_COLUMNS - 1)) / GRID_COLUMNS;
+/** The grid as it is right now: worked out while rendering, so a turn
+ *  re-lays it out instead of keeping the width the app started at. */
+function useGridMetrics(): { columns: number; card: number } {
+  const { width } = useScreenSize();
+  const columns = columnsFor(width, CARD_IDEAL, 3, 6);
+  return {
+    columns,
+    card: (width - spacing.lg * 2 - GRID_GAP * (columns - 1)) / columns,
+  };
+}
 
 // In grid mode, the Favorites access goes as the first card of the grid
 // (in list it's the header). This sentinel id marks it within the data.
@@ -230,12 +246,13 @@ function FavoritesEntry({ grid }: { grid?: boolean }) {
     enabled: canFetch,
   });
   const count = data?.songs.length ?? 0;
+  const { card } = useGridMetrics();
 
   if (grid) {
     return (
       <GridCard
         href="/favorites"
-        art={<FavoritesArt size={GRID_CARD} />}
+        art={<FavoritesArt size={card} />}
         title={t('Favorites')}
         subtitle={songsLabel(count, lang)}
       />
@@ -265,6 +282,9 @@ function PlaylistsTab({ onNew, query }: { onNew?: () => void; query: string }) {
   const openMenu = useMediaMenu((s) => s.open);
   const grid = useSettings((s) => s.libraryLayout) === 'grid';
   const bottomPad = useScreenBottomPadding();
+  // Rows stop growing at a reading measure and centre themselves (#131).
+  const listPad = useListPadding(spacing.lg);
+  const { columns } = useGridMetrics();
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ['playlists'],
     queryFn: () => getPlaylists(),
@@ -299,11 +319,11 @@ function PlaylistsTab({ onNew, query }: { onNew?: () => void; query: string }) {
   const listData: Playlist[] = grid ? [{ id: FAVORITES_ID, name: '' }, ...playlists] : playlists;
   return (
     <FlatList
-      key={grid ? 'grid' : 'list'}
+      key={grid ? `grid-${columns}` : 'list'}
       {...listPerf}
       // With the filter box open, a tap opens the row instead of only closing the keyboard.
       keyboardShouldPersistTaps="handled"
-      {...gridListProps(grid, bottomPad)}
+      {...gridListProps(grid, bottomPad, columns, listPad)}
       data={listData}
       keyExtractor={(item) => item.id}
       refreshControl={
@@ -369,6 +389,8 @@ function ArtistsTab({ query }: { query: string }) {
   const { byArtist } = useHistoryTimes();
   const grid = useSettings((s) => s.libraryLayout) === 'grid';
   const bottomPad = useScreenBottomPadding();
+  const { columns } = useGridMetrics();
+  const listPad = useListPadding(spacing.lg);
   // Only favorite artists (what's browseable is in Home).
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ['starred'],
@@ -392,10 +414,10 @@ function ArtistsTab({ query }: { query: string }) {
   if (isError) return <Message text={t("Couldn't load artists.")} onRetry={() => refetch()} />;
   return (
     <FlatList
-      key={grid ? 'grid' : 'list'}
+      key={grid ? `grid-${columns}` : 'list'}
       {...listPerf}
       keyboardShouldPersistTaps="handled"
-      {...gridListProps(grid, bottomPad)}
+      {...gridListProps(grid, bottomPad, columns, listPad)}
       data={artists}
       keyExtractor={(item) => item.id}
       refreshControl={
@@ -443,6 +465,7 @@ function NoResults({ query }: { query: string }) {
 }
 
 function FoldersTab() {
+  const listPad = useListPadding(spacing.lg);
   const t = useT();
   const router = useRouter();
   const bottomPad = useScreenBottomPadding();
@@ -459,7 +482,10 @@ function FoldersTab() {
   return (
     <FlatList
       {...listPerf}
-      contentContainerStyle={[styles.list, { paddingBottom: bottomPad }]}
+      contentContainerStyle={[
+        styles.list,
+        { paddingBottom: bottomPad, paddingHorizontal: listPad },
+      ]}
       data={folders}
       keyExtractor={(item) => item.id}
       renderItem={({ item }) => (
@@ -495,6 +521,8 @@ function AlbumsTab({ query }: { query: string }) {
   const openMenu = useMediaMenu((s) => s.open);
   const grid = useSettings((s) => s.libraryLayout) === 'grid';
   const bottomPad = useScreenBottomPadding();
+  const { columns } = useGridMetrics();
+  const listPad = useListPadding(spacing.lg);
   // Only favorite albums (what's browseable is in Home).
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ['starred'],
@@ -525,10 +553,10 @@ function AlbumsTab({ query }: { query: string }) {
   if (isError) return <Message text={t("Couldn't load albums.")} onRetry={() => refetch()} />;
   return (
     <FlatList
-      key={grid ? 'grid' : 'list'}
+      key={grid ? `grid-${columns}` : 'list'}
       {...listPerf}
       keyboardShouldPersistTaps="handled"
-      {...gridListProps(grid, bottomPad)}
+      {...gridListProps(grid, bottomPad, columns, listPad)}
       data={albums}
       keyExtractor={(item) => item.id}
       refreshControl={
@@ -606,13 +634,14 @@ function GridCard({
   pinned?: boolean;
   onLongPress?: () => void;
 }) {
+  const { card } = useGridMetrics();
   return (
     <Link href={href} asChild>
       <Pressable
-        style={StyleSheet.flatten([styles.card, rounded && styles.cardCentered])}
+        style={StyleSheet.flatten([styles.card, { width: card }, rounded && styles.cardCentered])}
         onLongPress={onLongPress}
       >
-        {art ?? <Cover uri={uri} size={GRID_CARD} rounded={rounded} />}
+        {art ?? <Cover uri={uri} size={card} rounded={rounded} />}
         <Text style={[styles.cardTitle, rounded && styles.centerText]} numberOfLines={1}>
           {title}
         </Text>
@@ -636,14 +665,19 @@ function GridCard({
  * directly on each list to force remounting: FlatList doesn't support hot-
  * changing `numColumns` (and `key` can't go in a spread).
  */
-function gridListProps(grid: boolean, bottomPad: number) {
+function gridListProps(grid: boolean, bottomPad: number, columns: number, listPad: number) {
   return grid
     ? {
-        numColumns: GRID_COLUMNS,
+        numColumns: columns,
         columnWrapperStyle: { gap: GRID_GAP },
         contentContainerStyle: [styles.gridList, { paddingBottom: bottomPad }],
       }
-    : { contentContainerStyle: [styles.list, { paddingBottom: bottomPad }] };
+    : {
+        contentContainerStyle: [
+          styles.list,
+          { paddingBottom: bottomPad, paddingHorizontal: listPad },
+        ],
+      };
 }
 
 export default function LibraryScreen() {
@@ -663,6 +697,10 @@ export default function LibraryScreen() {
   const queryClient = useQueryClient();
   const toast = useToast((s) => s.show);
   const [segment, setSegment] = useState<Segment>('playlists');
+  // Rows are centred on a wide screen and a grid is not, so the header lines
+  // up with whichever is underneath it.
+  const listPad = useListPadding(spacing.lg);
+  const headerPad = useSettings((s) => s.libraryLayout) === 'grid' ? spacing.lg : listPad;
   const [creating, setCreating] = useState(false);
   const [sortOpen, setSortOpen] = useState(false);
   // Filter over what the Library already has in memory (your favourites and
@@ -732,7 +770,10 @@ export default function LibraryScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <View style={styles.header}>
+      {/* The screen's own chrome follows what it is over: with rows, it lines
+          up with the centred column; with a grid, the grid fills the width and
+          so does this (#131). */}
+      <View style={[styles.header, { paddingHorizontal: headerPad }]}>
         <Text style={styles.heading}>{t('Library')}</Text>
         <View style={styles.headerActions}>
           <OfflineIndicator />
@@ -808,7 +849,7 @@ export default function LibraryScreen() {
         horizontal
         showsHorizontalScrollIndicator={false}
         style={styles.segments}
-        contentContainerStyle={styles.segmentsContent}
+        contentContainerStyle={[styles.segmentsContent, { paddingHorizontal: headerPad }]}
       >
         {visibleSegments.map((s) => {
           const active = s.key === activeSegment;
@@ -829,7 +870,7 @@ export default function LibraryScreen() {
       {/* Sort/layout controls don't apply to Folders. */}
       {activeSegment === 'folders' ? null : (
         <>
-          <View style={styles.controls}>
+          <View style={[styles.controls, { paddingHorizontal: headerPad }]}>
             <SortBar onPress={() => setSortOpen(true)} />
             <LayoutToggle />
           </View>
@@ -862,7 +903,7 @@ const styles = themed((colors) => ({
     paddingTop: spacing.lg,
     paddingBottom: spacing.md,
   },
-  heading: { color: colors.text, fontSize: fontSize.xxl, fontWeight: '800' },
+  heading: { color: colors.text, fontSize: fontSize.xxl, fontWeight: '600' },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.lg },
   segments: {
     flexGrow: 0,
@@ -902,7 +943,7 @@ const styles = themed((colors) => ({
     paddingHorizontal: spacing.lg,
     gap: spacing.lg,
   },
-  card: { width: GRID_CARD, gap: spacing.xs },
+  card: { gap: spacing.xs },
   cardCentered: { alignItems: 'center' },
   cardTitle: { color: colors.text, fontSize: fontSize.xs, fontWeight: '600', marginTop: spacing.xs },
   centerText: { textAlign: 'center' },
@@ -935,9 +976,11 @@ const styles = themed((colors) => ({
   backdrop: { ...StyleSheet.absoluteFill, backgroundColor: colors.backdrop },
   sheet: {
     position: 'absolute',
-    left: 0,
-    right: 0,
     bottom: 0,
+    // Centred and no wider than a sheet wants to be (#131).
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: SHEET_MAX_WIDTH,
     backgroundColor: colors.surface,
     borderTopLeftRadius: radius.lg,
     borderTopRightRadius: radius.lg,

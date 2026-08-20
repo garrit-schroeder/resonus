@@ -15,11 +15,13 @@ import { memo, type ReactNode, useRef } from 'react';
 import { Pressable, Text } from 'react-native';
 
 import { SheetModal } from '@/components/SheetModal';
+import { columnsFor, useScreenSize } from '@/hooks/useScreenSize';
 import { useT } from '@/i18n';
 import {
   GRID_COLUMN_CHOICES,
   GRID_DEFAULT_COLUMNS,
   useSettings,
+  WIDE_COLUMN_CHOICES,
   type GridKey,
   type ListLayout,
 } from '@/store/settings';
@@ -51,11 +53,13 @@ interface GridColumnsResult {
  */
 const GridSheet = memo(function GridSheet({
   columns,
+  choices,
   choose,
   layout,
   openRef,
 }: {
   columns: number;
+  choices: number[];
   choose: (value: number) => void;
   layout?: LayoutOption;
   openRef: React.MutableRefObject<() => void>;
@@ -97,7 +101,7 @@ const GridSheet = memo(function GridSheet({
                 close();
               })
             : null}
-          {GRID_COLUMN_CHOICES.map((n) =>
+          {choices.map((n) =>
             // While the rows are showing, none of the densities is what you are
             // looking at, so none of them is ticked. Picking one is also how
             // you get back to cards.
@@ -117,11 +121,31 @@ const GridSheet = memo(function GridSheet({
   );
 });
 
+/**
+ * How wide a cover wants to be on a big screen, in dp.
+ *
+ * What decides the columns there is the card and not the count: the same grid
+ * is four across a tablet held upright and six lying down, and both are the
+ * same size of picture. Around two hundred is a cover you can read the title
+ * off without it being a poster.
+ */
+const WIDE_CARD = 200;
+
 export function useGridColumns(key: GridKey, layout?: LayoutOption): GridColumnsResult {
-  const stored = useSettings((s) => s.gridColumns[key]);
+  // A tablet remembers its own answer, and opens on one worked out from the
+  // width rather than on the phone's, which would be two covers the size of a
+  // hand (#131).
+  const { width, wide } = useScreenSize();
+  const storeKey = wide ? (`${key}:wide` as const) : key;
+  const stored = useSettings((s) => s.gridColumns[storeKey]);
   const setGridColumns = useSettings((s) => s.setGridColumns);
   const openRef = useRef<() => void>(() => {});
-  const columns = stored ?? GRID_DEFAULT_COLUMNS[key];
+  const choices = wide ? WIDE_COLUMN_CHOICES : GRID_COLUMN_CHOICES;
+  const columns =
+    stored ??
+    (wide
+      ? columnsFor(width, WIDE_CARD, choices[0], choices[choices.length - 1])
+      : GRID_DEFAULT_COLUMNS[key]);
 
   return {
     columns,
@@ -129,7 +153,8 @@ export function useGridColumns(key: GridKey, layout?: LayoutOption): GridColumns
     gridSheet: (
       <GridSheet
         columns={columns}
-        choose={(value) => setGridColumns(key, value)}
+        choices={choices}
+        choose={(value) => setGridColumns(storeKey, value)}
         layout={layout}
         openRef={openRef}
       />
