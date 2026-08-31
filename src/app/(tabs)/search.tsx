@@ -183,7 +183,7 @@ export default function SearchScreen() {
   const { data: stations } = useQuery({
     queryKey: ['radioStations'],
     queryFn: () => getRadioStations(auth!),
-    enabled: !!auth && !offline && auth.serverType !== 'jellyfin' && debouncedQuery.length > 1,
+    enabled: !!auth && !offline && debouncedQuery.length > 1,
   });
   const stationMatches =
     debouncedQuery.length > 1
