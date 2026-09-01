@@ -806,6 +806,12 @@ interface SettingsState {
   quickGridAlbums: boolean;
   /** Include playlists in the quick grid. */
   quickGridPlaylists: boolean;
+  /**
+   * Include the server's radio stations in the quick grid. Like the two above
+   * it is on by default, and unlike them it only reaches the server (no
+   * offline mirror), so a grid without a connection simply has no tiles.
+   */
+  quickGridRadio: boolean;
   /** Total number of tiles in the quick grid (4, 6, or 8). */
   quickGridSize: number;
   /** Show the greeting ("Good morning"…) on Home. */
@@ -946,6 +952,7 @@ interface SettingsState {
   setQuickGridFavorites: (value: boolean) => void;
   setQuickGridAlbums: (value: boolean) => void;
   setQuickGridPlaylists: (value: boolean) => void;
+  setQuickGridRadio: (value: boolean) => void;
   setQuickGridSize: (value: number) => void;
   setShowGreeting: (value: boolean) => void;
   /** Trims to GREETING_MAX internally: the cap doesn't depend on the caller. */
@@ -1070,6 +1077,7 @@ function snapshot(get: () => SettingsState) {
     quickGridFavorites: s.quickGridFavorites,
     quickGridAlbums: s.quickGridAlbums,
     quickGridPlaylists: s.quickGridPlaylists,
+    quickGridRadio: s.quickGridRadio,
     quickGridSize: s.quickGridSize,
     showGreeting: s.showGreeting,
     customGreeting: s.customGreeting,
@@ -1180,6 +1188,7 @@ const DEFAULTS = {
   quickGridFavorites: true,
   quickGridAlbums: true,
   quickGridPlaylists: true,
+  quickGridRadio: true,
   quickGridSize: 8,
   showGreeting: true,
   customGreeting: '',
@@ -1590,6 +1599,11 @@ export const useSettings = create<SettingsState>((set, get) => ({
     persist(snapshot(get));
   },
 
+  setQuickGridRadio: (quickGridRadio) => {
+    set({ quickGridRadio });
+    persist(snapshot(get));
+  },
+
   setQuickGridSize: (quickGridSize) => {
     set({ quickGridSize });
     persist(snapshot(get));
@@ -1841,6 +1855,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
           quickGridFavorites: boolean;
           quickGridAlbums: boolean;
           quickGridPlaylists: boolean;
+          quickGridRadio: boolean;
           quickGridSize: number;
           showGreeting: boolean;
           customGreeting: string;
@@ -2138,6 +2153,9 @@ export const useSettings = create<SettingsState>((set, get) => ({
         }
         if (typeof parsed.quickGridPlaylists === 'boolean') {
           set({ quickGridPlaylists: parsed.quickGridPlaylists });
+        }
+        if (typeof parsed.quickGridRadio === 'boolean') {
+          set({ quickGridRadio: parsed.quickGridRadio });
         }
         if (parsed.quickGridSize === 4 || parsed.quickGridSize === 6 || parsed.quickGridSize === 8) {
           set({ quickGridSize: parsed.quickGridSize });
