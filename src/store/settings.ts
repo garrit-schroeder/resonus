@@ -360,6 +360,20 @@ export const DEFAULT_HOME_SECTIONS: HomeSection[] = [
   { key: 'randomArtists', enabled: false },
 ];
 
+/** Same as the chips: keeps the saved order, drops what it does not know, and
+ *  appends anything a later version added. */
+function normalizeExploreSections(raw: unknown): ExploreSection[] {
+  if (!Array.isArray(raw)) return [...DEFAULT_EXPLORE_SECTIONS];
+  const out: ExploreSection[] = [];
+  for (const key of raw as ExploreSection[]) {
+    if (DEFAULT_EXPLORE_SECTIONS.includes(key) && !out.includes(key)) out.push(key);
+  }
+  for (const key of DEFAULT_EXPLORE_SECTIONS) {
+    if (!out.includes(key)) out.push(key);
+  }
+  return out;
+}
+
 /**
  * Sanitizes the saved list: preserves user order and state, discards unknown
  * keys, and appends new sections not present (so a future version with more
@@ -421,6 +435,35 @@ export const DEFAULT_HOME_CHIPS: HomeChip[] = [
   { key: 'genres', enabled: true },
   { key: 'radio', enabled: true },
   { key: 'history', enabled: false },
+];
+
+/** One of the pills at the top of Explore. `genres`, `radio` and `folders`
+ *  need a server; the rest the local catalogue answers for too. */
+export type ExploreSection =
+  | 'playlists'
+  | 'albums'
+  | 'artists'
+  | 'songs'
+  | 'genres'
+  | 'radio'
+  | 'folders';
+
+/**
+ * Their order, and only their order.
+ *
+ * No switches, unlike the Home chips: a section that is off is a part of the
+ * catalogue with no way in, and the tab already hides the ones the server
+ * cannot answer for. Which is also why this is a plain list of keys — there is
+ * no second thing to store about each.
+ */
+export const DEFAULT_EXPLORE_SECTIONS: ExploreSection[] = [
+  'playlists',
+  'albums',
+  'artists',
+  'songs',
+  'genres',
+  'radio',
+  'folders',
 ];
 
 /**
@@ -821,6 +864,8 @@ interface SettingsState {
   /** Home explore chips, in order (each with its state). With none active, the
    *  row disappears: that replaces the old toggle. */
   homeChips: HomeChip[];
+  /** The order of the pills at the top of Explore. */
+  exploreSections: ExploreSection[];
   bottomTabs: BottomTab[];
   /** Whether those chips carry their icon, or are their name and nothing else. */
   homeChipIcons: boolean;
@@ -960,6 +1005,7 @@ interface SettingsState {
   setHomeChip: (key: HomeChipKey, value: boolean) => void;
   /** Replace the full list (for reordering). */
   setHomeChips: (chips: HomeChip[]) => void;
+  setExploreSections: (sections: ExploreSection[]) => void;
   setBottomTab: (key: TabSegment, value: boolean) => void;
   /** Replace the full list (for reordering). */
   setBottomTabs: (tabs: BottomTab[]) => void;
@@ -1082,6 +1128,7 @@ function snapshot(get: () => SettingsState) {
     showGreeting: s.showGreeting,
     customGreeting: s.customGreeting,
     homeChips: s.homeChips,
+    exploreSections: s.exploreSections,
     bottomTabs: s.bottomTabs,
     homeChipIcons: s.homeChipIcons,
     showFolderBrowser: s.showFolderBrowser,
@@ -1193,6 +1240,7 @@ const DEFAULTS = {
   showGreeting: true,
   customGreeting: '',
   homeChips: DEFAULT_HOME_CHIPS.map((c) => ({ ...c })),
+  exploreSections: [...DEFAULT_EXPLORE_SECTIONS],
   bottomTabs: DEFAULT_BOTTOM_TABS.map((t) => ({ ...t })),
   homeChipIcons: true,
   showFolderBrowser: false,
@@ -1635,6 +1683,11 @@ export const useSettings = create<SettingsState>((set, get) => ({
     persist(snapshot(get));
   },
 
+  setExploreSections: (exploreSections) => {
+    set({ exploreSections });
+    persist(snapshot(get));
+  },
+
   setHomeChipIcons: (homeChipIcons) => {
     set({ homeChipIcons });
     persist(snapshot(get));
@@ -1865,6 +1918,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
           exploreChips: unknown;
           exploreChipIcons: boolean;
           homeChips: unknown;
+          exploreSections: unknown;
           bottomTabs: unknown;
           homeChipIcons: boolean;
           showFolderBrowser: boolean;
@@ -2190,6 +2244,9 @@ export const useSettings = create<SettingsState>((set, get) => ({
         }
         if (Array.isArray(parsed.bottomTabs)) {
           set({ bottomTabs: normalizeBottomTabs(parsed.bottomTabs) });
+        }
+        if (Array.isArray(parsed.exploreSections)) {
+          set({ exploreSections: normalizeExploreSections(parsed.exploreSections) });
         }
         if (typeof parsed.showFolderBrowser === 'boolean') {
           set({ showFolderBrowser: parsed.showFolderBrowser });

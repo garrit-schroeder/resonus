@@ -695,6 +695,13 @@
   "Navigation bar": "Barra de navegación",
   "Which icons are at the top of Home, and in what order.": "Qué iconos hay arriba en Inicio y en qué orden.",
   "Which tabs are at the bottom, and in what order.": "Qué pestañas hay abajo y en qué orden.",
-  "Which icons are at the top of Home, and in what order.": "Qué iconos hay arriba en Inicio y en qué orden.",
-  "Always shown": "Siempre visible"
+  "Always shown": "Siempre visible",
+  "Explore sections": "Secciones de Explorar",
+  "In what order the sections of Explore are.": "En qué orden están las secciones de Explorar.",
+  "Drag to reorder.": "Arrastra para reordenar.",
+  "Yours": "Tuyas",
+  "Nothing here yet": "Aquí no hay nada todavía",
+  "Your playlists and what you star show up here.": "Aquí aparecen tus listas y lo que marcas como favorito.",
+  "Couldn't load your library.": "No se ha podido cargar tu biblioteca.",
+  "Public": "Públicas"
 }

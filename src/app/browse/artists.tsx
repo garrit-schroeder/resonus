@@ -37,7 +37,7 @@ import {
 } from '@/theme';
 import { listPerf } from '@/lib/listPerf';
 import { BackChevron } from '@/components/BackChevron';
-import { BrowseFrame, type BrowserProps } from '@/components/BrowseFrame';
+import { BrowseFrame, useSearchBox, type BrowserProps } from '@/components/BrowseFrame';
 import { BrowseToolbar } from '@/components/BrowseToolbar';
 import { useGridColumns } from '@/hooks/useGridColumns';
 import { useScreenBottomPadding } from '@/hooks/useScreenBottomPadding';
@@ -84,7 +84,7 @@ export default function BrowseArtistsScreen() {
   return <ArtistsBrowser />;
 }
 
-export function ArtistsBrowser({ embedded, actionRef }: BrowserProps) {
+export function ArtistsBrowser({ embedded, actionRef, searchOpen }: BrowserProps) {
   // Repaints on a change of appearance or accent: a stack keeps this screen
   // mounted while you are on another one, out of reach of anything else.
   useTheme();
@@ -126,12 +126,16 @@ export function ArtistsBrowser({ embedded, actionRef }: BrowserProps) {
   const listRef = useRef<GHFlatList<Artist>>(null);
   const [searching, setSearching] = useState(false);
 
-  function cancelSearch() {
+  function clearSearch() {
     Keyboard.dismiss();
     setQuery('');
     setSearching(false);
     listRef.current?.scrollToOffset({ offset: 0, animated: false });
   }
+
+  // Embedded, whether the box is there is the tab's answer; on this screen it
+  // simply is.
+  const showSearch = useSearchBox(embedded, searchOpen, clearSearch);
 
   /**
    * "Most played" is deduced from your most played albums: Subsonic doesn't
@@ -236,9 +240,10 @@ export function ArtistsBrowser({ embedded, actionRef }: BrowserProps) {
         </View>
       )}
 
-      {/* Always visible: filtering is what you come to this screen to do, so
-          the bar is not worth hiding behind a gesture nobody discovers. */}
-      <View style={styles.searchRow}>
+      {/* Always there on its own screen: filtering is what you come to it for.
+          In the tab the magnifier asks for it (see `useSearchBox`). */}
+      {showSearch ? (
+        <View style={styles.searchRow}>
           <View style={styles.searchBar}>
             <Ionicons name="search" size={18} color={colors.textMuted} />
             <TextInput
@@ -251,6 +256,7 @@ export function ArtistsBrowser({ embedded, actionRef }: BrowserProps) {
               onChangeText={setQuery}
               onFocus={() => setSearching(true)}
               returnKeyType="search"
+              autoFocus={embedded}
             />
             {query.length > 0 ? (
               <Pressable
@@ -263,12 +269,15 @@ export function ArtistsBrowser({ embedded, actionRef }: BrowserProps) {
               </Pressable>
             ) : null}
           </View>
-          {searching ? (
-            <Pressable hitSlop={8} accessibilityRole="button" onPress={cancelSearch}>
+          {/* Only on its own screen: in the tab the X in the header is the way
+              out of the bar. */}
+          {searching && !embedded ? (
+            <Pressable hitSlop={8} accessibilityRole="button" onPress={clearSearch}>
               <Text style={styles.searchCancel}>{t('Cancel')}</Text>
             </Pressable>
           ) : null}
-      </View>
+        </View>
+      ) : null}
 
       {/* No play beside it: there is no such thing as starting every artist. */}
       <BrowseToolbar options={SORTS} value={sort} onChange={setSort} />

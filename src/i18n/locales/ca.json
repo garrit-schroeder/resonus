@@ -695,6 +695,13 @@
   "Navigation bar": "Barra de navegació",
   "Which icons are at the top of Home, and in what order.": "Quines icones hi ha a dalt a l'Inici i en quin ordre.",
   "Which tabs are at the bottom, and in what order.": "Quines pestanyes hi ha a baix i en quin ordre.",
-  "Which icons are at the top of Home, and in what order.": "Quines icones hi ha a dalt a l'Inici i en quin ordre.",
-  "Always shown": "Sempre visible"
+  "Always shown": "Sempre visible",
+  "Explore sections": "Seccions d'Explorar",
+  "In what order the sections of Explore are.": "En quin ordre estan les seccions d'Explorar.",
+  "Drag to reorder.": "Arrossega per reordenar.",
+  "Yours": "Teves",
+  "Nothing here yet": "Aquí encara no hi ha res",
+  "Your playlists and what you star show up here.": "Aquí apareixen les teves llistes i el que marques com a preferit.",
+  "Couldn't load your library.": "No s'ha pogut carregar la teva biblioteca.",
+  "Public": "Públiques"
 }

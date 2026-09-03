@@ -65,7 +65,7 @@ import { useGridColumns } from '@/hooks/useGridColumns';
 import { useScreenBottomPadding } from '@/hooks/useScreenBottomPadding';
 import { useListPadding } from '@/hooks/useScreenSize';
 import { BackChevron } from '@/components/BackChevron';
-import { BrowseFrame, type BrowserProps } from '@/components/BrowseFrame';
+import { BrowseFrame, useSearchBox, type BrowserProps } from '@/components/BrowseFrame';
 import { BrowseToolbar } from '@/components/BrowseToolbar';
 
 const PAGE = 50;
@@ -106,7 +106,7 @@ export default function BrowseSongsScreen() {
   return <SongsBrowser />;
 }
 
-export function SongsBrowser({ embedded, actionRef }: BrowserProps) {
+export function SongsBrowser({ embedded, actionRef, searchOpen }: BrowserProps) {
   // Repaints on a change of appearance or accent: a stack keeps this screen
   // mounted while you are on another one, out of reach of anything else.
   useTheme();
@@ -232,12 +232,16 @@ export function SongsBrowser({ embedded, actionRef }: BrowserProps) {
 
   const selectionMenu = useSelectionMenu(runSelection);
 
-  function cancelSearch() {
+  function clearSearch() {
     Keyboard.dismiss();
     setQuery('');
     setSearching(false);
     listRef.current?.scrollToOffset({ offset: 0, animated: false });
   }
+
+  // Embedded, whether the box is there is the tab's answer; on this screen it
+  // simply is.
+  const showSearch = useSearchBox(embedded, searchOpen, clearSearch);
 
   // Embedded, the button that opens this menu is drawn by the Explore tab, in
   // its own header: this is the way down to the menu it belongs to. Kept up to
@@ -310,37 +314,44 @@ export function SongsBrowser({ embedded, actionRef }: BrowserProps) {
         </View>
       )}
 
-      <View style={styles.searchRow}>
-        <View style={styles.searchBar}>
-          <Ionicons name="search" size={18} color={colors.textMuted} />
-          <TextInput
-            style={styles.input}
-            placeholder={t('Find a song')}
-            placeholderTextColor={colors.textMuted}
-            autoCapitalize="none"
-            autoCorrect={false}
-            value={query}
-            onChangeText={setQuery}
-            onFocus={() => setSearching(true)}
-            returnKeyType="search"
-          />
-          {query.length > 0 ? (
-            <Pressable
-              hitSlop={10}
-              accessibilityRole="button"
-              accessibilityLabel={t('Clear')}
-              onPress={() => setQuery('')}
-            >
-              <Ionicons name="close-circle" size={18} color={colors.textMuted} />
+      {/* Always there on its own screen: finding one song among many is what
+          the box is for. In the tab the magnifier asks for it. */}
+      {showSearch ? (
+        <View style={styles.searchRow}>
+          <View style={styles.searchBar}>
+            <Ionicons name="search" size={18} color={colors.textMuted} />
+            <TextInput
+              style={styles.input}
+              placeholder={t('Find a song')}
+              placeholderTextColor={colors.textMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              value={query}
+              onChangeText={setQuery}
+              onFocus={() => setSearching(true)}
+              returnKeyType="search"
+              autoFocus={embedded}
+            />
+            {query.length > 0 ? (
+              <Pressable
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel={t('Clear')}
+                onPress={() => setQuery('')}
+              >
+                <Ionicons name="close-circle" size={18} color={colors.textMuted} />
+              </Pressable>
+            ) : null}
+          </View>
+          {/* Only on its own screen: in the tab the X in the header is the way
+              out of the bar. */}
+          {searching && !embedded ? (
+            <Pressable hitSlop={8} accessibilityRole="button" onPress={clearSearch}>
+              <Text style={styles.searchCancel}>{t('Cancel')}</Text>
             </Pressable>
           ) : null}
         </View>
-        {searching ? (
-          <Pressable hitSlop={8} accessibilityRole="button" onPress={cancelSearch}>
-            <Text style={styles.searchCancel}>{t('Cancel')}</Text>
-          </Pressable>
-        ) : null}
-      </View>
+      ) : null}
 
       {/* Gone while searching, and while selecting: results come back by
           relevance so there is no order to show, and an action row is not what

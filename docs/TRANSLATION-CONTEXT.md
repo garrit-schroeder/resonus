@@ -5,7 +5,7 @@
      `src/i18n/context.jsonc`, and where a string shows up is read off the
      code, so both are fixed at the source and this page follows. -->
 
-Every string the app can show, under the screen it shows up on. 689 of them.
+Every string the app can show, under the screen it shows up on. 697 of them.
 The second column is only filled in where the English is ambiguous on its own
 If one tripped you up and the column is empty, that is worth telling us, and
 the answer goes into `src/i18n/context.jsonc` where the next translator of the
@@ -19,7 +19,6 @@ you are actually typing into, which is easier than reading it here.
 
 | String | What it is |
 | --- | --- |
-| `Album` | In search results, the little word under a result saying what kind of thing it is |
 | `Couldn't load the album.` | Error on the screen, with a Retry button |
 | `Disc {n}` | Heading over the songs of one disc of a multi-disc album. `{n}` is its number |
 | `Find in playlist` | Placeholder of the search box hidden above a tracklist, for finding a song within it |
@@ -36,7 +35,6 @@ you are actually typing into, which is easier than reading it here.
 | `1 hour` | How long a shared link lasts, counted from the moment it is made. Not a time of day |
 | `1 month` | How long a shared link lasts, counted from the moment it is made |
 | `1 week` | How long a shared link lasts, counted from the moment it is made |
-| `Album` | In search results, the little word under a result saying what kind of thing it is |
 | `Allow downloads` | Whether whoever gets the link can download the music, not only listen to it |
 | `Android may stop playback in the background, interrupt downloads or delay the sleep timer. Allowing unrestricted battery use fixes it.` |  |
 | `Artist` | In search results, the little word under a result saying what kind of thing it is |
@@ -318,25 +316,30 @@ you are actually typing into, which is easier than reading it here.
 | `Random albums` | A section of Home: albums picked at random, to happen upon something |
 | `Random artists` | A section of Home: artists picked at random |
 | `Scanning your music…` | Going through the phone's own files |
-| `Search` | The search tab, and the action of searching |
 
 ## Library
 
 | String | What it is |
 | --- | --- |
+| `Artist` | In search results, the little word under a result saying what kind of thing it is |
 | `Couldn't load artists.` | Error on the screen, with a Retry button |
 | `Couldn't load playlists.` | Error on the screen, with a Retry button |
+| `Couldn't load your library.` |  |
 | `Create your first playlist to get started.` | The line under an empty state |
 | `Grid view` | Show the list as cards in a grid |
 | `List view` | Show it as rows, one under the other |
 | `No favorite albums` | Empty state heading on the favourites tab |
 | `No favorite artists` | Empty state heading on the favourites tab |
 | `No playlists yet` | Empty state heading |
+| `Nothing here yet` |  |
+| `Playlist` | A list saved on the server. Not the queue |
 | `Playlist created` | The toast after making one |
-| `Search` | The search tab, and the action of searching |
+| `Public` |  |
 | `Star albums to see them here.` | The line under an empty state, saying how to fill it |
 | `Star artists to see them here.` | The line under an empty state, saying how to fill it |
 | `Your library` | The tab with your albums, artists and playlists |
+| `Your playlists and what you star show up here.` |  |
+| `Yours` |  |
 
 ## Login
 
@@ -532,7 +535,6 @@ you are actually typing into, which is easier than reading it here.
 
 | String | What it is |
 | --- | --- |
-| `Album` | In search results, the little word under a result saying what kind of thing it is |
 | `Artist` | In search results, the little word under a result saying what kind of thing it is |
 | `Artists` | A heading over a list of them, never a count |
 | `Clear all` | Throw away the whole list: the history, the queue, or what you searched for |
@@ -643,6 +645,13 @@ you are actually typing into, which is easier than reading it here.
 | `Preset` | An equalizer preset. Not a bitrate |
 | `Reset bands` | Put the equalizer's frequency sliders back to flat |
 | `This device does not offer an equalizer.` |  |
+
+## Settings › Explore sections
+
+| String | What it is |
+| --- | --- |
+| `Drag to reorder.` |  |
+| `Explore sections` |  |
 
 ## Settings › Font
 
@@ -771,6 +780,7 @@ you are actually typing into, which is easier than reading it here.
 | `Browse your library by folders, in the Explore tab (Subsonic servers).` |  |
 | `Dark or light, and the accent color` | The line under “Theme”, explaining it |
 | `Explore` | The tab holding everything the server has: all albums, artists, songs, genres, stations and folders |
+| `Explore sections` |  |
 | `Folder browsing` | Browsing the server's folders as folders, instead of by album and artist |
 | `Font` |  |
 | `Greeting` | Home's "Good morning" line |
@@ -779,6 +789,7 @@ you are actually typing into, which is easier than reading it here.
 | `Home buttons` | The icons at the top right of Home (search, history, settings), which of them show and in what order |
 | `Home chips` | The row of tappable category chips |
 | `Home sections` | Reorder which sections appear on Home |
+| `In what order the sections of Explore are.` | The line under “Explore sections”, explaining it |
 | `Interaction` | Section header grouping toggles |
 | `Interface` | Section header grouping toggles |
 | `Keep the tabs at the bottom of every screen. Holding the back arrow goes back to the one you came from either way.` |  |
@@ -788,7 +799,6 @@ you are actually typing into, which is easier than reading it here.
 | `Off` | A setting value meaning disabled (crossfade, normalization…) |
 | `Open the app on` | Which tab the app opens on, and comes back to after a while away |
 | `Quick grid` | The grid of shortcut tiles on Home |
-| `Search` | The search tab, and the action of searching |
 | `Show, hide and reorder the album rows on Home.` | The line under “Home sections”, explaining it |
 | `Show, hide and reorder the chips at the top of Home.` | The line under “Home chips”, explaining it |
 | `Show, personalize and size the shortcut cards on Home.` | The line under “Quick grid”, explaining it |
@@ -1006,6 +1016,7 @@ you are actually typing into, which is easier than reading it here.
 | `Added to “{name}”` | Toast. `{name}` is the playlist's name |
 | `Added to favorites` | Toast |
 | `Added to queue` | The toast that says it worked |
+| `Album` | In search results, the little word under a result saying what kind of thing it is |
 | `Albums` | A heading over a list of them, never a count |
 | `All {songs} are already in “{name}”.` | The same warning when every one of the several being added is already there. `{songs}` already reads as a count ("12 songs") |
 | `Alphabetical` | Sort option: the order of a list |
@@ -1064,6 +1075,7 @@ you are actually typing into, which is easier than reading it here.
 | `Removed from favorites` | Toast |
 | `Reorder` | Enter drag-to-reorder mode |
 | `Retry` | The button on an error message: try again. A verb |
+| `Search` | The search tab, and the action of searching |
 | `Select all` | Tick every song in the list at once |
 | `Server default` | Codec option meaning "let the server decide" what to transcode to |
 | `Show all` | Opens the full list of what the row is showing a few of |

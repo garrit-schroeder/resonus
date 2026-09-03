@@ -33,7 +33,7 @@ import {
 } from '@/theme';
 import { listPerf } from '@/lib/listPerf';
 import { BackChevron } from '@/components/BackChevron';
-import { BrowseFrame } from '@/components/BrowseFrame';
+import { BrowseFrame, useSearchBox, type BrowserProps } from '@/components/BrowseFrame';
 import { useScreenBottomPadding } from '@/hooks/useScreenBottomPadding';
 import { columnsFor, useScreenSize } from '@/hooks/useScreenSize';
 
@@ -48,7 +48,7 @@ export default function GenresScreen() {
   return <GenresBrowser />;
 }
 
-export function GenresBrowser({ embedded }: { embedded?: boolean }) {
+export function GenresBrowser({ embedded, searchOpen }: BrowserProps) {
   // Repaints on a change of appearance or accent: a stack keeps this screen
   // mounted while you are on another one, out of reach of anything else.
   useTheme();
@@ -68,6 +68,9 @@ export function GenresBrowser({ embedded }: { embedded?: boolean }) {
     enabled: !!auth,
   });
 
+  // Embedded, whether the box is there is the tab's answer.
+  const showSearch = useSearchBox(embedded, searchOpen, () => setQuery(''));
+
   const genres = useMemo(() => {
     const all = [...(data ?? [])].sort((a, b) => a.value.localeCompare(b.value));
     const q = query.trim().toLowerCase();
@@ -84,23 +87,30 @@ export function GenresBrowser({ embedded }: { embedded?: boolean }) {
         </View>
       )}
 
-      <View style={styles.searchBar}>
-        <Ionicons name="search" size={18} color={colors.textMuted} />
-        <TextInput
-          style={styles.input}
-          placeholder={t('Filter genres')}
-          placeholderTextColor={colors.textMuted}
-          autoCapitalize="none"
-          autoCorrect={false}
-          value={query}
-          onChangeText={setQuery}
-        />
-        {query.length > 0 ? (
-          <Pressable hitSlop={10} onPress={() => setQuery('')}>
-            <Ionicons name="close-circle" size={18} color={colors.textMuted} />
-          </Pressable>
-        ) : null}
-      </View>
+      {showSearch ? (
+        <View style={styles.searchBar}>
+          <Ionicons name="search" size={18} color={colors.textMuted} />
+          <TextInput
+            style={styles.input}
+            placeholder={t('Filter genres')}
+            placeholderTextColor={colors.textMuted}
+            autoCapitalize="none"
+            autoCorrect={false}
+            value={query}
+            onChangeText={setQuery}
+            autoFocus={embedded}
+          />
+          {query.length > 0 ? (
+            <Pressable hitSlop={10} onPress={() => setQuery('')}>
+              <Ionicons name="close-circle" size={18} color={colors.textMuted} />
+            </Pressable>
+          ) : null}
+        </View>
+      ) : (
+        // The gap the box was giving the grid; without it the first row of
+        // cards sits against the chips above.
+        <View style={styles.searchGap} />
+      )}
 
       {isLoading ? (
         <View style={styles.skeleton}>
@@ -144,17 +154,21 @@ const styles = themed((colors) => ({
     paddingVertical: spacing.md,
   },
   title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '600' },
+  // The box "Your library" has, to the same measurements, which is what every
+  // section of Explore now opens.
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
+    height: 44,
     backgroundColor: colors.surfaceHighlight,
     marginHorizontal: spacing.lg,
     marginBottom: spacing.md,
     paddingHorizontal: spacing.md,
     borderRadius: radius.md,
   },
-  input: { flex: 1, color: colors.text, fontSize: fontSize.md, paddingVertical: spacing.sm },
+  input: { flex: 1, color: colors.text, fontSize: fontSize.md, paddingVertical: 0 },
+  searchGap: { height: spacing.sm },
   list: {
     paddingHorizontal: spacing.lg,
     paddingBottom: SCREEN_BOTTOM_PADDING,

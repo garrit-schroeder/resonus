@@ -31,7 +31,7 @@ import {
 
 import { COVER, coverArtUrl, getPlaylists, type Playlist } from '@/api/data';
 import { BrowseToolbar } from '@/components/BrowseToolbar';
-import { type BrowserProps } from '@/components/BrowseFrame';
+import { useSearchBox, type BrowserProps } from '@/components/BrowseFrame';
 import { Cover } from '@/components/Cover';
 import { EmptyState } from '@/components/EmptyState';
 import { Message } from '@/components/Message';
@@ -61,7 +61,7 @@ const SORTS: { key: LibrarySort; label: string }[] = (
   Object.keys(SORT_LABELS) as LibrarySort[]
 ).map((key) => ({ key, label: SORT_LABELS[key] }));
 
-export function PlaylistsBrowser({ actionRef }: BrowserProps) {
+export function PlaylistsBrowser({ embedded, actionRef, searchOpen }: BrowserProps) {
   const t = useT();
   const lang = useSettings((s) => s.language);
   const listPad = useListPadding(spacing.lg);
@@ -87,6 +87,9 @@ export function PlaylistsBrowser({ actionRef }: BrowserProps) {
   useEffect(() => {
     if (actionRef) actionRef.current = openGridMenu;
   });
+
+  // Embedded, whether the box is there is the tab's answer.
+  const showSearch = useSearchBox(embedded, searchOpen, () => setQuery(''));
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['playlists'],
@@ -171,31 +174,34 @@ export function PlaylistsBrowser({ actionRef }: BrowserProps) {
 
   return (
     <View style={styles.frame}>
-      <View style={styles.searchRow}>
-        <View style={styles.searchBar}>
-          <Ionicons name="search" size={18} color={colors.textMuted} />
-          <TextInput
-            style={styles.input}
-            placeholder={t('Find a playlist')}
-            placeholderTextColor={colors.textMuted}
-            autoCapitalize="none"
-            autoCorrect={false}
-            value={query}
-            onChangeText={setQuery}
-            returnKeyType="search"
-          />
-          {query.length > 0 ? (
-            <Pressable
-              hitSlop={10}
-              accessibilityRole="button"
-              accessibilityLabel={t('Clear')}
-              onPress={() => setQuery('')}
-            >
-              <Ionicons name="close-circle" size={18} color={colors.textMuted} />
-            </Pressable>
-          ) : null}
+      {showSearch ? (
+        <View style={styles.searchRow}>
+          <View style={styles.searchBar}>
+            <Ionicons name="search" size={18} color={colors.textMuted} />
+            <TextInput
+              style={styles.input}
+              placeholder={t('Find a playlist')}
+              placeholderTextColor={colors.textMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              value={query}
+              onChangeText={setQuery}
+              returnKeyType="search"
+              autoFocus={embedded}
+            />
+            {query.length > 0 ? (
+              <Pressable
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel={t('Clear')}
+                onPress={() => setQuery('')}
+              >
+                <Ionicons name="close-circle" size={18} color={colors.textMuted} />
+              </Pressable>
+            ) : null}
+          </View>
         </View>
-      </View>
+      ) : null}
 
       {/* No play pair: the list is playlists, and "play all of them" is not a
           thing anyone asked for. Same shape as browsing all artists. */}

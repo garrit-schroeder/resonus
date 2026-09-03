@@ -27,6 +27,7 @@ import {
   createPlaylist,
   getPlaylists,
   getStarred,
+  type Album,
   type Playlist,
   COVER,
 } from '@/api/data';
@@ -67,6 +68,48 @@ const SEGMENTS: { key: Segment; label: string }[] = [
   { key: 'albums', label: 'Albums' },
   { key: 'artists', label: 'Artists' },
 ];
+
+/**
+ * The second row of chips, the one that appears once Playlists is the chip
+ * pressed.
+ *
+ * Not the ones Spotify has: there is no such thing as a collaborative playlist
+ * here, and nothing made by the service either. A Subsonic server hands you the
+ * ones you own plus the ones somebody else marked public, and owner and public
+ * are the only two things it says about them, which is what these two are. They
+ * are not a partition and are not meant to be one: a list of yours can be
+ * public and belongs under both. "Public" is Navidrome's own word for the flag,
+ * so it is the one used here.
+ *
+ * Each only appears when it divides the lists you have (see `ownerChips`): with
+ * one account nothing is anybody else's, and if none of them is public there is
+ * nothing to pick out.
+ */
+/**
+ * How the two chips of a narrowed answer are welded together: the line you see
+ * between them, and how far the second hides under the first. The overlap is
+ * about the corner radius of a chip (half its height), which is what it takes
+ * for the outline to come out as one pill.
+ */
+const JOIN_LINE = 1;
+const JOIN_OVERLAP = 14;
+
+/** And how much rounder than a chip the X beside them is drawn, which is what
+ *  keeps it from reading as a chip with nothing written on it. */
+const X_OVERSIZE = 2;
+
+type Owner = 'mine' | 'public';
+
+const OWNER_LABEL: Record<Owner, string> = { mine: 'Yours', public: 'Public' };
+
+/** Yours, both for the server that says so and for the one that says nothing. */
+function isMine(playlist: Playlist, username: string | undefined): boolean {
+  return !playlist.owner || playlist.owner === username;
+}
+
+function keeps(playlist: Playlist, owner: Owner, username: string | undefined): boolean {
+  return owner === 'mine' ? isMine(playlist, username) : !!playlist.public;
+}
 
 // Library grid: the same gap as the rest of the grids.
 /**
@@ -207,8 +250,18 @@ function FavoritesEntry({ grid }: { grid?: boolean }) {
   );
 }
 
-function PlaylistsTab({ onNew, query }: { onNew?: () => void; query: string }) {
+function PlaylistsTab({
+  onNew,
+  query,
+  owner,
+}: {
+  onNew?: () => void;
+  query: string;
+  /** Set by the second row of chips; without it, all of them. */
+  owner?: Owner | null;
+}) {
   const canFetch = useAuthStore((s) => !!s.auth || s.offline);
+  const username = useAuthStore((s) => s.auth?.username);
   const t = useT();
   const lang = useSettings((s) => s.language);
   const sort = useSettings((s) => s.librarySort);
@@ -233,7 +286,9 @@ function PlaylistsTab({ onNew, query }: { onNew?: () => void; query: string }) {
     () =>
       withPins(
         sortItems(
-          (data ?? []).filter((p) => matches(query, p.name)),
+          (data ?? []).filter(
+            (p) => matches(query, p.name) && (!owner || keeps(p, owner, username)),
+          ),
           sort,
           (p) => p.name,
           sort === 'recent'
@@ -245,7 +300,7 @@ function PlaylistsTab({ onNew, query }: { onNew?: () => void; query: string }) {
         (p) => `playlist:${p.id}`,
         pins,
       ),
-    [data, query, sort, times, pins],
+    [data, query, owner, username, sort, times, pins],
   );
   if (isLoading) return <Loader />;
   if (isError) return <Message text={t("Couldn't load playlists.")} onRetry={() => refetch()} />;
@@ -478,6 +533,210 @@ function AlbumsTab({ query }: { query: string }) {
   );
 }
 
+/**
+ * One row of the tab with no chip pressed: a playlist, a favourite album or a
+ * favourite artist, all in the same list.
+ *
+ * Flattened at merge time rather than kept as three arrays walked in step: the
+ * sort is one sort over the lot of them, and the row only needs a name, a
+ * cover, a line to write underneath and somewhere to go. What the long-press
+ * menu takes is carried along, since that one does want the object it came
+ * from.
+ */
+interface LibItem {
+  kind: 'playlist' | 'album' | 'artist';
+  id: string;
+  name: string;
+  coverArt?: string;
+  /** Whose it is: the owner of a list, the artist of an album. */
+  by?: string;
+  href: string;
+  /** The two scores the orders ask for, worked out once (see `sortItems`). */
+  recent: number;
+  added: number;
+  playlist?: Playlist;
+  album?: Album;
+}
+
+/**
+ * Everything you have, which is what the tab opens on.
+ *
+ * The chips narrow it; none of them pressed is not a fourth kind of list, it
+ * is the same rows before anybody asked for less. Each says what it is under
+ * its name, because in one list a record and a playlist are the same square.
+ */
+function AllTab({ query, onNew }: { query: string; onNew?: () => void }) {
+  const canFetch = useAuthStore((s) => !!s.auth || s.offline);
+  const t = useT();
+  const sort = useSettings((s) => s.librarySort);
+  const times = useLastPlayed((s) => s.times);
+  const { byAlbum, byArtist } = useHistoryTimes();
+  const pins = usePins((s) => s.pins);
+  const openMenu = useMediaMenu((s) => s.open);
+  const grid = useSettings((s) => s.libraryLayout) === 'grid';
+  const bottomPad = useScreenBottomPadding();
+  const { columns } = useGridMetrics();
+  const listPad = useListPadding(spacing.lg);
+  const lists = useQuery({
+    queryKey: ['playlists'],
+    queryFn: () => getPlaylists(),
+    enabled: canFetch,
+  });
+  const starred = useQuery({
+    queryKey: ['starred'],
+    queryFn: () => getStarred(),
+    enabled: canFetch,
+  });
+
+  const items = useMemo(() => {
+    const all: LibItem[] = [
+      ...(lists.data ?? []).map((p) => ({
+        kind: 'playlist' as const,
+        id: p.id,
+        name: p.name,
+        coverArt: p.coverArt,
+        by: p.owner,
+        href: `/playlist/${p.id}`,
+        recent: times[`/playlist/${p.id}`] ?? 0,
+        added: Date.parse(p.created ?? '') || 0,
+        playlist: p,
+      })),
+      ...(starred.data?.albums ?? []).map((a) => ({
+        kind: 'album' as const,
+        id: a.id,
+        name: a.name,
+        coverArt: a.coverArt,
+        by: a.artist,
+        href: `/album/${a.id}`,
+        recent: Math.max(times[`/album/${a.id}`] ?? 0, byAlbum.get(a.id) ?? 0),
+        added: Date.parse(a.starred ?? '') || 0,
+        album: a,
+      })),
+      ...(starred.data?.artists ?? []).map((a) => ({
+        kind: 'artist' as const,
+        id: a.id,
+        name: a.name,
+        coverArt: a.coverArt,
+        href: `/artist/${a.id}`,
+        recent: Math.max(times[`/artist/${a.id}`] ?? 0, byArtist.get(a.id) ?? 0),
+        added: Date.parse(a.starred ?? '') || 0,
+      })),
+    ];
+    return withPins(
+      sortItems(
+        // Albums match by artist too, as they do under their own chip.
+        all.filter((i) => matches(query, i.name, i.kind === 'album' ? i.by : undefined)),
+        sort,
+        (i) => i.name,
+        (i) => (sort === 'recent' ? i.recent : i.added),
+      ),
+      (i) => `${i.kind}:${i.id}`,
+      pins,
+    );
+  }, [lists.data, starred.data, query, sort, times, byAlbum, byArtist, pins]);
+
+  /** "Playlist · juan", "Album · Rojuu", "Artist". */
+  const label = (i: LibItem): string => {
+    const kind = i.kind === 'playlist' ? t('Playlist') : i.kind === 'album' ? t('Album') : t('Artist');
+    return i.by ? `${kind} · ${i.by}` : kind;
+  };
+
+  const onLongPress = (i: LibItem) => {
+    if (i.playlist) openMenu({ kind: 'playlist', playlist: i.playlist });
+    else if (i.album) openMenu({ kind: 'album', album: i.album });
+    else return;
+    haptic('light');
+  };
+
+  const loading = lists.isLoading || starred.isLoading;
+  const refresh = () => {
+    lists.refetch();
+    starred.refetch();
+  };
+  if (loading) return <Loader />;
+  if (lists.isError && starred.isError) {
+    return <Message text={t("Couldn't load your library.")} onRetry={refresh} />;
+  }
+  // In grid, Favorites goes in as the first card (sentinel); in list it stays
+  // the full-width header. The same arrangement the playlists have.
+  const data: LibItem[] = grid
+    ? [{ kind: 'playlist', id: FAVORITES_ID, name: '', href: '', recent: 0, added: 0 }, ...items]
+    : items;
+  return (
+    <FlatList
+      key={grid ? `grid-${columns}` : 'list'}
+      {...listPerf}
+      keyboardShouldPersistTaps="handled"
+      {...gridListProps(grid, bottomPad, columns, listPad)}
+      data={data}
+      keyExtractor={(item) => `${item.kind}:${item.id}`}
+      refreshControl={
+        <RefreshControl
+          refreshing={lists.isFetching || starred.isFetching}
+          onRefresh={refresh}
+          tintColor={colors.accent}
+        />
+      }
+      ListHeaderComponent={grid ? undefined : <FavoritesEntry />}
+      ListEmptyComponent={
+        query ? (
+          <NoResults query={query} />
+        ) : (
+          <EmptyState
+            icon="library-outline"
+            title={t('Nothing here yet')}
+            subtitle={t('Your playlists and what you star show up here.')}
+            action={onNew ? { label: t('New playlist'), onPress: onNew } : undefined}
+          />
+        )
+      }
+      renderItem={({ item }: { item: LibItem }) =>
+        item.id === FAVORITES_ID ? (
+          <FavoritesEntry grid />
+        ) : grid ? (
+          <GridCard
+            href={item.href}
+            uri={coverArtUrl(item.coverArt ?? item.id, COVER.card)}
+            rounded={item.kind === 'artist'}
+            title={item.name}
+            subtitle={label(item)}
+            pinned={!!pins[`${item.kind}:${item.id}`]}
+            onLongPress={() => onLongPress(item)}
+          />
+        ) : (
+          <Link href={item.href} asChild>
+            <Pressable style={styles.row} onLongPress={() => onLongPress(item)}>
+              <Cover
+                uri={coverArtUrl(item.coverArt ?? item.id, COVER.thumb)}
+                size={56}
+                rounded={item.kind === 'artist'}
+              />
+              <View style={styles.rowInfo}>
+                <Text style={styles.rowTitle} numberOfLines={1}>
+                  {item.name}
+                </Text>
+                <View style={styles.rowSubLine}>
+                  {pins[`${item.kind}:${item.id}`] ? (
+                    <MaterialCommunityIcons
+                      name="pin"
+                      size={13}
+                      color={colors.accent}
+                      style={styles.pinIcon}
+                    />
+                  ) : null}
+                  <Text style={styles.rowSub} numberOfLines={1}>
+                    {label(item)}
+                  </Text>
+                </View>
+              </View>
+            </Pressable>
+          </Link>
+        )
+      }
+    />
+  );
+}
+
 function Loader() {
   return <ActivityIndicator style={{ marginTop: spacing.xl }} color={colors.accent} />;
 }
@@ -583,7 +842,21 @@ export default function LibraryScreen() {
   const offline = useAuthStore((s) => s.offline);
   const queryClient = useQueryClient();
   const toast = useToast((s) => s.show);
-  const [segment, setSegment] = useState<Segment>('playlists');
+  /**
+   * Which chip is pressed, and none of them to start with: the tab opens on
+   * everything you have, and a chip is what narrows it (`AllTab`). It used to
+   * open on the playlists, which put your albums and your artists behind a tap
+   * nobody had asked for.
+   */
+  const [segment, setSegment] = useState<Segment | null>(null);
+  /** And which playlists, once that chip is the one pressed. */
+  const [owner, setOwner] = useState<Owner | null>(null);
+  /**
+   * How tall a chip with a word in it comes out, which is the diameter of the
+   * X beside them. Measured rather than worked out: it is a line of text plus
+   * padding, and the text grows with the system font size.
+   */
+  const [chipHeight, setChipHeight] = useState(0);
   // Rows are centred on a wide screen and a grid is not, so the header lines
   // up with whichever is underneath it.
   const listPad = useListPadding(spacing.lg);
@@ -635,6 +908,35 @@ export default function LibraryScreen() {
     }
   }
 
+  function clearSegment() {
+    setSegment(null);
+    setOwner(null);
+  }
+
+  /**
+   * A chip is only worth drawing where it leaves something out. On a server
+   * with one account every list is yours, and "Yours" over all of them is a
+   * question with one answer; the same goes for "Public" where none of them is,
+   * or where all of them are.
+   */
+  const username = useAuthStore((s) => s.auth?.username);
+  const { data: allPlaylists } = useQuery({
+    queryKey: ['playlists'],
+    queryFn: () => getPlaylists(),
+    enabled: !!auth || offline,
+  });
+  const ownerChips: Owner[] =
+    segment !== 'playlists'
+      ? []
+      : (['mine', 'public'] as Owner[]).filter((key) => {
+          const lists = allPlaylists ?? [];
+          const kept = lists.filter((p) => keeps(p, key, username));
+          return kept.length > 0 && kept.length < lists.length;
+        });
+
+  /** A chip that has stopped being worth drawing takes its filter with it. */
+  const shownOwner = owner && ownerChips.includes(owner) ? owner : null;
+
   async function onCreate(name: string) {
     setCreating(false);
     if (!auth && !offline) return;
@@ -653,6 +955,50 @@ export default function LibraryScreen() {
   // the status bar and jumped down right after. The context already holds the
   // inset by then, which makes the first frame the right one.
   const insets = useSafeAreaInsets();
+
+  const segmentChipRow = (segment ? SEGMENTS.filter((s) => s.key === segment) : SEGMENTS).map(
+    (s) => {
+      const active = s.key === segment;
+      return (
+        <Pressable
+          key={s.key}
+          style={[
+            styles.segment,
+            active && { backgroundColor: accent },
+            shownOwner ? styles.segmentJoinFirst : null,
+          ]}
+          accessibilityRole="button"
+          accessibilityState={{ selected: active }}
+          onPress={() => (active ? clearSegment() : setSegment(s.key))}
+        >
+          <Text style={[styles.segmentText, active && styles.segmentTextActive]}>{t(s.label)}</Text>
+        </Pressable>
+      );
+    },
+  );
+
+  const ownerChipRow = ownerChips
+    .filter((key) => !shownOwner || key === shownOwner)
+    .map((key) => {
+      const active = key === shownOwner;
+      return (
+        <Pressable
+          key={key}
+          style={[
+            styles.segment,
+            active && { backgroundColor: accent },
+            active ? styles.segmentJoinSecond : null,
+          ]}
+          accessibilityRole="button"
+          accessibilityState={{ selected: active }}
+          onPress={() => setOwner(active ? null : key)}
+        >
+          <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
+            {t(OWNER_LABEL[key])}
+          </Text>
+        </Pressable>
+      );
+    });
 
   return (
     <View style={[styles.safe, { paddingTop: insets.top }]}>
@@ -727,26 +1073,54 @@ export default function LibraryScreen() {
         onConfirm={onCreate}
       />
 
+      {/* With a chip pressed the row is that chip and what narrows it further,
+          behind an X that gives you the whole library back. The other two are
+          not greyed out but gone: they are not narrower, they are elsewhere. */}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
         style={styles.segments}
         contentContainerStyle={[styles.segmentsContent, { paddingHorizontal: headerPad }]}
       >
-        {SEGMENTS.map((s) => {
-          const active = s.key === segment;
-          return (
-            <Pressable
-              key={s.key}
-              style={[styles.segment, active && { backgroundColor: accent }]}
-              onPress={() => setSegment(s.key)}
-            >
-              <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
-                {t(s.label)}
-              </Text>
-            </Pressable>
-          );
-        })}
+        {segment ? (
+          <Pressable
+            style={[
+              styles.segment,
+              styles.segmentIcon,
+              chipHeight ? { width: chipHeight + X_OVERSIZE, height: chipHeight + X_OVERSIZE } : null,
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={t('Clear')}
+            onPress={clearSegment}
+          >
+            <Ionicons name="close" size={18} color={colors.text} />
+          </Pressable>
+        ) : null}
+
+        {/* Once one of the pair is picked the other goes and the two that are
+            left become one pill: "playlists, yours" is one answer in two words,
+            not two chips that happen to both be on. The second slides under the
+            first by its own corner, so the join is one curve and the outline
+            has no pinch in it.
+
+            Written backwards and laid out backwards (`segmentGroupJoined`) so
+            the first one is drawn last and its ring of background lands over
+            the second: what paints over what is the order they are written in,
+            and `zIndex` does not change it here. */}
+        <View
+          style={[styles.segmentGroup, shownOwner ? styles.segmentGroupJoined : null]}
+          // Read while they are apart. Joined, the first one carries its ring
+          // and the row is two points taller, which is not the chip's height
+          // and would have the X grow every time you narrow the answer.
+          onLayout={(e) => {
+            const h = Math.round(e.nativeEvent.layout.height);
+            if (!shownOwner && h && h !== chipHeight) setChipHeight(h);
+          }}
+        >
+          {shownOwner ? ownerChipRow : segmentChipRow}
+          {shownOwner ? segmentChipRow : ownerChipRow}
+        </View>
+
       </ScrollView>
 
       <View style={[styles.controls, { paddingHorizontal: headerPad }]}>
@@ -756,8 +1130,10 @@ export default function LibraryScreen() {
       <SortSheet visible={sortOpen} onClose={() => setSortOpen(false)} />
 
       <View style={{ flex: 1 }}>
-        {segment === 'playlists' ? (
-          <PlaylistsTab onNew={() => setCreating(true)} query={filter} />
+        {segment === null ? (
+          <AllTab query={filter} onNew={() => setCreating(true)} />
+        ) : segment === 'playlists' ? (
+          <PlaylistsTab onNew={() => setCreating(true)} query={filter} owner={shownOwner} />
         ) : segment === 'albums' ? (
           <AlbumsTab query={filter} />
         ) : (
@@ -787,6 +1163,11 @@ const styles = themed((colors) => ({
   segmentsContent: {
     gap: spacing.sm,
     paddingHorizontal: spacing.lg,
+    // Centred, so the chips keep their own height instead of stretching to the
+    // tallest thing in the row. Stretching made the X and the chips measure
+    // each other: the X is drawn from the height read off them (`chipHeight`),
+    // and every layout added its own two points to the answer.
+    alignItems: 'center',
   },
   segment: {
     paddingVertical: spacing.xs,
@@ -795,6 +1176,39 @@ const styles = themed((colors) => ({
     backgroundColor: colors.surfaceHighlight,
   },
   segmentText: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
+  // A circle, the height of the chips beside it (`chipHeight`): with padding of
+  // its own it would be an oval, and an aspect ratio squares it the wrong way
+  // round, taking the width it got from the icon and making the row that tall.
+  segmentIcon: { paddingHorizontal: 0, alignItems: 'center', justifyContent: 'center' },
+  segmentGroup: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  /**
+   * Merged, the two are laid out backwards so the first one is drawn last and
+   * its ring lands on top of the second. `zIndex` was the obvious way to say
+   * that and does nothing here: what paints over what is the order they are
+   * written in, and this is how you write them the other way round without
+   * moving them.
+   */
+  segmentGroupJoined: { gap: 0, flexDirection: 'row-reverse' as const },
+  /**
+   * The pair, merged. The first is drawn over the second inside a ring of
+   * background, and that ring is the curve you see between them: everywhere
+   * else it is the page and invisible.
+   *
+   * All the way round, not only on the edge that shows: a border on one side
+   * tapers to nothing where the corners turn, and the line came out thin at the
+   * top and bottom of the join. And added around the chip rather than taken out
+   * of its padding, because what has to match the second pill is the green, not
+   * the box: taking it out left the first one two points shorter and the
+   * silhouette of what should read as one pill had a step in it.
+   */
+  segmentJoinFirst: {
+    borderWidth: JOIN_LINE,
+    borderColor: colors.background,
+    marginRight: -JOIN_OVERLAP,
+  },
+  // A corner's worth of it goes under the first, and that much is given back
+  // as padding so the word does not end up against the join.
+  segmentJoinSecond: { paddingLeft: spacing.md + JOIN_OVERLAP },
   segmentTextActive: { color: colors.onAccent },
   searchRow: {
     paddingHorizontal: spacing.lg,

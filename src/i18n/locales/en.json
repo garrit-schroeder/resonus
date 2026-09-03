@@ -694,5 +694,13 @@
   "Navigation bar": "Navigation bar",
   "Which tabs are at the bottom, and in what order.": "Which tabs are at the bottom, and in what order.",
   "Which icons are at the top of Home, and in what order.": "Which icons are at the top of Home, and in what order.",
-  "Always shown": "Always shown"
+  "Always shown": "Always shown",
+  "Explore sections": "Explore sections",
+  "In what order the sections of Explore are.": "In what order the sections of Explore are.",
+  "Drag to reorder.": "Drag to reorder.",
+  "Yours": "Yours",
+  "Nothing here yet": "Nothing here yet",
+  "Your playlists and what you star show up here.": "Your playlists and what you star show up here.",
+  "Couldn't load your library.": "Couldn't load your library.",
+  "Public": "Public"
 }

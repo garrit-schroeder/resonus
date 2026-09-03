@@ -108,6 +108,12 @@ export default function AppearanceSettings() {
           chevron
           onPress={() => router.push('/settings/navigation-bar')}
         />
+        <SettingRow
+          label={t('Explore sections')}
+          description={t('In what order the sections of Explore are.')}
+          chevron
+          onPress={() => router.push('/settings/explore-sections')}
+        />
 
         <Text style={settingsStyles.sectionTitle}>{t('Home')}</Text>
         <SettingRow

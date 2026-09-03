@@ -13,6 +13,13 @@ Releases before 0.2.1 are only listed on the
 
 - An animated cover can fill the player behind the controls, with a still copy of it beside the title, instead of playing inside the square; it starts off, under Settings > Player > Cover art, and comes from @Anakin-bb8 (#190).
 - Ukrainian is complete again, thanks to @albedych (#191).
+- The sections of Explore can be reordered from Settings > Appearance > Explore sections.
+
+### Changed
+
+- "Your library" opens on everything you have, playlists, favourite albums and favourite artists in one list saying which is which, and the chips narrow it from there instead of being the only way to see any of it.
+- The chip you press in "Your library" is now the only one left in the row, behind an X that gives the whole library back, and Playlists brings Yours and Public with it, each when it has something to leave out; picking one of those leaves the two words sitting together as one answer.
+- The search box of Explore is now behind the same magnifier "Your library" has, at the top right, where it becomes the X that puts the box away; Back closes it too, and a section opens on its list rather than on a box you were not looking for.
 
 ### Fixed
 

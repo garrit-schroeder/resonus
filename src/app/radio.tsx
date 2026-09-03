@@ -43,7 +43,7 @@ import { currentSong, usePlayerStore } from '@/store/player';
 import { useToast } from '@/store/toast';
 import { colors, fontSize, radius, SCREEN_BOTTOM_PADDING, SHEET_MAX_WIDTH, spacing, themed, useTheme } from '@/theme';
 import { BackChevron } from '@/components/BackChevron';
-import { BrowseFrame, type BrowserProps } from '@/components/BrowseFrame';
+import { BrowseFrame, useSearchBox, type BrowserProps } from '@/components/BrowseFrame';
 import { useScreenBottomPadding } from '@/hooks/useScreenBottomPadding';
 import { useListPadding } from '@/hooks/useScreenSize';
 import { listPerf } from '@/lib/listPerf';
@@ -57,7 +57,7 @@ export default function RadioScreen() {
   return <RadioBrowser />;
 }
 
-export function RadioBrowser({ embedded, actionRef }: BrowserProps) {
+export function RadioBrowser({ embedded, actionRef, searchOpen }: BrowserProps) {
   // Repaints on a change of appearance or accent: a stack keeps this screen
   // mounted while you are on another one, out of reach of anything else.
   useTheme();
@@ -113,6 +113,10 @@ export function RadioBrowser({ embedded, actionRef }: BrowserProps) {
   // A handful of stations is read at a glance, and a search box over three rows
   // is furniture. It appears once the list is long enough to be scanned.
   const showSearch = (data?.length ?? 0) > SEARCH_FROM;
+
+  // Embedded the tab's magnifier is what asks for the box, and then the count
+  // is beside the point: it is there because it was asked for.
+  const boxOpen = useSearchBox(embedded, searchOpen, () => setQuery(''));
 
   async function saveStation(changes: RadioEdit, pendingCoverUri?: string) {
     const station = editForm?.station ?? null;
@@ -186,7 +190,7 @@ export function RadioBrowser({ embedded, actionRef }: BrowserProps) {
         </View>
       )}
 
-      {showSearch ? (
+      {(embedded ? boxOpen : showSearch) ? (
         <View style={styles.searchBar}>
           <Ionicons name="search" size={18} color={colors.textMuted} />
           <TextInput
@@ -197,6 +201,7 @@ export function RadioBrowser({ embedded, actionRef }: BrowserProps) {
             autoCorrect={false}
             value={query}
             onChangeText={setQuery}
+            autoFocus={embedded}
           />
           {query ? (
             <Pressable hitSlop={8} onPress={() => setQuery('')} accessibilityLabel={t('Clear')}>
@@ -391,14 +396,16 @@ const styles = themed((colors) => ({
   // how it is drawn everywhere else in the app.
   pinIcon: { transform: [{ rotate: '45deg' }] },
   rowSub: { color: colors.textSecondary, fontSize: fontSize.xs, marginTop: 2 },
+  // The box "Your library" has, to the same measurements, which is what every
+  // section of Explore now opens.
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
+    height: 44,
     marginHorizontal: spacing.lg,
     marginBottom: spacing.md,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
     borderRadius: radius.md,
     backgroundColor: colors.surfaceHighlight,
   },
