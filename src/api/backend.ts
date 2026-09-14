@@ -157,8 +157,12 @@ export const getAppearsOn = (
   musicFolderId?: string,
 ) => api(auth).getAppearsOn(auth, artistId, artistName, musicFolderId);
 
-export const getTopSongs = (auth: SubsonicAuth, artist: string, count?: number) =>
-  api(auth).getTopSongs(auth, artist, count);
+export const getTopSongs = (
+  auth: SubsonicAuth,
+  artist: string,
+  count?: number,
+  artistId?: string,
+) => api(auth).getTopSongs(auth, artist, count, artistId);
 
 export const getSimilarSongs = (auth: SubsonicAuth, id: string, count?: number) =>
   api(auth).getSimilarSongs(auth, id, count);

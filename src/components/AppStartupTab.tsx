@@ -19,10 +19,11 @@ import { mark } from '@/lib/perfLog';
 import { useAutoDownloads } from '@/store/autoDownloads';
 import { useSettings, type DefaultTab } from '@/store/settings';
 
-const TAB_HREF: Record<DefaultTab, '/' | '/search' | '/library'> = {
+const TAB_HREF: Record<DefaultTab, '/' | '/search' | '/library' | '/explore'> = {
   index: '/',
   search: '/search',
   library: '/library',
+  explore: '/explore',
 };
 
 // Time in background after which, on return, the app opens on the default
@@ -36,7 +37,17 @@ const PLAYER_PATHS = new Set(['/player', '/queue', '/lyrics']);
 
 export function AppStartupTab() {
   const router = useRouter();
-  const defaultTab = useSettings((s) => s.defaultTab);
+  const chosenTab = useSettings((s) => s.defaultTab);
+  const bottomTabs = useSettings((s) => s.bottomTabs);
+  /**
+   * The tab to open on, which is not always the one that was chosen: it can
+   * have been taken off the bar since (Settings › Navigation bar). Opening on
+   * a screen with no way back to it is worse than opening on the first one
+   * that is there, and Home always is.
+   */
+  const defaultTab = bottomTabs.some((t) => t.key === chosenTab && t.enabled)
+    ? chosenTab
+    : 'index';
   const backgroundedAt = useRef<number | null>(null);
   const didInitial = useRef(false);
   // Where the app was when it went away. Read in the listener, which has no

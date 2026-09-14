@@ -12,7 +12,6 @@
  * using it go on writing over it in the ordinary text colour.
  */
 import { useEffect, useState } from 'react';
-import { getColors } from 'react-native-image-colors';
 
 import { CACHED_COVER, COVER } from '@/api/data';
 import { colors as theme, useThemeMode, type ThemeMode } from '@/theme';
@@ -70,6 +69,51 @@ function hslToHex(h: number, s: number, l: number): string {
       .toString(16)
       .padStart(2, '0');
   return `#${to(r)}${to(g)}${to(b)}`;
+}
+
+/** Saturation of a hex color in HSL, or -1 if it cannot be read. */
+function saturationOf(hex: string): number {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return -1;
+  return rgbToHsl(rgb[0], rgb[1], rgb[2])[1];
+}
+
+/**
+ * Picks the accent from the four colors iOS returns.
+ *
+ * They come labeled by role, not by vibrancy: `background` is the dominant
+ * area of the cover and `primary`, `secondary` and `detail` are the foreground
+ * ones in order of how much of the cover they take. The dominant area is the
+ * one that reads as "the color of this cover", so it wins whenever it carries
+ * any color at all; the covers it fails on are the ones whose dominant area is
+ * a white border or a black void, and there the foreground colors are all
+ * there is. Among those, order beats saturation unless the gap is wide: a
+ * small vivid detail should not push aside the color the cover is made of.
+ */
+function pickIosColor(
+  background: string | undefined,
+  primary: string | undefined,
+  secondary: string | undefined,
+  detail: string | undefined,
+): string | undefined {
+  const NEUTRAL = 0.15;
+  const CLEARLY_MORE = 1.5;
+
+  if (background && saturationOf(background) >= NEUTRAL) return background;
+
+  let best: string | undefined;
+  let bestSat = 0;
+  for (const hex of [primary, secondary, detail]) {
+    if (!hex) continue;
+    const s = saturationOf(hex);
+    if (s < NEUTRAL) continue;
+    if (!best || s >= bestSat * CLEARLY_MORE) {
+      best = hex;
+      bestSat = s;
+    }
+  }
+
+  return best || background;
 }
 
 /**
@@ -130,17 +174,26 @@ export function useDominantColor(uri?: string): string {
     }
     const src = paletteUri(uri);
     // Keyed by the small URL: two screens showing the same cover at different
-    // sizes now share one cached palette.
-    getColors(src, { fallback: theme.surfaceHighlight, cache: true, key: src })
+    // sizes now share one cached palette. `quality` is read on iOS only, where
+    // it decides how much of the image is looked at before averaging, and the
+    // URL above already brought the cover down to `PALETTE_SIZE`, so there is
+    // nothing to save by looking at less than all of it.
+    import('react-native-image-colors')
+      .then(({ getColors }) =>
+        getColors(src, {
+          fallback: theme.surfaceHighlight,
+          cache: true,
+          key: src,
+          quality: 'high',
+        }),
+      )
       .then((res) => {
-        if (!active) return;
+        if (!active || !res) return;
         let c: string = theme.surfaceHighlight;
-        // Prefer a vibrant tone and darken it in `normalize`; this preserves
-        // the character of the cover art without looking dull or too bright.
         if (res.platform === 'android') {
           c = res.vibrant || res.darkVibrant || res.muted || res.dominant || c;
         } else if (res.platform === 'ios') {
-          c = res.background || res.primary || res.secondary || c;
+          c = pickIosColor(res.background, res.primary, res.secondary, res.detail) || c;
         } else if (res.platform === 'web') {
           c = res.vibrant || res.darkVibrant || res.dominant || c;
         }

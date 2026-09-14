@@ -1,0 +1,50 @@
+{
+    "name": "Resonus",
+    "subtitle": "Official iOS source for Resonus",
+    "description": "Welcome, here you can find all Resonus iOS versions",
+    "website": "https://github.com/juananzzz/resonus",
+    "tintColor": "#1bd465",
+    "featuredApps": [
+        "com.juananzzz.resonus"
+    ],
+    "apps": [
+        {
+            "name": "Resonus",
+            "bundleIdentifier": "com.juananzzz.resonus",
+            "developerName": "juananzzz",
+            "subtitle": "A clean Android and iOS music player for your self-hosted server, and your local files.",
+            "localizedDescription": "Features\nNavidrome / OpenSubsonic / Jellyfin / Ampache: multi-profile login, multi-library support, plus several server addresses with automatic switching\nLocal mode: play music straight from your device or a folder, no server needed\nOffline mode: your favorites, playlists and albums stay browsable with no connection; downloaded songs play, the rest show grayed out, and it switches automatically when the server is unreachable\nDownloads: albums, playlists, an artist's whole discography or single songs, in original quality or transcoded\nSynced lyrics: karaoke view with tap-to-seek, full-screen mode, optional LRCLIB lookup\nInternet radio: browse and manage your stations\nPlayback: crossfade, ReplayGain normalization, playback speed, sleep timer, queue with undo, shuffle, repeat, background & lock-screen controls\nAutoplay & mixes: keep the music going with similar songs, or start a mix from any track\nOrganize: multi-select (queue, playlist or download in batch), star ratings, pinned items, play history\nThemes: dark, light (experimental) or whichever one the phone is on, each with its own accent color\nMake it yours: reorder and show/hide Home sections and explore chips, app fonts, configurable swipe and ⋯ menu actions\nLandscape and tablet layouts\nQueue sync across devices\nIn 8 languages: English, Spanish, German, Catalan, Russian, Italian, Simplified Chinese, Ukrainian",
+            "iconURL": "https://github.com/juananzzz/resonus/raw/main/assets/images/icon-transparent.png",
+            "tintColor": "#1bd465",
+            "category": "entertainment",
+            "screenshots": [
+                "https://github.com/juananzzz/resonus/raw/main/assets/screenshots/dark-home.jpg",
+                "https://github.com/juananzzz/resonus/raw/main/assets/screenshots/dark-player.jpg",
+                "https://github.com/juananzzz/resonus/raw/main/assets/screenshots/dark-album.jpg",
+                "https://github.com/juananzzz/resonus/raw/main/assets/screenshots/dark-library.jpg",
+                "https://github.com/juananzzz/resonus/raw/main/assets/screenshots/artist.jpg",
+                "https://github.com/juananzzz/resonus/raw/main/assets/screenshots/lyrics.jpg",
+                "https://github.com/juananzzz/resonus/raw/main/assets/screenshots/queue.jpg",
+                "https://github.com/juananzzz/resonus/raw/main/assets/screenshots/servers.jpg"
+            ],
+            "versions": [
+                {
+                    "version": "0.7.6",
+                    "date": "2026-08-26T18:16:57+02:00",
+                    "size": 17389700,
+                    "downloadURL": "https://github.com/juananzzz/resonus/releases/download/v0.7.6/resonus-v0.7.6.ipa",
+                    "localizedDescription": "Added\nA fourth tab, Explore, holding everything the server has: playlists, albums, artists, songs, genres, radio stations and folders, each with its own search and orders.\nThe tabs at the bottom can be reordered, and all but Home hidden, in Settings > Appearance > Navigation bar.\nThe icons at the top of Home can be reordered too, and all but the gear hidden, in Settings > Appearance > Home buttons. There is a new one among them, a search button that opens the box with the cursor already in it, off by default.\nThe row playing in a list shows a set of bars that move while it plays and settle when you pause it.\nOne tap and two on the player's artwork now offer the same actions, the album among them.\nHolding a playlist on the Home shelf opens the same menu the library gives it (#182).\nItalian is complete again, and Explicit, Clean and Lyrics read as Italian instead of English, thanks to @Anakin-bb8 (#189).\nAn icon of its own on iOS, also thanks to @Anakin-bb8 (#189).\nFixed\nThe queue saved on the server no longer overwrites a newer one another player left there, and a queue that has only been restored, never played, is not sent at all (#188).\n\"Add to queue\" puts what you add at the end of the queue, where \"Play next\" already put things right after the current song (#184).\nThe queue's headings say where each stretch of it came from, instead of leaving songs you added under the name of a record none of them are on (#184).\n\"New releases\" shows the newest records instead of a slice of the alphabet.\nOffline mode no longer looks for a new version of Resonus by itself (#179).\nThe dropdowns in Settings open flush against their row again.\nOpening Your library for the first time no longer draws it under the status bar for an instant.\nChanged\nThe library tab is now called \"Your library\", and it sits last at the bottom, behind Explore.\nThe row of chips on Home is now called \"Home chips\" and not \"Explore chips\", which named the Explore tab it has nothing to do with. The order you put them in survives the rename.\n\"Pick up the queue from other players\" starts on, so a queue left on another device is taken as well as sent. It was only ever sent before (#188).\nAlbums and artists open as rows rather than as a grid, and the view button still switches them.\nBrowsing all albums, all artists and all songs picks its order from a menu that says which one is on, instead of a scrolling row of pills, and the albums and the songs gained play and shuffle beside it.\nA genre card says how many albums it holds and fans out the covers of its first two.\nThe album and year line in the player scrolls when it does not fit (#183).\nSong, album and artist rows dim under the finger, late enough that scrolling past one never lights it up.\nCorners are rounder throughout, sheets and panels most of all.\nFolders moved out of Your library and into Explore, which is where the rest of the server's catalogue now lives.\nThe setting that picked which actions a song's ⋯ menu shows is gone: every action is back in it, and each one is still only there when it applies.\nThe avatar on Home is gone, and the setting that showed it: it was never a button, and the account is one tap away behind the gear beside it.",
+                    "minOSVersion": "16.4"
+                },
+                {
+                    "version": "0.7.5",
+                    "date": "2026-08-24T17:20:00+02:00",
+                    "size": 18063491,
+                    "downloadURL": "https://github.com/juananzzz/resonus/releases/download/v0.7.5/resonus-v0.7.5.ipa",
+                    "localizedDescription": "Added\nMore than one folder for the local profile, in Settings > Local music, and adding one only reads the new folder (#158).\nA \"New releases\" shelf on Home, off by default, ordered by the year the albums came out (#173).\nThe theme can follow the phone's own light or dark setting, and changes with it while the app is open (#173).\nDark and light each remember their own accent colour (#173).\nThe queue another player left on the server can be brought over from the ⋯ of the queue screen, or picked up on opening with a new switch in Settings > Playback.\nTapping the player's artwork twice can play, pause or favourite the song, off by default in Settings > Player (#156).\nAn album, a playlist or the favourites can be played next from their ⋯ menu.\nA card with the artist's photo and biography under the player controls, off by default, thanks to @Anakin-bb8.\nA selection of songs can be exported to a folder, or have its downloads deleted, from the ⋯ of the selection bar (#164).\nItalian is much more complete, over 140 strings, thanks to @Anakin-bb8; German and Russian are up to date, thanks to @CraftoHohenvels and @ztx-lyghters.\nFixed\nThe sleep timer's \"When the song ends\" stops on the right song (#177).\nThe server's Now Playing panel follows the song instead of sitting at 0:00.\nDragging the progress bar moves the time under it.\nListens saved offline reach the server on reconnect.\nThe last song in the queue no longer sits under the navigation bar.\nALAC plays where the phone's own decoder refuses it (#134), thanks to @zskruc.\nCasting to a UPnP renderer no longer stops with the screen locked, thanks to @matthewmoonen.\nSonos handles the queue properly: editing it, turning shuffle off, skipping inside it, and crossfade, thanks to @garrit-schroeder.\nOn iOS, next and previous work from the lock screen, the Dynamic Island, Bluetooth and the car, and the accent colour takes the colour of the cover, thanks to @Anakin-bb8.\nChanged\nThe local profile asks its catalog for the rows it is about to draw instead of holding the library in memory, so opening it stops costing what the whole library costs.\nThe local profile no longer stops at five thousand songs per folder.\nFolders are followed ten levels deep instead of six.\nThe selection bar keeps two buttons and a ⋯ with the rest, so favouriting several songs at once is where you would look for it (#164).\nHeadings sit at weight 600: Android draws Roboto's 800 as a real ExtraBold and it closed the letters up.\nThe genre grid on Search lost its \"Browse all\" heading.\nExpo SDK 57 and React Native 0.86 underneath, media3 unchanged at 1.9.0.",
+                    "minOSVersion": "16.4"
+                }
+            ]
+        }
+    ]
+}

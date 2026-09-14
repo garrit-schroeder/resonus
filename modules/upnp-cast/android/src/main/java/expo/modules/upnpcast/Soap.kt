@@ -18,6 +18,10 @@ object Soap {
 
   data class Result(val body: String?, val fault: String?) {
     val ok: Boolean get() = body != null
+
+    /** UPnP error 401 is Invalid Action: the service does not implement it. */
+    val unsupportedAction: Boolean
+      get() = argument(fault, "errorCode") == "401"
   }
 
   suspend fun call(

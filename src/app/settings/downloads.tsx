@@ -31,7 +31,7 @@ import {
   useSettings,
 } from '@/store/settings';
 import { useToast } from '@/store/toast';
-import { colors, fontSize, spacing, themed, useTheme } from '@/theme';
+import { colors, fontSize, radius, spacing, themed, useTheme } from '@/theme';
 
 /** Disk space (total and free), or null if the system doesn't expose it. */
 function diskSpace(): { total: number; free: number } | null {
@@ -323,7 +323,7 @@ const styles = themed((colors) => ({
   bar: {
     flexDirection: 'row',
     height: 10,
-    borderRadius: 5,
+    borderRadius: radius.pill,
     overflow: 'hidden',
     marginTop: spacing.xs,
   },
@@ -339,6 +339,6 @@ const styles = themed((colors) => ({
   // Same muted voice as the bar legend, with air above it: it belongs to the
   // storage section, not to the delete row it sits next to.
   mirrorLine: { color: colors.textSecondary, fontSize: fontSize.xs, marginBottom: spacing.xs },
-  legendDot: { width: 8, height: 8, borderRadius: 4 },
+  legendDot: { width: 8, height: 8, borderRadius: radius.pill },
   legendText: { color: colors.textSecondary, fontSize: fontSize.xs },
 }));

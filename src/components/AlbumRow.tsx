@@ -8,8 +8,10 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { Link } from 'expo-router';
 import { Pressable, Text, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 
 import { COVER, coverArtUrl, type Album } from '@/api/data';
+import { usePressFeedback } from '@/hooks/usePressFeedback';
 import { haptic } from '@/lib/haptics';
 import { useMediaMenu } from '@/store/mediaMenu';
 import { fontSize, spacing, themed, useTheme } from '@/theme';
@@ -28,37 +30,45 @@ export function AlbumRow({ album, pinned }: Props) {
   // the previous accent while the screen stays mounted.
   const { accent } = useTheme();
   const explicit = useExplicitBadge(album.explicitStatus);
+  const press = usePressFeedback();
 
+  // The fade sits outside the Link: its child is handed to a `Slot`, which
+  // refuses an array of styles, and an animated one cannot be flattened into
+  // the single object it wants.
   return (
-    <Link href={`/album/${album.id}`} asChild>
-      <Pressable
-        style={styles.row}
-        onLongPress={() => {
-          haptic('light');
-          openMenu({ kind: 'album', album });
-        }}
-      >
-        <Cover uri={coverArtUrl(album.coverArt ?? album.id, COVER.thumb)} size={56} />
-        <View style={styles.info}>
-          <Text style={styles.name} numberOfLines={1}>
-            {album.name}
-          </Text>
-          {album.artist || pinned || explicit ? (
-            <View style={styles.subLine}>
-              {pinned ? (
-                <MaterialCommunityIcons name="pin" size={13} color={accent} style={styles.pin} />
-              ) : null}
-              <ExplicitBadge status={album.explicitStatus} />
-              {album.artist ? (
-                <Text style={styles.sub} numberOfLines={1}>
-                  {album.artist}
-                </Text>
-              ) : null}
-            </View>
-          ) : null}
-        </View>
-      </Pressable>
-    </Link>
+    <Animated.View style={press.style}>
+      <Link href={`/album/${album.id}`} asChild>
+        <Pressable
+          style={styles.row}
+          onPressIn={press.onPressIn}
+          onPressOut={press.onPressOut}
+          onLongPress={() => {
+            haptic('light');
+            openMenu({ kind: 'album', album });
+          }}
+        >
+          <Cover uri={coverArtUrl(album.coverArt ?? album.id, COVER.thumb)} size={56} />
+          <View style={styles.info}>
+            <Text style={styles.name} numberOfLines={1}>
+              {album.name}
+            </Text>
+            {album.artist || pinned || explicit ? (
+              <View style={styles.subLine}>
+                {pinned ? (
+                  <MaterialCommunityIcons name="pin" size={13} color={accent} style={styles.pin} />
+                ) : null}
+                <ExplicitBadge status={album.explicitStatus} />
+                {album.artist ? (
+                  <Text style={styles.sub} numberOfLines={1}>
+                    {album.artist}
+                  </Text>
+                ) : null}
+              </View>
+            ) : null}
+          </View>
+        </Pressable>
+      </Link>
+    </Animated.View>
   );
 }
 

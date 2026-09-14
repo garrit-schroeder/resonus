@@ -5,7 +5,9 @@
 <h1 align="center">Resonus</h1>
 
 <p align="center">
-  A clean Android music player for your self-hosted server, and your local files.
+  A clean music player for your self-hosted server, and your local files.
+  <br />
+  Android, with an experimental iOS build.
 </p>
 
 ---
@@ -13,24 +15,40 @@
 <p align="center">
   <a href="https://github.com/juananzzz/resonus/releases/latest"><img src="https://img.shields.io/badge/⬇_Download_APK-6366F1?style=for-the-badge" alt="Download APK" /></a>
   <a href="https://apps.obtainium.imranr.dev/redirect?r=obtainium://add/https://github.com/juananzzz/resonus"><img src="./assets/images/obtainium.svg" height="28" alt="Get via Obtainium" /></a>
+  <a href="#ios-experimental"><img src="https://img.shields.io/badge/iOS_experimental-6366F1?style=for-the-badge&logo=apple&logoColor=white" alt="iOS (experimental)" /></a>
+  <a href="https://altdirect.app/?url=https://raw.githubusercontent.com/juananzzz/resonus/main/Source.json"><img src="https://img.shields.io/badge/Add_as_an_AltSource-6366F1?style=for-the-badge&logo=apple&logoColor=white" alt="Add as an AltSource" /></a>
   <a href="https://discord.gg/pecE8MTPVr"><img src="https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord" /></a>
   <a href="https://ko-fi.com/juananzzz"><img src="https://img.shields.io/badge/Support_on_Ko--fi-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white" alt="Support on Ko-fi" /></a>
 </p>
 
+## Screenshots
+
+| Home | Player | Album | Library |
+| :---: | :---: | :---: | :---: |
+| <img src="./assets/screenshots/dark-home.jpg" width="200" alt="Home, dark" /> | <img src="./assets/screenshots/dark-player.jpg" width="200" alt="Player, dark" /> | <img src="./assets/screenshots/dark-album.jpg" width="200" alt="Album, dark" /> | <img src="./assets/screenshots/dark-library.jpg" width="200" alt="Library, dark" /> |
+| <img src="./assets/screenshots/light-home.jpg" width="200" alt="Home, light" /> | <img src="./assets/screenshots/light-player.jpg" width="200" alt="Player, light" /> | <img src="./assets/screenshots/light-album.jpg" width="200" alt="Album, light" /> | <img src="./assets/screenshots/light-library.jpg" width="200" alt="Library, light" /> |
+
+| Artist | Lyrics | Queue | Servers |
+| :---: | :---: | :---: | :---: |
+| <img src="./assets/screenshots/artist.jpg" width="200" alt="Artist" /> | <img src="./assets/screenshots/lyrics.jpg" width="200" alt="Synced lyrics" /> | <img src="./assets/screenshots/queue.jpg" width="200" alt="Queue" /> | <img src="./assets/screenshots/servers.jpg" width="200" alt="Supported servers" /> |
+
 ## Download
+
+### Android
 
 Get the latest APK from the [Releases](https://github.com/juananzzz/resonus/releases/latest) page and install it on your Android device.
 
 Also available on [Obtainium](https://apps.obtainium.imranr.dev/redirect?r=obtainium://add/https://github.com/juananzzz/resonus) for automatic updates.
 
-## Screenshots
+### iOS (experimental)
 
-<p align="center">
-  <img src="./assets/screenshots/1.png" width="200" />
-  <img src="./assets/screenshots/2.png" width="200" />
-  <img src="./assets/screenshots/3.png" width="200" />
-  <img src="./assets/screenshots/4.png" width="200" />
-</p>
+Every release since 0.7.5 also carries an `.ipa`, on the same
+[Releases](https://github.com/juananzzz/resonus/releases/latest) page. It is
+**unsigned**: no App Store, no TestFlight, so it has to be sideloaded with
+AltStore, Sideloadly or similar, and renewed as that tool asks.
+
+Not implemented yet on iOS: CarPlay, casting, the equalizer and gapless
+playback.
 
 ## Features
 
@@ -40,12 +58,14 @@ Also available on [Obtainium](https://apps.obtainium.imranr.dev/redirect?r=obtai
 - **Downloads**: albums, playlists, an artist's whole discography or single songs, in original quality or transcoded
 - **Synced lyrics**: karaoke view with tap-to-seek, full-screen mode, optional LRCLIB lookup
 - **Internet radio**: browse and manage your stations
-- **Cast to speakers**: UPnP/DLNA renderers
-- **Playback**: gapless, crossfade, built-in equalizer, ReplayGain normalization, sleep timer, queue with undo, shuffle, repeat, background & lock-screen controls
+- **Cast to speakers**: UPnP/DLNA renderers and Sonos, with room grouping; local music streams to them too
+- **Playback**: gapless, crossfade, built-in equalizer, ReplayGain normalization, playback speed, sleep timer, queue with undo, shuffle, repeat, background & lock-screen controls
 - **Autoplay & mixes**: keep the music going with similar songs, or start a mix from any track
 - **Organize**: multi-select (queue, playlist or download in batch), star ratings, pinned items, play history
-- **Make it yours**: reorder and show/hide Home sections and explore chips, accent colors, app fonts, configurable swipe and ⋯ menu actions
+- **Themes**: dark, light (experimental) or whichever one the phone is on, each with its own accent color
+- **Make it yours**: reorder and show/hide Home sections and explore chips, app fonts, configurable swipe and ⋯ menu actions
 - **Android Auto** (experimental)
+- **Landscape and tablet layouts**
 - **Queue sync across devices**
 - **In 8 languages**: English, Spanish, German, Catalan, Russian, Italian, Simplified Chinese, Ukrainian
 

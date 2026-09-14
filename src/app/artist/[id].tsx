@@ -52,7 +52,7 @@ import { currentSong, usePlayerStore } from '@/store/player';
 import { usePlaylistPicker } from '@/store/playlistPicker';
 import { useSettings } from '@/store/settings';
 import { useToast } from '@/store/toast';
-import { colors, fontSize, spacing, themed, useTheme } from '@/theme';
+import { colors, fontSize, radius, spacing, themed, useTheme } from '@/theme';
 import { BackChevron } from '@/components/BackChevron';
 import { useScreenBottomPadding } from '@/hooks/useScreenBottomPadding';
 import { useScreenSize } from '@/hooks/useScreenSize';
@@ -124,7 +124,6 @@ export default function ArtistScreen() {
   // account and never gets here.
   const serverType = useAuthStore((s) => s.auth?.serverType);
   const canRate = useAuthStore((s) => !!s.auth) && serverType !== 'jellyfin';
-  const dominant = useDominantColor(canFetch ? coverArtUrl(id, COVER.thumb) : undefined);
 
   // ── Download the discography ────────────────────────────────────────────
   // With `songIds` intentionally empty: `groupDownloadState` can only say
@@ -187,9 +186,30 @@ export default function ArtistScreen() {
   });
   const name = data?.artist.name;
 
+  // The artist's own `coverArt`, not their id, and it is worth the wait for
+  // `data`. Navidrome 0.64 stopped treating the two as interchangeable: an
+  // artwork id carries a hash of the picture, and only a request that asks for
+  // the current hash is answered `immutable`. A bare id gets `no-cache` and is
+  // revalidated on every single load. Worse, while the server is still
+  // resolving the artwork in the background it answers with a placeholder, and
+  // `expo-image` on Android caches by URL without consulting the headers that
+  // say not to. Asking by bare id means that grey square is what this screen's
+  // colour is taken from, and the URL never changes to shake it off. Until
+  // `data` arrives there is nothing to ask for, which is a frame or two of no
+  // tint rather than a wrong one.
+  const dominant = useDominantColor(
+    canFetch && data ? coverArtUrl(data.artist.coverArt ?? id, COVER.thumb) : undefined
+  );
+
+  // Keyed by id as well as name, and both are load-bearing. The id is what
+  // tells two artists who share a name apart, which is the whole reason it is
+  // sent (see `getTopSongs`); keeping only the name in the key would hand the
+  // second one the first one's songs out of the cache, whatever the server
+  // answered. The name stays because it is what older servers answer by, so a
+  // rename has to miss.
   const { data: topSongs } = useQuery({
-    queryKey: ['topSongs', name],
-    queryFn: () => getTopSongs(name!, 20),
+    queryKey: ['topSongs', id, name],
+    queryFn: () => getTopSongs(name!, 20, id),
     enabled: canFetch && !!name,
   });
 
@@ -851,7 +871,7 @@ const styles = themed((colors) => ({
     backgroundColor: colors.accent,
     width: 56,
     height: 56,
-    borderRadius: 28,
+    borderRadius: radius.pill,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -897,7 +917,7 @@ const styles = themed((colors) => ({
   back: {
     width: 36,
     height: 36,
-    borderRadius: 18,
+    borderRadius: radius.pill,
     backgroundColor: colors.scrim,
     alignItems: 'center',
     justifyContent: 'center',

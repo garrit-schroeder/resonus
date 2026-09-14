@@ -14,6 +14,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { radius, spacing, themed } from '@/theme';
+import { motion } from '@/theme/motion';
 
 interface Props {
   /** Width of each card (= AlbumCard's so the layout doesn't jump). */
@@ -26,7 +27,7 @@ interface Props {
 export function AlbumCardsSkeleton({ width = 150, count = 6, horizontal }: Props) {
   const pulse = useSharedValue(1);
   useEffect(() => {
-    pulse.value = withRepeat(withTiming(0.45, { duration: 700 }), -1, true);
+    pulse.value = withRepeat(withTiming(0.45, { duration: motion.duration.pulse }), -1, true);
   }, [pulse]);
   const pulseStyle = useAnimatedStyle(() => ({ opacity: pulse.value }));
 

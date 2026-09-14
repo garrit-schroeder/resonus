@@ -481,3 +481,41 @@ export async function listGenres(auth: SubsonicAuth): Promise<NdGenre[]> {
   const rows = await ndJson<NdGenre[]>(auth, '/api/genre?_sort=name&_start=0&_end=1000');
   return Array.isArray(rows) ? rows.filter((g) => g?.id && g?.name) : [];
 }
+
+/**
+ * The ids of the playlists this user has marked as favourites.
+ *
+ * Navidrome 0.64 stores stars and ratings per user for playlists the way it
+ * always has for songs, albums and artists (navidrome/navidrome#5749), but
+ * deliberately keeps them out of the Subsonic playlist responses, with a
+ * regression test on their absence. So this is the only way to read the state
+ * back, and it is why the heart on a playlist is offered only when this
+ * request can be made at all.
+ *
+ * `starred=true` is a real filter on this endpoint (`annotationBoolFilter`),
+ * so the server sends the favourites and not the library: a user with four
+ * starred playlists out of six hundred pays for four. Only the ids come back
+ * because that is all a heart needs, and the playlists themselves are already
+ * on screen from Subsonic.
+ *
+ * An older server has no such column, and what it does with the filter is its
+ * own business: refuse the request, or ignore the parameter and answer with
+ * the whole library. The second one is the dangerous shape, because an ignored
+ * filter looks exactly like a filter that matched everything. So `starred` is
+ * read off each row as well as filtered on, and a server that answered with
+ * the library hands back nothing instead of marking every playlist a
+ * favourite. Which is the safe way to be wrong, but still wrong: the heart
+ * would read "not a favourite" for a state that server cannot hold. That part
+ * is the caller's to settle, by only asking a server new enough to have the
+ * column (see `usePlaylistStars`).
+ */
+export async function listStarredPlaylistIds(auth: SubsonicAuth): Promise<string[]> {
+  const rows = await ndJson<{ id?: string; starred?: boolean }[]>(
+    auth,
+    '/api/playlist?starred=true&_sort=name&_start=0&_end=1000',
+  );
+  if (!Array.isArray(rows)) return [];
+  // `starred` is checked as well as filtered on, so a server that ignored the
+  // filter hands back nothing rather than everything.
+  return rows.filter((p) => p?.id && p.starred).map((p) => p.id as string);
+}

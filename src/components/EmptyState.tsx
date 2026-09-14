@@ -40,7 +40,7 @@ const styles = themed((colors) => ({
   iconWrap: {
     width: 88,
     height: 88,
-    borderRadius: 44,
+    borderRadius: radius.pill,
     backgroundColor: colors.surfaceHighlight,
     alignItems: 'center',
     justifyContent: 'center',

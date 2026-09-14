@@ -32,7 +32,7 @@ export default function OfflineScreen() {
 
   async function chooseFolder() {
     const uri = await pickFolder();
-    if (uri) void setSource({ mode: 'folder', uri });
+    if (uri) void setSource({ mode: 'folder', uris: [uri] });
   }
 
   return (

@@ -33,6 +33,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { type Song, type StarType } from '@/api/subsonic';
 import { useDominantColor } from '@/hooks/useDominantColor';
 import { useScreenBottomPadding } from '@/hooks/useScreenBottomPadding';
+import { useSelectionMenu } from '@/hooks/useSelectionMenu';
 import { useT } from '@/i18n';
 import { artistTargets } from '@/lib/artistNav';
 import { haptic } from '@/lib/haptics';
@@ -40,12 +41,13 @@ import { listPerf } from '@/lib/listPerf';
 import { useArtistPicker } from '@/store/artistPicker';
 import { usePlayerStore } from '@/store/player';
 import { colors, fontSize, radius, spacing, themed } from '@/theme';
+import { motion } from '@/theme/motion';
 import { BackChevron } from './BackChevron';
 import { Cover } from './Cover';
 import { ExplicitBadge, useExplicitBadge } from './ExplicitBadge';
 import { FavoriteButton } from './FavoriteButton';
 import { centredPadding, useScreenSize } from '@/hooks/useScreenSize';
-import { SelectionBar } from './SelectionBar';
+import { SelectionBar, type SelectionAction } from './SelectionBar';
 import { TrackRow } from './TrackRow';
 
 /**
@@ -183,6 +185,8 @@ interface Props {
     onAddTo?: (songs: Song[]) => void;
     /** Bulk download. */
     onDownload?: (songs: Song[]) => void;
+    /** Favorites screen: there, "Remove" already is unfavouriting. */
+    favorites?: boolean;
   };
   /** `opts` goes straight to `playQueue`: the shuffle button asks for the list
    *  dealt, which the screen owning the songs is the one who can request. */
@@ -291,13 +295,13 @@ export function TrackListView({
     revealedRef.current = true;
     haptic('light');
     setRevealed(true);
-    Animated.timing(searchH, { toValue: SEARCH_H, duration: 200, useNativeDriver: false }).start();
+    Animated.timing(searchH, { toValue: SEARCH_H, duration: motion.duration.fade, useNativeDriver: false }).start();
   }
 
   function collapseSearchBar() {
     revealedRef.current = false;
     setRevealed(false);
-    Animated.timing(searchH, { toValue: 0, duration: 200, useNativeDriver: false }).start();
+    Animated.timing(searchH, { toValue: 0, duration: motion.duration.fade, useNativeDriver: false }).start();
   }
 
   // Simultaneous pan with the list scroll: doesn't steal the gesture, just
@@ -372,6 +376,39 @@ export function TrackListView({
     setSelectedIds(null);
     if (sel.length > 0) fn(sel, indices);
   }
+
+  const selectionMenu = useSelectionMenu(runSelectionAction, {
+    favorites: selection?.favorites,
+  });
+  // What this list lets you do with a selection, each one built once: the bar
+  // takes two of them and ⋯ holds whatever is left.
+  const addToAction: SelectionAction[] = selection?.onAddTo
+    ? [
+        {
+          icon: 'add-circle-outline',
+          label: t('Add to a playlist'),
+          onPress: () => runSelectionAction((sel) => selection.onAddTo!(sel)),
+        },
+      ]
+    : [];
+  const removeAction: SelectionAction[] = selection?.onRemove
+    ? [
+        {
+          icon: 'remove-circle-outline',
+          label: t('Remove'),
+          onPress: () => runSelectionAction((sel, idx) => selection.onRemove!(sel, idx)),
+        },
+      ]
+    : [];
+  const downloadAction: SelectionAction[] = selection?.onDownload
+    ? [
+        {
+          icon: 'download-outline',
+          label: t('Download'),
+          onPress: () => runSelectionAction((sel) => selection.onDownload!(sel)),
+        },
+      ]
+    : [];
 
   // Without cover, the header is shorter: the gradient and bar collapse adjust
   // to a smaller distance so the transition fits.
@@ -866,37 +903,17 @@ export function TrackListView({
       {selecting ? (
         <SelectionBar
           count={selectedIds.size}
-          actions={[
-            ...(selection?.onAddTo
-              ? [
-                  {
-                    icon: 'add-circle-outline' as const,
-                    label: t('Add to a playlist'),
-                    onPress: () => runSelectionAction((sel) => selection.onAddTo!(sel)),
-                  },
-                ]
-              : []),
-            ...(selection?.onDownload
-              ? [
-                  {
-                    icon: 'download-outline' as const,
-                    label: t('Download'),
-                    onPress: () => runSelectionAction((sel) => selection.onDownload!(sel)),
-                  },
-                ]
-              : []),
-            ...(selection?.onRemove
-              ? [
-                  {
-                    icon: 'remove-circle-outline' as const,
-                    label: t('Remove'),
-                    onPress: () => runSelectionAction((sel, idx) => selection.onRemove!(sel, idx)),
-                  },
-                ]
-              : []),
+          // Second slot: taking songs out of this list where that is a thing,
+          // and downloading where it isn't. Whichever one loses the slot is
+          // the one behind ⋯.
+          actions={[...addToAction, ...(removeAction.length > 0 ? removeAction : downloadAction)]}
+          menu={[
+            ...(removeAction.length > 0 ? downloadAction : []),
+            ...selectionMenu.actions,
           ]}
         />
       ) : null}
+      {selectionMenu.dialogs}
     </View>
   );
 }
@@ -1033,7 +1050,7 @@ const styles = themed((colors) => ({
   artistPhoto: {
     width: 24,
     height: 24,
-    borderRadius: 12,
+    borderRadius: radius.pill,
     overflow: 'hidden',
   },
   // Same weight and colour as the metadata under it: what the playlist says
@@ -1063,7 +1080,7 @@ const styles = themed((colors) => ({
   genreChip: {
     paddingVertical: spacing.xs,
     paddingHorizontal: spacing.md,
-    borderRadius: 999,
+    borderRadius: radius.pill,
     backgroundColor: colors.surfaceHighlight,
   },
   genreText: { color: colors.textSecondary, fontSize: fontSize.xs },
@@ -1098,7 +1115,7 @@ const styles = themed((colors) => ({
     backgroundColor: colors.accent,
     width: 56,
     height: 56,
-    borderRadius: 28,
+    borderRadius: radius.pill,
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -409,7 +409,20 @@ function songFileUrl(
 }
 
 /** Song as it enters the local catalog: server id + local file. */
-function toLocalSong(song: Song, fileUri: string, dlBitRate?: number, dlBytes?: number): Song {
+function toLocalSong(
+  song: Song,
+  fileUri: string,
+  dlBitRate?: number,
+  dlBytes?: number,
+  /**
+   * Where this track's own cover was saved, when it had one of its own and it
+   * came down (see `downloadTrackArt`). A file URI rather than the server's id
+   * on purpose: `localCoverUrl` already answers one of those directly, the way
+   * it does for a playlist's uploaded picture, so nothing has to be registered
+   * at startup and nothing has to be read off disk to find out it is there.
+   */
+  coverUri?: string,
+): Song {
   return {
     ...song,
     localUri: fileUri,
@@ -423,7 +436,10 @@ function toLocalSong(song: Song, fileUri: string, dlBitRate?: number, dlBytes?: 
     artistId: normKey(song.artist || UNKNOWN_ARTIST),
     // Server ids don't work offline: we re-peg each artist by name.
     artists: song.artists?.map((a) => ({ id: normKey(a.name), name: a.name })),
-    coverArt: song.albumId,
+    // Its own picture when this phone has it, the album's otherwise, which is
+    // what every track used to get and what the ones with no cover of their
+    // own still get (#214).
+    coverArt: coverUri ?? song.albumId,
     addedAt: Date.now(),
     // Server favorites don't apply to the local profile (uses local favorites).
     starred: undefined,
@@ -613,6 +629,24 @@ function downloadCover(
 }
 
 /**
+ * A track's own cover, for the tracks that have one.
+ *
+ * Keyed by the cover id and not by the song, because that is what tracks
+ * sharing a picture share: Navidrome gives a track its own artwork id only
+ * when the file really carries one (`mf.HasCoverArt && EnableMediaFileCoverArt`
+ * in its `MediaFile.CoverArtID`), and otherwise hands back the disc's or the
+ * album's. So on a two-disc record every track of a disc names the same `dc-…`
+ * id, and one file on disk serves the lot.
+ */
+function downloadTrackArt(
+  auth: SubsonicAuth,
+  dir: string,
+  coverId: string,
+): Promise<{ uri: string; bytes: number } | undefined> {
+  return downloadArt(auth, dir, `${dir}covers/track_${hashKey(coverId)}.jpg`, coverId);
+}
+
+/**
  * The artist's own picture, next to the covers and fetched the same way.
  *
  * Under a name of its own, `artist_…`, because the two are keyed by different
@@ -787,6 +821,16 @@ export const useDownloads = create<DownloadsState>((set, get) => {
       const albumById = new Map(albums.map((a) => [a.id, a]));
       const albumDone = new Set<string>();
       const artistDone = new Set<string>();
+      /**
+       * Cover id of a track that has its own picture, and where it landed.
+       *
+       * Filled album by album in `ensureAlbum` rather than track by track as
+       * the audio arrives: the distinct ids are known from the song list, one
+       * album's worth is a handful of them at most, and doing it there is what
+       * lets the bytes go into the album's own total instead of being spent
+       * without anything counting them.
+       */
+      const trackArt = new Map<string, string>();
       /** Who the record is by, once per artist while this group runs. */
       const ensureArtist = async (album: Album): Promise<void> => {
         const key = normKey(album.artist || UNKNOWN_ARTIST);
@@ -800,8 +844,33 @@ export const useDownloads = create<DownloadsState>((set, get) => {
         if (!album || albumDone.has(album.id)) return;
         albumDone.add(album.id); // mark before await: so another worker won't repeat it
         const cover = await downloadCover(auth, dir, album);
+
+        // The pictures that are not the album's, which is how a compilation or
+        // a set of singles keeps a different sleeve per track (#214). Only the
+        // ones that name something else: on an ordinary record every track
+        // names the album's id and this set comes out empty, so the usual
+        // download pays nothing for this at all.
+        const albumCoverId = album.coverArt ?? album.id;
+        const own = new Set<string>();
+        for (const track of pending) {
+          if (track.albumId !== album.id) continue;
+          if (track.coverArt && track.coverArt !== albumCoverId) own.add(track.coverArt);
+        }
+        let artBytes = 0;
+        for (const coverId of own) {
+          if (cancelling.has(groupKey)) break;
+          const art = await downloadTrackArt(auth, dir, coverId);
+          if (!art) continue;
+          trackArt.set(coverId, art.uri);
+          artBytes += art.bytes;
+        }
+
         await Db.addToCatalog(dir, {
-          albums: [toLocalAlbum(album, cover?.uri, cover?.bytes)],
+          // The album's own row carries what its artwork costs, this included:
+          // a song's `dlBytes` is the size of its audio and is read back as
+          // such (see the Size row of `SongInfoSheet`), so a picture cannot go
+          // in there.
+          albums: [toLocalAlbum(album, cover?.uri, (cover?.bytes ?? 0) + artBytes)],
         });
         await ensureArtist(album);
       };
@@ -838,7 +907,9 @@ export const useDownloads = create<DownloadsState>((set, get) => {
           // Each song is persisted on completion: if the app dies mid-album,
           // already downloaded items survive a restart.
           await Db.addToCatalog(dir, {
-            songs: [toLocalSong(song, file, dlBitRate, bytes)],
+            songs: [
+              toLocalSong(song, file, dlBitRate, bytes, song.coverArt ? trackArt.get(song.coverArt) : undefined),
+            ],
           });
           set((st) => {
             const cur = st.active[groupKey];

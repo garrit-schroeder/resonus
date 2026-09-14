@@ -13,11 +13,12 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { radius, spacing, themed } from '@/theme';
+import { motion } from '@/theme/motion';
 
 export function AlbumRowsSkeleton({ count = 10 }: { count?: number }) {
   const pulse = useSharedValue(1);
   useEffect(() => {
-    pulse.value = withRepeat(withTiming(0.45, { duration: 700 }), -1, true);
+    pulse.value = withRepeat(withTiming(0.45, { duration: motion.duration.pulse }), -1, true);
   }, [pulse]);
   const pulseStyle = useAnimatedStyle(() => ({ opacity: pulse.value }));
 

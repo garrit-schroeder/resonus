@@ -53,3 +53,6 @@ modules/*/android/.kotlin/
 
 # translation work files (pnpm i18n:scaffold)
 /translate-*.jsonc
+
+# JetBrains
+.idea/

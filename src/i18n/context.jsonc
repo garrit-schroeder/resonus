@@ -89,7 +89,9 @@
     "Next": "Player control: the next track (accessibility label)",
     "Previous": "Player control: the previous track (accessibility label)",
     "Next in queue": "Queue screen header: the track that plays next",
+    "At the end of the queue": "Queue screen header: the songs 'Add to queue' put after everything else",
     "Show cover": "Lyrics screen: the button that goes back to the cover art",
+    "About the artist": "The label over the photo on the artist card, the one below the player controls",
 
     // ── Artist, playlists & radio ────────────────────────────────────────────
     "About": "The heading over an artist's biography, and the name of the settings page about the app. Two very different uses of one English word, so `About::artist` and `About::app` exist for a language that needs two words",
@@ -110,11 +112,18 @@
     "Greeting": "Home's \"Good morning\" line",
     "Custom greeting": "A greeting of your own, replacing Home's \"Good morning\" line",
     "Quick grid": "The grid of shortcut tiles on Home",
-    "Explore chips": "The row of tappable category chips",
-    "Song menu": "The three-dot menu on a song, drawn as ⋮ in a list and ⋯ in a header. A setting picks which actions it shows",
+    "Home chips": "The row of tappable category chips",
     "Song lists": "The setting for how song lists look",
     "Show explicit tag": "A switch: whether to draw the E on anything carrying a parental advisory. \"Explicit\" here is the music-industry label for strong language, not \"clear\" or \"stated outright\"",
     "Home sections": "Reorder which sections appear on Home",
+    "On cover double tap": "Settings > Player: what tapping the album artwork twice does",
+    "Play or pause": "One of its options: the same as the play button",
+    "Music folders": "Settings > Local music: the list of phone folders the local profile reads its music from",
+    "Add another folder": "Adds one more phone folder to the local profile's list",
+    "Keep at least one folder": "Refusing to remove the last folder of a local profile, which would leave it with no music",
+    "That folder is already there": "The folder just picked is already in the local profile's list",
+    "New releases": "Home shelf and album sort: albums by the year they came out, newest first. Not \"Recently added\", which is when the server got hold of them",
+    "Follow system": "Theme setting: use whichever appearance the phone itself is set to, light or dark",
     "Pin favorites": "Pin favourites to the quick grid",
 
     // ── Actions & verbs (easy to translate as the wrong part of speech) ──────
@@ -124,7 +133,7 @@
     "Turn off": "Turn off the sleep timer",
     "Start mix": "Start an auto-generated radio mix from this song",
     "More options": "Read out by the screen reader for the three-dot button, which is ⋮ on a song row and in the player and ⋯ in a screen's header",
-    "More": "A \"see more\" action",
+    "More": "A \"see more\" action, and the third button of the selection bar, the one that opens the rest of what it can do",
 
     // ── Empty states: what a screen says when it has nothing to show ─────────
     "No albums yet": "Empty state heading",
@@ -221,6 +230,10 @@
     "{msg} It will keep downloading songs added to this playlist later.": "`{msg}` is the ordinary download message, and this adds what auto-download means on top of it",
 
     // ── The queue ────────────────────────────────────────────────────────────
+    "Pick up the queue from other players": "A switch: whether to take the queue another player left on the server when the app is opened with nothing playing",
+    "Get the server's queue": "Queue screen action: replace what is playing here with the queue the server has, which is the one left on another player",
+    "Queue brought over": "The toast that says it worked",
+    "The server has no saved queue": "The toast when the server had nothing to bring over",
     "Clear queue": "Menu action: empty the list of what is coming",
     "Queue cleared": "Toast",
     "Removed from queue": "Toast",
@@ -259,10 +272,6 @@
     "New playlist": "Row at the top of the playlist picker, and the button on an empty library: make one",
     "Added to “{name}”": "Toast. `{name}` is the playlist's name",
     "{n} added to “{name}”": "Toast when several songs went in at once. `{n}` is a count of songs",
-    // ── Diagnostics: the server id repair switch ────────────────────────────
-    "Server id repair": "Section title in the hidden Diagnostics screen, above the switch below",
-    "Repair the offline library": "The switch itself. Navidrome 0.64 gives every song a new id, and the downloads on the phone still hold the old ones; this is what rewrites them so the music stays playable",
-    "If the server renumbers its ids, rewrite the downloads to match instead of losing them. Off until it has been tested against a server that has.": "The line under that switch, saying why it is off",
     "Already added": "Title of the dialog that warns the song is in that playlist already",
     "This song is already in “{name}”.": "The line under that title. `{name}` is the playlist",
     "{n} of {songs} are already in “{name}”.": "The same warning when adding several at once and only some of them are already there. `{n}` is how many of them are, and `{songs}` already reads as a count (\"12 songs\"), so the sentence is like \"3 of 12 songs are already in “Rock”.\"",
@@ -296,6 +305,8 @@
     // ── Getting a file out of the app ────────────────────────────────────────
     "Export “{name}”?": "Dialog title. `{name}` is an album or a playlist",
     "{n} songs, {size}, copied into a folder of their own.": "The line under that title",
+    "Export {songs}?": "The same title for a selection instead of a whole album. `{songs}` already reads as a count (\"12 songs\"), so it comes out like \"Export 12 songs?\"",
+    "{size} copied into the folder you pick.": "The line under that one. Those go loose into the chosen folder, since a handful of songs has no name to give a folder of their own",
     "{n} songs exported": "Toast when it finished",
     "{n} of {m} songs exported": "Toast when only some of them made it",
     "Couldn't save the file": "Toast: writing to the chosen folder failed",
@@ -304,7 +315,7 @@
 
     // ── Favourites ───────────────────────────────────────────────────────────
     "Add to favorites": "Menu action and screen reader label for the heart. A verb",
-    "Remove from favorites": "The same button when it is already a favourite",
+    "Remove from favorites": "The same button when it is already a favourite, and the menu entry that takes a whole selection out",
     "Added to favorites": "Toast",
     "Removed from favorites": "Toast",
     "Remove from playlist": "Menu action: take this song out of the playlist it was opened from",
@@ -386,7 +397,6 @@
     "Field recordings": "Shelf heading: records made of the world itself, nature or a city, rather than of performed music",
     // `Other` is the last shelf too, and it is described further down, where it
     // was already explained for the storage bar. One string, one note.
-    "Browse all": "Opens the full list",
     "Show more": "Unfolds the rest of a text that was cut short",
     "Show less": "Folds it back",
     "No results": "Nothing matched what was typed",
@@ -396,6 +406,7 @@
     // ── Picking several at once ──────────────────────────────────────────────
     "Select all": "Tick every song in the list at once",
     "{n} selected": "How many songs are ticked right now",
+    "Nothing to change": "Answer to favouriting a selection that already is one, or unfavouriting one that isn't",
 
     // ── Lists and how they look ──────────────────────────────────────────────
     "Grid view": "Show the list as cards in a grid",
@@ -491,7 +502,8 @@
     // These name the tabs at the bottom, the sections inside them, and the
     // folders the car shows, so one word has to work in all three.
     "Home": "The first tab, and a folder in the car",
-    "Library": "The tab with your albums, artists and playlists, and a folder in the car",
+    "Library": "The settings section, and a folder in the car",
+    "Your library": "The tab with your albums, artists and playlists",
     "Search": "The search tab, and the action of searching",
     "Favorites": "The songs, albums and artists you starred",
     "Playlists": "A section on Home and in the library, and a folder in the car",
@@ -523,11 +535,14 @@
     "Dark (default)": "The appearance the app has always had, and what it uses unless the other is chosen. The word in brackets is the same one as `Default`",
     "Light (experimental)": "The light appearance. The word in brackets is a warning that it is new and may still have rough edges",
     "Navigation": "Section header: how you move around the app",
+    "Navigation bar": "Settings screen: which tabs are on the bar at the bottom, and in what order",
+    "Always shown": "Said where a switch would be, on the Home tab, which cannot be taken off the bar",
+    "Explore": "The tab holding everything the server has: all albums, artists, songs, genres, stations and folders",
     "Folder browsing": "Browsing the server's folders as folders, instead of by album and artist",
     "Haptic feedback": "The small vibration when something is tapped",
     "Open the app on": "Which tab the app opens on, and comes back to after a while away",
-    "Show profile button": "Whether the round avatar shows in the corner of Home",
-    "Show history button": "Whether the button that opens the listening history shows",
+    "Start on your playlists": "A switch: with it on, Your library with no chip pressed shows the Favorites entry and the playlists, the way it used to, instead of albums, artists and playlists mixed together",
+    "Home buttons": "The icons at the top right of Home (search, history, settings), which of them show and in what order",
 
     // ── Settings › Network ───────────────────────────────────────────────────
     "Server addresses": "Section header: a profile can have several addresses for the same account, one at home and one from outside",
@@ -558,14 +573,16 @@
     "Prefer local lyrics": "A value of `Lyrics source`: use the ones that came with the file first",
     "Prefer online search": "A value of `Lyrics source`: look them up on the internet first",
     "Disable online search": "A value of `Lyrics source`: only ever use the ones that came with the file",
-    "On cover tap": "What tapping the cover art in the player does. Its values are `Nothing` and `Open lyrics screen`",
+    "On cover tap": "What tapping the cover art in the player does. One tap and two share the same values, listed below",
     "Nothing": "A value of `On cover tap`: tapping the cover does nothing",
     "Open lyrics screen": "A value of `On cover tap`",
+    "Show lyrics on the cover": "A value of `On cover tap`: the lyrics take the cover's place, without leaving the player",
     "Previous button": "What the previous button does when a song is already playing. Its values are the two lines below it",
     "Restart, then previous track": "A value of `Previous button`: the first press goes back to the start of this song, the second to the one before",
     "Always previous track": "A value of `Previous button`: never restarts, always goes back a song",
     "No": "A setting value meaning none or zero, not the answer to a question: no crossfade, no seek buttons",
     "Fit cover art": "Show the whole cover even if it is not square, instead of cropping it to fill",
+    "Animated cover background": "A setting: an animated cover (GIF, animated WebP) is shown full screen behind the player instead of inside the square",
     "Scroll long titles": "A title too long to fit slides sideways, over and over, instead of being cut off",
     "Swap favorite and menu": "Exchange the places of those two buttons in the player, for whichever hand you hold the phone in",
 
@@ -674,6 +691,7 @@
     // ── Browsing songs (Home › the Songs chip) ───────────────────────────────
     "Songs": "Always a heading, never a count, so it wants the plain plural your language uses for a list of them (\"Songs\", not \"of songs\"). Counting songs is a different thing and goes through the plural forms",
     "Default": "Sorting pill: what you get when nothing is sorted, which is the order the server keeps its songs in. Not alphabetical, and not Resonus deciding. On a playlist it is the order the list came in, which is the one you made by dragging the songs if it is an ordinary playlist and the one its rules produced if it is a smart one — hence a word that is true of both rather than \"custom\" or \"pre-defined\"",
+    "Find a playlist": "The search box's placeholder on that screen",
     "Find a song": "The search box's placeholder on that screen",
     "No songs yet": "Empty state when the library has no songs",
     "Your recently played songs will show up here.": "Empty state, before anything has been played",

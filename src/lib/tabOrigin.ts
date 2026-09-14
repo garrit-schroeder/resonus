@@ -1,5 +1,5 @@
 /**
- * Which of the three tabs the screens on top of it came from (#96).
+ * Which of the tabs the screens on top of it came from (#96).
  *
  * A stack is opened from somewhere: an album reached from the Library belongs
  * to the Library, the same album reached from a search belongs to Search. The
@@ -11,13 +11,14 @@
  * only ever written while the tabs themselves are on screen, which is the one
  * moment the answer is known for certain.
  */
-export type TabSegment = 'index' | 'search' | 'library';
+export type TabSegment = 'index' | 'search' | 'library' | 'explore';
 
 /** Route of each tab, and the label to call it by (translated where used). */
 export const TABS: { segment: TabSegment; href: string; label: string }[] = [
   { segment: 'index', href: '/', label: 'Home' },
   { segment: 'search', href: '/search', label: 'Search' },
-  { segment: 'library', href: '/library', label: 'Library' },
+  { segment: 'library', href: '/library', label: 'Your library' },
+  { segment: 'explore', href: '/explore', label: 'Explore' },
 ];
 
 let origin: TabSegment = 'index';
@@ -71,4 +72,23 @@ export function onTabReselect(segment: TabSegment, fn: () => void): () => void {
   return () => {
     set.delete(fn);
   };
+}
+
+// ── Opening Search with the cursor already in the box ────────────────────────
+// The button on Home leads to a tab that may not be mounted yet, so there is
+// nobody listening at the moment it is pressed. The intent is left here and
+// collected by Search on its way in.
+
+let focusRequested = false;
+
+/** Ask Search to raise the keyboard as soon as it is on screen. */
+export function requestSearchFocus(): void {
+  focusRequested = true;
+}
+
+/** Takes the request, if there was one: it is good for a single arrival. */
+export function takeSearchFocus(): boolean {
+  const asked = focusRequested;
+  focusRequested = false;
+  return asked;
 }

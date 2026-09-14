@@ -4,21 +4,20 @@
  * and basic controls (progress and play/pause) at the bottom.
  */
 import Ionicons from '@expo/vector-icons/Ionicons';
-import Slider from '@react-native-community/slider';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { COVER, songCoverUrl } from '@/api/data';
 import { lyricsStyles, SyncedLyricsView } from '@/components/LyricsCard';
+import { SeekBar } from '@/components/SeekBar';
 import { useDominantColor } from '@/hooks/useDominantColor';
 import { useLyrics } from '@/hooks/useLyrics';
 import { useT } from '@/i18n';
-import { formatDuration } from '@/lib/format';
 import { currentSong, usePlayerStore } from '@/store/player';
 import { useSettings } from '@/store/settings';
-import { colors, fontSize, spacing, themed, useTheme } from '@/theme';
+import { colors, fontSize, radius, spacing, themed, useTheme } from '@/theme';
 import { centredPadding, useScreenSize } from '@/hooks/useScreenSize';
 
 export default function LyricsScreen() {
@@ -30,10 +29,8 @@ export default function LyricsScreen() {
   const { width } = useScreenSize();
   const song = usePlayerStore(currentSong);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
-  const positionSec = usePlayerStore((s) => s.positionSec);
   const durationSec = usePlayerStore((s) => s.durationSec);
   const toggle = usePlayerStore((s) => s.toggle);
-  const seekTo = usePlayerStore((s) => s.seekTo);
   const previous = usePlayerStore((s) => s.previous);
   const next = usePlayerStore((s) => s.next);
   const { data, isLoading } = useLyrics(song ?? undefined);
@@ -48,6 +45,10 @@ export default function LyricsScreen() {
   // The scrim already keeps the text readable, so the fade just goes away.
   const fadeColor = background === 'cover' ? undefined : bg;
   const duration = durationSec || song?.duration || 0;
+  const insets = useSafeAreaInsets();
+  // Inside a full-screen modal iOS reports no top inset, and the close
+  // button would sit against the edge.
+  const topPad = insets.top > 0 ? insets.top : 12;
 
   return (
     <View style={[styles.root, { backgroundColor: bg }]}>
@@ -68,7 +69,7 @@ export default function LyricsScreen() {
           <View style={styles.coverScrim} />
         </>
       ) : null}
-      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+      <View style={[styles.safe, { paddingTop: topPad, paddingBottom: insets.bottom }]}>
       <View style={styles.header}>
         <Pressable hitSlop={12} accessibilityRole="button" accessibilityLabel={t('Close')} onPress={() => router.back()}>
           <Ionicons name="close" size={26} color={colors.text} />
@@ -105,20 +106,7 @@ export default function LyricsScreen() {
       </View>
 
       <View style={styles.controls}>
-        <Slider
-          style={styles.slider}
-          minimumValue={0}
-          maximumValue={duration}
-          value={positionSec}
-          onSlidingComplete={seekTo}
-          minimumTrackTintColor={colors.text}
-          maximumTrackTintColor={colors.mediaTrack}
-          thumbTintColor={colors.text}
-        />
-        <View style={styles.times}>
-          <Text style={styles.time}>{formatDuration(positionSec)}</Text>
-          <Text style={styles.time}>{formatDuration(duration)}</Text>
-        </View>
+        <SeekBar duration={duration} />
         <View style={styles.buttons}>
           <Pressable
             hitSlop={10}
@@ -151,7 +139,7 @@ export default function LyricsScreen() {
           </Pressable>
         </View>
       </View>
-      </SafeAreaView>
+      </View>
     </View>
   );
 }
@@ -180,14 +168,6 @@ const styles = themed((colors) => ({
     paddingHorizontal: spacing.xl,
   },
   controls: { paddingHorizontal: spacing.xl, paddingBottom: spacing.md },
-  // Same as the player: the visible track edge to edge of the content.
-  slider: { marginHorizontal: -15 },
-  times: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: -2,
-  },
-  time: { color: colors.textSecondary, fontSize: fontSize.xs },
   buttons: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -198,7 +178,7 @@ const styles = themed((colors) => ({
   playButton: {
     width: 60,
     height: 60,
-    borderRadius: 30,
+    borderRadius: radius.pill,
     backgroundColor: colors.text,
     alignItems: 'center',
     justifyContent: 'center',

@@ -31,7 +31,10 @@ export const SortSheet = memo(function SortSheet({
   /** In the order they should be shown; the label is a translation key. */
   options: { key: string; label: string }[];
   field: string;
-  dir: SortDirection;
+  /** Left out by the lists whose orders carry their own direction ("Recently
+   *  added", "A-Z"): there is nothing to turn round, so the half of the menu
+   *  that would ask goes with it. */
+  dir?: SortDirection;
   onPick: (field: string, dir: SortDirection) => void;
   openRef: React.MutableRefObject<() => void>;
 }) {
@@ -54,7 +57,7 @@ export const SortSheet = memo(function SortSheet({
                 key={o.key}
                 style={({ pressed }) => [styles.action, pressed && { opacity: 0.6 }]}
                 onPress={() => {
-                  onPick(o.key, dir);
+                  onPick(o.key, dir ?? 'asc');
                   close();
                 }}
               >
@@ -73,6 +76,8 @@ export const SortSheet = memo(function SortSheet({
             );
           })}
 
+          {dir === undefined ? null : (
+            <>
           <View style={styles.divider} />
           <Text style={styles.sheetTitle}>{t('Direction')}</Text>
           <View style={styles.dirRow}>
@@ -99,6 +104,8 @@ export const SortSheet = memo(function SortSheet({
               );
             })}
           </View>
+            </>
+          )}
         </>
       )}
     </SheetModal>

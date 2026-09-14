@@ -1,8 +1,12 @@
-/** Server radio stations (browsing from Home). */
+/**
+ * Server radio stations.
+ *
+ * A screen of its own and, `embedded`, the Radio section of the Explore tab.
+ */
 import Ionicons from '@expo/vector-icons/Ionicons';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { useQuery } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -14,7 +18,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
   createRadioStation,
@@ -38,6 +42,7 @@ import { currentSong, usePlayerStore } from '@/store/player';
 import { useToast } from '@/store/toast';
 import { colors, fontSize, radius, SCREEN_BOTTOM_PADDING, SHEET_MAX_WIDTH, spacing, themed, useTheme } from '@/theme';
 import { BackChevron } from '@/components/BackChevron';
+import { BrowseFrame, useSearchBox, type BrowserProps } from '@/components/BrowseFrame';
 import { useScreenBottomPadding } from '@/hooks/useScreenBottomPadding';
 import { useListPadding } from '@/hooks/useScreenSize';
 import { listPerf } from '@/lib/listPerf';
@@ -48,6 +53,10 @@ const EMPTY_EDIT: RadioEdit = { name: '', streamUrl: '', homePageUrl: '' };
 const SEARCH_FROM = 8;
 
 export default function RadioScreen() {
+  return <RadioBrowser />;
+}
+
+export function RadioBrowser({ embedded, actionRef, searchOpen }: BrowserProps) {
   // Repaints on a change of appearance or accent: a stack keeps this screen
   // mounted while you are on another one, out of reach of anything else.
   useTheme();
@@ -105,6 +114,10 @@ export default function RadioScreen() {
   // is furniture. It appears once the list is long enough to be scanned.
   const showSearch = (data?.length ?? 0) > SEARCH_FROM;
 
+  // Embedded the tab's magnifier is what asks for the box, and then the count
+  // is beside the point: it is there because it was asked for.
+  const boxOpen = useSearchBox(embedded, searchOpen, () => setQuery(''));
+
   async function saveStation(changes: RadioEdit, pendingCoverUri?: string) {
     const station = editForm?.station ?? null;
     setEditForm(null);
@@ -145,31 +158,40 @@ export default function RadioScreen() {
     if (!station) return;
     try {
       await deleteRadioStation(auth!, station.id);
+      usePins.getState().unpin(`radio:${station.id}`);
       await refresh();
     } catch {
       toast(t("Couldn't complete the action"));
     }
   }
 
-  return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
-      <View style={styles.header}>
-        <BackChevron />
-        <Text style={styles.title}>{t('Radio')}</Text>
-        {canManage ? (
-          <Pressable
-            hitSlop={10}
-            onPress={() => setEditForm({ station: null })}
-            accessibilityLabel={t('Add station')}
-          >
-            <Ionicons name="add" size={28} color={colors.text} />
-          </Pressable>
-        ) : (
-          <View style={{ width: 28 }} />
-        )}
-      </View>
+  // Embedded, the Explore tab draws this in its own header; the form it opens
+  // stays down here with the rest of the station editing.
+  useEffect(() => {
+    if (actionRef) actionRef.current = () => setEditForm({ station: null });
+  });
 
-      {showSearch ? (
+  const addButton = canManage ? (
+    <Pressable
+      hitSlop={10}
+      onPress={() => setEditForm({ station: null })}
+      accessibilityLabel={t('Add station')}
+    >
+      <Ionicons name="add" size={28} color={colors.text} />
+    </Pressable>
+  ) : null;
+
+  return (
+    <BrowseFrame embedded={embedded}>
+      {embedded ? null : (
+        <View style={styles.header}>
+          <BackChevron />
+          <Text style={styles.title}>{t('Radio')}</Text>
+          {addButton ?? <View style={{ width: 28 }} />}
+        </View>
+      )}
+
+      {(embedded ? boxOpen : showSearch) ? (
         <View style={styles.searchBar}>
           <Ionicons name="search" size={18} color={colors.textMuted} />
           <TextInput
@@ -180,6 +202,7 @@ export default function RadioScreen() {
             autoCorrect={false}
             value={query}
             onChangeText={setQuery}
+            autoFocus={embedded}
           />
           {query ? (
             <Pressable hitSlop={8} onPress={() => setQuery('')} accessibilityLabel={t('Clear')}>
@@ -368,12 +391,11 @@ export default function RadioScreen() {
         onCancel={() => setDeleting(null)}
         onConfirm={() => void confirmDelete()}
       />
-    </SafeAreaView>
+    </BrowseFrame>
   );
 }
 
 const styles = themed((colors) => ({
-  safe: { flex: 1, backgroundColor: colors.background },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -390,14 +412,16 @@ const styles = themed((colors) => ({
   // how it is drawn everywhere else in the app.
   pinIcon: { transform: [{ rotate: '45deg' }] },
   rowSub: { color: colors.textSecondary, fontSize: fontSize.xs, marginTop: 2 },
+  // The box "Your library" has, to the same measurements, which is what every
+  // section of Explore now opens.
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
+    height: 44,
     marginHorizontal: spacing.lg,
     marginBottom: spacing.md,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
     borderRadius: radius.md,
     backgroundColor: colors.surfaceHighlight,
   },
@@ -411,8 +435,8 @@ const styles = themed((colors) => ({
     width: '100%',
     maxWidth: SHEET_MAX_WIDTH,
     backgroundColor: colors.surface,
-    borderTopLeftRadius: radius.lg,
-    borderTopRightRadius: radius.lg,
+    borderTopLeftRadius: radius.xxl,
+    borderTopRightRadius: radius.xxl,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.lg,
   },

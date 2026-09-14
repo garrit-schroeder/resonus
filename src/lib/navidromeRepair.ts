@@ -32,7 +32,6 @@ import { useAutoDownloads } from '@/store/autoDownloads';
 import { useOfflineQueue } from '@/store/offlineQueue';
 import { remapQueueIds } from '@/store/player';
 import { usePins } from '@/store/pins';
-import { useSettings } from '@/store/settings';
 import { hashKey } from '@/lib/localLibrary';
 import { primaryUrl } from '@/lib/serverUrls';
 
@@ -48,7 +47,8 @@ function versionKey(auth: SubsonicAuth): string {
 }
 
 /**
- * The server said which version it is. Worth a look if that changed.
+ * The server said which version it is. Worth a look if that changed, and worth
+ * one look anyway on a profile nothing has ever concluded anything about.
  *
  * This is the trigger, and the retry in the request path is the safety net
  * under it. On its own the retry is not enough: it only fires on a request
@@ -60,9 +60,9 @@ function versionKey(auth: SubsonicAuth): string {
  * on somebody who only browses.
  *
  * A version is emphatically NOT proof of anything: develop builds carry a git
- * sha, a proxy can rewrite it, and the migration will ship in a release nobody
- * can name in advance. All a change does is spend one probe finding out. The
- * proof is still the probe's, with its samples and its guards.
+ * sha, a proxy can rewrite it, and 0.64 shipped the migration in a release
+ * nobody could name in advance. All a change does is spend one probe finding
+ * out. The proof is still the probe's, with its samples and its guards.
  *
  * It also fixes something the mark alone got wrong: a profile found not to
  * have migrated stayed marked that way forever, so a server upgraded the week
@@ -77,13 +77,29 @@ export async function noteServerVersion(auth: SubsonicAuth, version: string): Pr
   if (versionInMemory.get(key) === version) return;
   const seen = versionInMemory.get(key) ?? (await getItem(key));
   versionInMemory.set(key, version);
-  if (seen === version) return;
-  await setItem(key, version).catch(() => {});
-  // First sighting of any version is not a change: there is nothing to compare
-  // it against, and every profile would probe once for no reason.
-  if (seen === null) return;
-  if ((await repairMark(auth)) === 'repaired') return;
-  void repairIfMigrated(auth).catch(() => {});
+  if (seen !== version) await setItem(key, version).catch(() => {});
+
+  const mark = await repairMark(auth);
+  if (mark === 'repaired') return;
+
+  // A changed version is the signal, but it cannot be the only one, because
+  // the version was being written down long before anything was allowed to act
+  // on it. Somebody who upgraded their server to 0.64 while still on the build
+  // where the repair was off has 0.64 already filed here, and updating the app
+  // changes nothing about it: the one moment that was going to start the look
+  // was spent by a build that could not look. Their downloads would then wait
+  // on the retry in the request path, which only fires on a request carrying
+  // an id, and the home screen, the lists and the searches carry none.
+  //
+  // So a profile that has never been settled gets one look regardless of the
+  // version. It is one look and not one per launch: the probe writes a mark
+  // either way it concludes, and the only thing that repeats is a profile it
+  // could not conclude anything about, which is the case that wants retrying.
+  // A profile with nothing downloaded costs no requests at all, since
+  // `candidatesFor` has nothing to ask about.
+  if (mark === null || (seen !== null && seen !== version)) {
+    void repairIfMigrated(auth).catch(() => {});
+  }
 }
 
 /**
@@ -100,11 +116,6 @@ let outcome = 'not checked this session';
 
 export function repairStatus(): string {
   return outcome;
-}
-
-/** Whether the repair is allowed to do anything at all. See the setting. */
-export function idRepairEnabled(): boolean {
-  return useSettings.getState().navidromeIdRepair;
 }
 
 /** What each profile last answered with, so the check above costs no disk. */
@@ -151,15 +162,6 @@ async function candidatesFor(auth: SubsonicAuth): Promise<string[]> {
  * conclusion is the ordinary case, not a failure.
  */
 export async function repairIfMigrated(auth: SubsonicAuth): Promise<Verdict> {
-  // The one door, and it is here rather than at each trigger so that off means
-  // off: no probe, no requests, no mark written, nothing to undo later. It is
-  // off by default until this has been watched working against a server that
-  // really migrated, because the way to be wrong that costs anything is to run
-  // when it should not have.
-  if (!useSettings.getState().navidromeIdRepair) {
-    outcome = 'turned off';
-    return 'inconclusive';
-  }
   const key = markKey(auth);
   const already = running.get(key);
   if (already) return already;
@@ -171,7 +173,12 @@ export async function repairIfMigrated(auth: SubsonicAuth): Promise<Verdict> {
     }
 
     const candidates = await candidatesFor(auth);
-    if (candidates.length === 0) return 'inconclusive';
+    if (candidates.length === 0) {
+      // Nothing downloaded, or nothing downloaded under an id the transform
+      // would move. Either way there is nothing at stake and nothing to ask.
+      outcome = 'nothing to check';
+      return 'inconclusive';
+    }
 
     const { verdict } = await probeMigration(candidates, async (id) => {
       try {

@@ -9,7 +9,7 @@
  * The shape of it:
  *
  *  - `colors` is a single mutable object, rewritten in place by `applyThemeMode`
- *    and `applyAccent`.
+ *    and `applyAccents`.
  *    Anything reading `colors.text` while rendering gets the current value.
  *  - `themed(c => ({…}))` replaces `StyleSheet.create` and returns an object
  *    whose entries are rebuilt when the theme changes. It stays a plain module
@@ -20,6 +20,7 @@
  *    the language.
  */
 import { useSyncExternalStore } from 'react';
+import { Appearance } from 'react-native';
 import type { ImageStyle, TextStyle, ViewStyle } from 'react-native';
 
 /** Default accent (Spotify green). */
@@ -30,6 +31,17 @@ export type ThemeMode = 'dark' | 'light';
 
 export function isThemeMode(value: unknown): value is ThemeMode {
   return value === 'dark' || value === 'light';
+}
+
+/**
+ * What the setting holds, which is not the same question as which appearance is
+ * on screen: `system` is a standing instruction to keep asking Android, and the
+ * other two are answers.
+ */
+export type ThemePreference = ThemeMode | 'system';
+
+export function isThemePreference(value: unknown): value is ThemePreference {
+  return value === 'system' || isThemeMode(value);
 }
 
 /**
@@ -277,7 +289,11 @@ export const colors: Palette = {
 };
 
 let currentMode: ThemeMode = 'dark';
-let currentAccent = DEFAULT_ACCENT;
+// One accent per appearance. They are two choices and not one: a colour that
+// sings on near-black can be the one that dies on white, and the picker in
+// Settings is where each is made.
+let darkAccent = DEFAULT_ACCENT;
+let lightAccent = DEFAULT_ACCENT;
 
 /** Which appearance is active right now (for code outside a component). */
 export function themeMode(): ThemeMode {
@@ -306,14 +322,15 @@ function subscribe(listener: () => void): () => void {
 function rebuild(): void {
   const light = currentMode === 'light';
   const base = light ? LIGHT : DARK;
+  const picked = light ? lightAccent : darkAccent;
   // On white the accent has to be dark enough to read as text; on near-black
   // it is already fine as picked. `onAccent` follows from that: black on the
   // vivid accent, white on the darkened one.
-  const accent = light ? readableOn(currentAccent, LIGHT.background) : currentAccent;
+  const accent = light ? readableOn(picked, LIGHT.background) : picked;
   Object.assign(colors, base, {
     accent,
     accentPressed: darken(accent),
-    accentVivid: currentAccent,
+    accentVivid: picked,
     brand: light ? readableOn(DEFAULT_ACCENT, LIGHT.background) : DEFAULT_ACCENT,
     onAccent: light ? '#FFFFFF' : '#000000',
   });
@@ -321,16 +338,50 @@ function rebuild(): void {
   for (const listener of listeners) listener();
 }
 
-/** Hot-swaps the accent (accent + its "pressed" variant). */
-export function applyAccent(hex: string): void {
-  currentAccent = hex;
+/** Hot-swaps both accents (accent + its "pressed" variant). Both at once, so
+ *  there is never a moment where one appearance holds a colour the setting
+ *  no longer says. */
+export function applyAccents(dark: string, light: string): void {
+  darkAccent = dark;
+  lightAccent = light;
   rebuild();
 }
 
 /** Hot-swaps the whole appearance. */
-export function applyThemeMode(mode: ThemeMode): void {
+function applyThemeMode(mode: ThemeMode): void {
   currentMode = mode;
   rebuild();
+}
+
+let systemWatch: { remove: () => void } | null = null;
+
+/** The appearance the device is in, or dark when it will not say. */
+function systemMode(): ThemeMode {
+  return Appearance.getColorScheme() === 'light' ? 'light' : 'dark';
+}
+
+/**
+ * Picks the appearance and, on `system`, keeps picking it: the listener is what
+ * makes the app follow a device switching to night without being reopened.
+ *
+ * Android only tells anyone what it is set to when the app declares
+ * `userInterfaceStyle: "automatic"` (app.json). Pinned to `dark`, the launcher
+ * calls `setDefaultNightMode(MODE_NIGHT_YES)` and from then on the system
+ * answers dark forever, so on a build older than that one this setting is a
+ * third way of choosing dark.
+ */
+export function applyThemePreference(pref: ThemePreference): void {
+  systemWatch?.remove();
+  systemWatch = null;
+  if (pref === 'system') {
+    systemWatch = Appearance.addChangeListener(() => {
+      // Only on a real change: every rebuild hands out new style objects, and
+      // Android repeats this event for things that are not the appearance.
+      const next = systemMode();
+      if (next !== currentMode) applyThemeMode(next);
+    });
+  }
+  applyThemeMode(pref === 'system' ? systemMode() : pref);
 }
 
 // ---------------------------------------------------------------------------
@@ -411,13 +462,42 @@ export const spacing = {
   xxl: 32,
 } as const;
 
+/**
+ * The corners, from the smallest control to the biggest surface.
+ *
+ * Read them as a ladder rather than as numbers: `sm` is a badge or a bar,
+ * `md` a row or a small cover, `lg` a card, `xl` the panels that take up half
+ * the screen, `xxl` the sheets that rise over it, and `pill` anything meant to
+ * be a capsule or a circle (a large radius on a square box is one, which is
+ * why there is no separate `circle`).
+ *
+ * The whole ladder went up a step in August 2026: it used to top out at 16 and
+ * almost everything in the app sat on 8, which reads flat next to anything
+ * drawn in the last few years.
+ */
 export const radius = {
-  sm: 4,
-  md: 8,
-  lg: 12,
+  sm: 6,
+  md: 10,
+  lg: 16,
+  xl: 24,
+  /** A sheet rising from the bottom, and anything else that owns the screen. */
+  xxl: 32,
   pill: 999,
 } as const;
 
+/**
+ * The type scale, from the smallest label to the biggest heading.
+ *
+ * Read it as a ladder, the way `radius` is read: `xs` is a badge or a caption,
+ * `sm` the second line of a row, `md` the first one, `lg` a section heading,
+ * `xl` a screen's title bar, `xxl` the big heading a screen or a record opens
+ * with.
+ *
+ * There is nothing between 24 and 32 on purpose. Three tab headings used to
+ * carry a hand-written 30, which is two points off `xxl` and reads as the same
+ * size to everybody who is not measuring: a step nobody can see is not a step,
+ * it is a second name for one that already exists.
+ */
 export const fontSize = {
   xs: 12,
   sm: 14,

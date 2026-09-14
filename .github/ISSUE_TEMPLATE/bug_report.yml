@@ -11,6 +11,17 @@ body:
       placeholder: "0.6.0"
     validations:
       required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      description: The iOS build is unsigned and sideloaded, so parts of it behave differently. Saying which one you are on saves a round trip.
+      options:
+        - Android
+        - iOS
+        - Both
+    validations:
+      required: true
   - type: textarea
     id: what
     attributes:
@@ -43,19 +54,19 @@ body:
     validations:
       required: true
   - type: input
-    id: android
+    id: os
     attributes:
-      label: Android version
-      description: "Optional, but it settles a lot of bugs on its own. Under Settings › About phone on the device."
-      placeholder: "Android 14"
+      label: Android or iOS version
+      description: "Optional, but it settles a lot of bugs on its own. Under Settings › About phone on Android, or Settings › General › About on iOS."
+      placeholder: "Android 14, or iOS 18.5"
     validations:
       required: false
   - type: input
     id: device
     attributes:
       label: Phone model
-      description: "Optional. If you run a custom ROM (LineageOS, GrapheneOS, crDroid…), please say which one and which version. They change how playback in the background, battery optimization and permissions behave."
-      placeholder: "Pixel 7a, or Pixel 7a on GrapheneOS 2026041000"
+      description: "Optional. On Android, if you run a custom ROM (LineageOS, GrapheneOS, crDroid…), please say which one and which version. They change how playback in the background, battery optimization and permissions behave."
+      placeholder: "Pixel 7a, iPhone 13, or Pixel 7a on GrapheneOS 2026041000"
     validations:
       required: false
   - type: dropdown

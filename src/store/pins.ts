@@ -2,6 +2,9 @@
  * Pinned items, always at the very top of their list whatever the sort order.
  * Key = 'playlist:<id>', 'album:<id>' or 'radio:<id>'; the value is when it was
  * pinned, which is the order they keep among themselves.
+ *
+ * Whatever removes an item has to take its pin too: the ceiling counts every
+ * key in here, and a pin to something gone is one nobody can see to undo.
  */
 import { create } from 'zustand';
 
@@ -26,17 +29,18 @@ function pinsKey(): string {
  *
  * Pinning only sorts an item to the top of a list that is scrolled anyway, so
  * nothing here costs more as the number grows. Four was a guess at how many
- * favourites somebody keeps, and it turned out to be somebody else's guess.
- * This is high enough that reaching it means wanting the whole library
- * reordered, which is a different thing, and low enough that "pinned" still
- * tells the eye something.
+ * favourites somebody keeps, and it turned out to be somebody else's guess;
+ * so did 25, for a library that is mostly playlists (#217). Playlists, albums
+ * and radios share it.
  */
-export const MAX_PINS = 25;
+export const MAX_PINS = 50;
 
 interface PinsState {
   pins: Record<string, number>;
   /** Toggles pin. Returns false if it doesn't fit (already at MAX_PINS). */
   toggle: (key: string) => boolean;
+  /** For an item that is gone; nothing happens if it wasn't pinned. */
+  unpin: (key: string) => void;
   hydrate: () => Promise<void>;
   /** Rewrites the pinned ids after the server renamed its own (#5824). */
   remapIds: (f: Remap) => void;
@@ -72,6 +76,14 @@ export const usePins = create<PinsState>((set, get) => ({
     set({ pins });
     scheduleSave(pins);
     return true;
+  },
+
+  unpin: (key) => {
+    if (!get().pins[key]) return;
+    const pins = { ...get().pins };
+    delete pins[key];
+    set({ pins });
+    scheduleSave(pins);
   },
 
   /** A pin's key is a kind and an id (`album:…`), so only the id half moves. */

@@ -1,10 +1,10 @@
 /**
  * Integration with UPnP/DLNA renderers (native module modules/upnp-cast).
  *
- * The queue lives in the player store and here only the session is managed
- * (chosen device) and the return events. The native module polls the renderer
- * state every second; track end is inferred from a STOPPED near the end
- * (UPnP doesn't distinguish "finished" from "stopped by user").
+ * The player store remains the UI/source-of-truth queue. While connected to an
+ * ordinary renderer, a native copy owns transport progression so Android can
+ * continue between tracks while JS is suspended. Sonos keeps using its native
+ * renderer-side queue.
  */
 import { requireOptionalNativeModule } from 'expo-modules-core';
 import { create } from 'zustand';
@@ -63,6 +63,9 @@ interface NativeState {
   durationMs: number;
   trackNumber?: number;
   playMode?: string;
+  nativeQueueManaged?: boolean;
+  /** Authoritative zero-based index for a native-managed ordinary renderer. */
+  queueIndex?: number;
 }
 
 const native = requireOptionalNativeModule('UpnpCast');
@@ -82,6 +85,7 @@ let wasPlaying = false;
 /** We requested the pause ourselves: a STOPPED after this is not a track end. */
 let pausedByUs = false;
 let lastNativeTrackNumber = 0;
+let lastNativeQueueIndex = -1;
 let lastRemoteRepeat: 'off' | 'all' | 'one' | null = null;
 
 interface CachedDevice {
@@ -127,9 +131,16 @@ function onNativeState(e: NativeState) {
   const pos = (e.positionMs ?? 0) / 1000;
   const dur = (e.durationMs ?? 0) / 1000;
   const trackNumber = Math.floor(e.trackNumber ?? 0);
+  const nativeQueueIndex = Math.floor(e.queueIndex ?? -1);
   if (pos > 0) lastPositionSec = pos;
   if (dur > 0) lastDurationSec = dur;
-  if (trackNumber > 0) {
+  if (e.nativeQueueManaged && nativeQueueIndex >= 0) {
+    const changed = nativeQueueIndex !== lastNativeQueueIndex;
+    lastNativeQueueIndex = nativeQueueIndex;
+    if (changed && !loading) {
+      events?.onTrackChanged(nativeQueueIndex, pos, dur || lastDurationSec);
+    }
+  } else if (trackNumber > 0) {
     const changed = trackNumber !== lastNativeTrackNumber;
     lastNativeTrackNumber = trackNumber;
     if (changed && !loading) {
@@ -162,7 +173,7 @@ function onNativeState(e: NativeState) {
       // seconds, so a fixed 3 s threshold was too tight and the queue wouldn't
       // advance. Without known duration, we trust we were playing (better to
       // advance than to get stuck).
-      if (!finishedFired && !loading && wasPlaying && !pausedByUs) {
+      if (!e.nativeQueueManaged && !finishedFired && !loading && wasPlaying && !pausedByUs) {
         const window = Math.max(5, lastDurationSec * 0.1);
         const nearEnd = lastDurationSec <= 0 || lastPositionSec >= lastDurationSec - window;
         if (nearEnd) {
@@ -251,6 +262,7 @@ export async function upnpConnect(device: UpnpDevice): Promise<boolean> {
   lastPositionSec = 0;
   lastDurationSec = 0;
   lastNativeTrackNumber = 0;
+  lastNativeQueueIndex = -1;
   lastRemoteRepeat = null;
   finishedFired = false;
   wasPlaying = false;
@@ -275,6 +287,7 @@ export async function upnpDisconnect(silent = false): Promise<void> {
   void stopLocalHttp();
   useUpnp.setState({ connected: false, deviceId: null });
   lastNativeTrackNumber = 0;
+  lastNativeQueueIndex = -1;
   lastRemoteRepeat = null;
   lastPositionSec = 0;
   lastDurationSec = 0;
@@ -413,13 +426,6 @@ function buildUpnpQueuePayload(queue: Song[]) {
   return tracks as (ReturnType<typeof buildUpnpTrackInfo> & { url: string; mime: string })[];
 }
 
-function buildUpnpTrackPayload(song: Song) {
-  const url = buildUpnpTrackUrl(song);
-  if (!url) return null;
-  const info = buildUpnpTrackInfo(song);
-  return { url, mime: castMime(song, transcodedTo(song)), ...info };
-}
-
 /**
  * What the file will have been turned into by the time it arrives, which is
  * only ever something the SERVER does on the way out.
@@ -517,18 +523,13 @@ export async function upnpLoad(
   lastPositionSec = startTimeSec;
   lastDurationSec = current.duration ?? 0;
   try {
-    // What has to be reachable before the URLs are built. Sonos is handed the
-    // whole queue at once, so that is the whole queue. Everything else gets one
-    // track — and its neighbours, which cost nothing and cover the moment
-    // between two tracks, when the notification is still fetching the cover of
-    // the one being left (see `publishLocalFiles`: publishing replaces).
+    // Both renderer-side Sonos queues and native-managed ordinary queues need
+    // every phone-served URL to remain reachable after JS is suspended.
     const sonos = currentUpnpDevice()?.isSonos;
-    await ensureLocalFilesServed(
-      sonos ? queue : queue.slice(Math.max(0, index - 1), index + 2),
-    );
+    await ensureLocalFilesServed(queue);
     const ok = sonos
       ? await loadSonosQueue(queue, index, autoplay, startTimeSec, playMode)
-      : await loadGenericUpnpTrack(current, autoplay, startTimeSec);
+      : await loadGenericUpnpQueue(queue, index, autoplay, startTimeSec, playMode);
     if (ok && startTimeSec > 0) void native.seek(startTimeSec * 1000);
     // Not every renderer starts on its own after being handed a URI: Sonos
     // waits for an explicit Play and otherwise sits silent while the app
@@ -553,7 +554,7 @@ export async function upnpSyncQueue(
   playMode: string,
 ): Promise<boolean> {
   if (!native || !isUpnpConnected()) return false;
-  if (!currentUpnpDevice()?.isSonos) return false;
+  await ensureLocalFilesServed(queue);
   const payload = buildUpnpQueuePayload(queue);
   if (!payload) return false;
   try {
@@ -572,7 +573,6 @@ export async function upnpSyncQueue(
 
 export async function upnpSetPlayMode(playMode: string): Promise<boolean> {
   if (!native || !isUpnpConnected()) return false;
-  if (!currentUpnpDevice()?.isSonos) return true;
   try {
     return (await native.setPlayMode(playMode)) as boolean;
   } catch {
@@ -625,22 +625,33 @@ async function loadSonosQueue(
  *  lossless track has no bitrate to inherit, and 320 is as good as MP3 gets. */
 const CAST_MP3_BITRATE = 320;
 
-async function loadGenericUpnpTrack(song: Song, autoplay: boolean, startTimeSec: number): Promise<boolean> {
-  const payload = buildUpnpTrackPayload(song);
+async function loadGenericUpnpQueue(
+  queue: Song[],
+  index: number,
+  autoplay: boolean,
+  startTimeSec: number,
+  playMode: string,
+): Promise<boolean> {
+  const payload = buildUpnpQueuePayload(queue);
   if (!payload) return false;
-  let ok = (await native.load(payload.url, payload, autoplay)) as boolean;
-  // A renderer that won't take the format says so, and the answer to that is
-  // to ask the server for the one nothing refuses. Only after being turned
-  // down: the ones that do take FLAC keep getting it. Sonos never comes
-  // through here, so this is the same second chance the TVs and speakers had
-  // before the queue path existed (#70).
+  const load = (tracks: typeof payload) => native.loadQueue(JSON.stringify({
+    tracks,
+    currentIndex: index,
+    autoplay,
+    positionMs: startTimeSec * 1000,
+    playMode,
+  })) as Promise<boolean>;
+  let ok = await load(payload);
+  // Preserve the existing format fallback without throwing away the native
+  // queue: replace only the selected URI and submit the complete queue again.
   if (!ok) {
-    const mp3Url = mp3StreamUrl(song);
-    if (mp3Url && mp3Url !== payload.url) {
-      ok = (await native.load(mp3Url, { ...payload, url: mp3Url, mime: 'audio/mpeg' }, autoplay)) as boolean;
+    const mp3Url = mp3StreamUrl(queue[index]);
+    if (mp3Url && mp3Url !== payload[index]?.url) {
+      const fallback = [...payload];
+      fallback[index] = { ...fallback[index], url: mp3Url, mime: 'audio/mpeg' };
+      ok = await load(fallback);
     }
   }
-  if (ok && startTimeSec > 0) void native.seek(startTimeSec * 1000);
   return ok;
 }
 

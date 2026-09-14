@@ -1,4 +1,8 @@
-/** Server genre list, in colored cards (Spotify style). */
+/**
+ * Server genre list, in colored cards.
+ *
+ * A screen of its own and, `embedded`, the Genres section of the Explore tab.
+ */
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
@@ -9,7 +13,6 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { type Genre } from '@/api/backend';
 import { getGenres } from '@/api/data';
@@ -30,6 +33,7 @@ import {
 } from '@/theme';
 import { listPerf } from '@/lib/listPerf';
 import { BackChevron } from '@/components/BackChevron';
+import { BrowseFrame, useSearchBox, type BrowserProps } from '@/components/BrowseFrame';
 import { useScreenBottomPadding } from '@/hooks/useScreenBottomPadding';
 import { columnsFor, useScreenSize } from '@/hooks/useScreenSize';
 
@@ -41,6 +45,10 @@ import { columnsFor, useScreenSize } from '@/hooks/useScreenSize';
 const GENRE_IDEAL = 220;
 
 export default function GenresScreen() {
+  return <GenresBrowser />;
+}
+
+export function GenresBrowser({ embedded, searchOpen }: BrowserProps) {
   // Repaints on a change of appearance or accent: a stack keeps this screen
   // mounted while you are on another one, out of reach of anything else.
   useTheme();
@@ -60,6 +68,9 @@ export default function GenresScreen() {
     enabled: !!auth,
   });
 
+  // Embedded, whether the box is there is the tab's answer.
+  const showSearch = useSearchBox(embedded, searchOpen, () => setQuery(''));
+
   const genres = useMemo(() => {
     const all = [...(data ?? [])].sort((a, b) => a.value.localeCompare(b.value));
     const q = query.trim().toLowerCase();
@@ -67,30 +78,39 @@ export default function GenresScreen() {
   }, [data, query]);
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
-      <View style={styles.header}>
-        <BackChevron />
-        <Text style={styles.title}>{t('Genres')}</Text>
-        <View style={{ width: 26 }} />
-      </View>
+    <BrowseFrame embedded={embedded}>
+      {embedded ? null : (
+        <View style={styles.header}>
+          <BackChevron />
+          <Text style={styles.title}>{t('Genres')}</Text>
+          <View style={{ width: 26 }} />
+        </View>
+      )}
 
-      <View style={styles.searchBar}>
-        <Ionicons name="search" size={18} color={colors.textMuted} />
-        <TextInput
-          style={styles.input}
-          placeholder={t('Filter genres')}
-          placeholderTextColor={colors.textMuted}
-          autoCapitalize="none"
-          autoCorrect={false}
-          value={query}
-          onChangeText={setQuery}
-        />
-        {query.length > 0 ? (
-          <Pressable hitSlop={10} onPress={() => setQuery('')}>
-            <Ionicons name="close-circle" size={18} color={colors.textMuted} />
-          </Pressable>
-        ) : null}
-      </View>
+      {showSearch ? (
+        <View style={styles.searchBar}>
+          <Ionicons name="search" size={18} color={colors.textMuted} />
+          <TextInput
+            style={styles.input}
+            placeholder={t('Filter genres')}
+            placeholderTextColor={colors.textMuted}
+            autoCapitalize="none"
+            autoCorrect={false}
+            value={query}
+            onChangeText={setQuery}
+            autoFocus={embedded}
+          />
+          {query.length > 0 ? (
+            <Pressable hitSlop={10} onPress={() => setQuery('')}>
+              <Ionicons name="close-circle" size={18} color={colors.textMuted} />
+            </Pressable>
+          ) : null}
+        </View>
+      ) : (
+        // The gap the box was giving the grid; without it the first row of
+        // cards sits against the chips above.
+        <View style={styles.searchGap} />
+      )}
 
       {isLoading ? (
         <View style={styles.skeleton}>
@@ -109,7 +129,9 @@ export default function GenresScreen() {
           numColumns={columns}
           columnWrapperStyle={{ gap: spacing.sm }}
           contentContainerStyle={[styles.list, { paddingBottom: bottomPad }]}
-          renderItem={({ item }: { item: Genre }) => <GenreCard name={item.value} />}
+          renderItem={({ item }: { item: Genre }) => (
+            <GenreCard name={item.value} albumCount={item.albumCount} />
+          )}
           ListEmptyComponent={
             <EmptyState
               icon="pricetags-outline"
@@ -119,12 +141,11 @@ export default function GenresScreen() {
           }
         />
       )}
-    </SafeAreaView>
+    </BrowseFrame>
   );
 }
 
 const styles = themed((colors) => ({
-  safe: { flex: 1, backgroundColor: colors.background },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -133,17 +154,21 @@ const styles = themed((colors) => ({
     paddingVertical: spacing.md,
   },
   title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '600' },
+  // The box "Your library" has, to the same measurements, which is what every
+  // section of Explore now opens.
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
+    height: 44,
     backgroundColor: colors.surfaceHighlight,
     marginHorizontal: spacing.lg,
     marginBottom: spacing.md,
     paddingHorizontal: spacing.md,
     borderRadius: radius.md,
   },
-  input: { flex: 1, color: colors.text, fontSize: fontSize.md, paddingVertical: spacing.sm },
+  input: { flex: 1, color: colors.text, fontSize: fontSize.md, paddingVertical: 0 },
+  searchGap: { height: spacing.sm },
   list: {
     paddingHorizontal: spacing.lg,
     paddingBottom: SCREEN_BOTTOM_PADDING,

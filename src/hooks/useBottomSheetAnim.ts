@@ -8,21 +8,16 @@
 import { useEffect } from 'react';
 import { Dimensions, type LayoutChangeEvent } from 'react-native';
 import { Gesture } from 'react-native-gesture-handler';
-import {
-  Easing,
-  ReduceMotion,
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-} from 'react-native-reanimated';
+import { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
+import { SHEET_IN, SHEET_OUT } from '@/theme/motion';
+
 // Sheets always animate, even when the system has "remove animations" enabled:
-// without a transition they appear abruptly with a visible layout jump (and
-// Reanimated only reads that setting at startup, so it doesn't even reflect
-// changes made while the app is open). Same as the player and lyrics.
-const TIMING_IN = { duration: 240, easing: Easing.out(Easing.cubic), reduceMotion: ReduceMotion.Never };
-const TIMING_OUT = { duration: 160, easing: Easing.in(Easing.cubic), reduceMotion: ReduceMotion.Never };
+// without a transition they appear abruptly with a visible layout jump. The
+// reason lives with the token now (see `motion.reduceMotion.essential`).
+const TIMING_IN = SHEET_IN;
+const TIMING_OUT = SHEET_OUT;
 
 const SCREEN_H = Dimensions.get('window').height;
 

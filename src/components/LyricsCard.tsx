@@ -12,7 +12,6 @@ import { Pressable, ScrollView, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   cancelAnimation,
-  Easing,
   ReduceMotion,
   scrollTo,
   useAnimatedReaction,
@@ -34,6 +33,7 @@ import { pushOnce } from '@/lib/pushOnce';
 import { currentSong, usePlayerStore } from '@/store/player';
 import { useSettings } from '@/store/settings';
 import { colors, fontSize, radius, spacing, themed, useTheme } from '@/theme';
+import { motion } from '@/theme/motion';
 
 export function LyricsCard() {
   const t = useT();
@@ -249,9 +249,9 @@ export function SyncedLyricsView({
     // the next line.
     targetY.value = liveY.value;
     targetY.value = withTiming(dest, {
-      duration: 450,
-      easing: Easing.out(Easing.cubic),
-      reduceMotion: ReduceMotion.Never,
+      duration: motion.duration.scroll,
+      easing: motion.easing.move,
+      reduceMotion: motion.reduceMotion.essential,
     });
   }, [current, viewH, anchor, targetY, liveY, placed]);
 
@@ -354,8 +354,8 @@ const LyricRow = memo(({
   }, [active, focus]);
   useEffect(() => {
     dim.value = withTiming(active ? 1 : next ? 0.55 : 0.3, {
-      duration: 300,
-      reduceMotion: ReduceMotion.Never,
+      duration: motion.duration.enter,
+      reduceMotion: motion.reduceMotion.essential,
     });
   }, [active, next, dim]);
   // The growth (8%) is compensated by the right margin of `content` so the
@@ -392,18 +392,17 @@ const CARD_BODY_H = 280;
 
 const styles = themed((colors) => ({
   card: {
-    borderRadius: radius.md,
+    borderRadius: radius.lg,
     marginTop: spacing.lg,
-    marginBottom: spacing.xl,
     // The player no longer has global horizontal padding (because of the
     // slider): the card supplies its own margin.
-    marginHorizontal: spacing.xl,
+    marginHorizontal: spacing.lg,
     padding: spacing.lg,
   },
   title: { color: colors.text, fontSize: fontSize.md, fontWeight: '700', marginBottom: spacing.sm },
   body: { height: CARD_BODY_H, overflow: 'hidden' },
   // Lyrics in place of the cover: box exactly the size of the cover.
-  coverBox: { borderRadius: radius.md, overflow: 'hidden', padding: spacing.lg },
+  coverBox: { borderRadius: radius.lg, overflow: 'hidden', padding: spacing.lg },
   coverBody: { flex: 1, overflow: 'hidden' },
   wrap: { flex: 1 },
   // Right margin so the active line (which grows 8% from the left) doesn't get
@@ -417,7 +416,7 @@ const styles = themed((colors) => ({
     bottom: spacing.md,
     width: 32,
     height: 32,
-    borderRadius: 16,
+    borderRadius: radius.pill,
     backgroundColor: colors.text,
     alignItems: 'center',
     justifyContent: 'center',

@@ -46,7 +46,6 @@ import { useAuthStore } from '@/store/auth';
 import { useAutoDownloads } from '@/store/autoDownloads';
 import { useDownloads } from '@/store/downloads';
 import { usePlayerStore } from '@/store/player';
-import { useSettings } from '@/store/settings';
 import { useSongInfo } from '@/store/songInfo';
 import { useSongMenu } from '@/store/songMenu';
 import { showUndoToast, useToast } from '@/store/toast';
@@ -141,9 +140,6 @@ export function SongMenuSheet() {
   const addToQueue = usePlayerStore((s) => s.addToQueue);
   const playNext = usePlayerStore((s) => s.playNext);
   const startRadio = usePlayerStore((s) => s.startRadio);
-  // Visible actions (Settings → Appearance → Song menu). Added to each one's
-  // conditions: hiding it doesn't re-enable what already didn't apply.
-  const menu = useSettings((s) => s.songMenuActions);
   const canShare = useCanShare();
   const serverType = useAuthStore((s) => s.auth?.serverType);
   const rateSong = usePlayerStore((s) => s.rateSong);
@@ -526,13 +522,11 @@ export function SongMenuSheet() {
                   scrollEventThrottle={16}
                   onScroll={(e) => setAtTop(e.nativeEvent.contentOffset.y <= 0)}
                 >
-                  {menu.playlist ? (
-                    <Action
-                      icon="add-circle-outline"
-                      label={t('Add to a playlist')}
-                      onPress={() => setMode('playlists')}
-                    />
-                  ) : null}
+                  <Action
+                    icon="add-circle-outline"
+                    label={t('Add to a playlist')}
+                    onPress={() => setMode('playlists')}
+                  />
                   {context ? (
                     <Action
                       icon="remove-circle-outline"
@@ -540,42 +534,36 @@ export function SongMenuSheet() {
                       onPress={removeFromList}
                     />
                   ) : null}
-                  {menu.playNext ? (
-                    <Action
-                      icon="play-forward-outline"
-                      label={t('Play next')}
-                      onPress={() => {
-                        playNext(song);
-                        toast(t('Playing next'));
-                        close();
-                      }}
-                    />
-                  ) : null}
-                  {menu.queue ? (
-                    <Action
-                      icon="list-outline"
-                      label={t('Add to queue')}
-                      onPress={() => {
-                        addToQueue(song);
-                        toast(t('Added to queue'));
-                        close();
-                      }}
-                    />
-                  ) : null}
-                  {menu.favorite ? (
-                    <Action
-                      icon={favorited ? 'heart' : 'heart-outline'}
-                      label={favorited ? t('Remove from favorites') : t('Add to favorites')}
-                      onPress={() => {
-                        (favorited ? unstar(song.id) : star(song.id))
-                          .then(() => applyStarChange('song', song.id, !favorited, song))
-                          .catch(resyncFavorites);
-                        toast(favorited ? t('Removed from favorites') : t('Added to favorites'));
-                        close();
-                      }}
-                    />
-                  ) : null}
-                  {menu.album && (song.albumId || song.album) ? (
+                  <Action
+                    icon="play-forward-outline"
+                    label={t('Play next')}
+                    onPress={() => {
+                      playNext(song);
+                      toast(t('Playing next'));
+                      close();
+                    }}
+                  />
+                  <Action
+                    icon="list-outline"
+                    label={t('Add to queue')}
+                    onPress={() => {
+                      addToQueue(song);
+                      toast(t('Added to queue'));
+                      close();
+                    }}
+                  />
+                  <Action
+                    icon={favorited ? 'heart' : 'heart-outline'}
+                    label={favorited ? t('Remove from favorites') : t('Add to favorites')}
+                    onPress={() => {
+                      (favorited ? unstar(song.id) : star(song.id))
+                        .then(() => applyStarChange('song', song.id, !favorited, song))
+                        .catch(resyncFavorites);
+                      toast(favorited ? t('Removed from favorites') : t('Added to favorites'));
+                      close();
+                    }}
+                  />
+                  {song.albumId || song.album ? (
                     <Action
                       icon="disc-outline"
                       label={t('Go to album')}
@@ -588,7 +576,7 @@ export function SongMenuSheet() {
                       }}
                     />
                   ) : null}
-                  {menu.artist && (song.artistId || song.artist) ? (
+                  {song.artistId || song.artist ? (
                     <Action
                       icon="person-outline"
                       label={t('Go to artist')}
@@ -608,7 +596,7 @@ export function SongMenuSheet() {
                       }}
                     />
                   ) : null}
-                  {menu.download && downloaded ? (
+                  {downloaded ? (
                     <Action
                       icon="arrow-down-circle-outline"
                       label={t('Remove download')}
@@ -616,7 +604,7 @@ export function SongMenuSheet() {
                       // to delete on the spot (#48).
                       onPress={() => setConfirmDelete(true)}
                     />
-                  ) : menu.download && !offline && !song.url ? (
+                  ) : !offline && !song.url ? (
                     <Action
                       icon="download-outline"
                       label={t('Download')}
@@ -632,14 +620,14 @@ export function SongMenuSheet() {
                       time, data and a size worth warning about. That one is two
                       steps, Download and then Export, and both say what they
                       are (#57). */}
-                  {menu.export && downloaded ? (
+                  {downloaded ? (
                     <Action
                       icon="save-outline"
                       label={t('Export')}
                       onPress={() => setMode('export')}
                     />
                   ) : null}
-                  {menu.lyrics && showLyrics ? (
+                  {showLyrics ? (
                     <Action
                       icon="mic-outline"
                       label={t('Lyrics')}
@@ -648,7 +636,7 @@ export function SongMenuSheet() {
                   ) : null}
                   {/* Online only (similar songs are found by the server) and not for
                       stations (`url`), which have no "similar". */}
-                  {menu.mix && !offline && !song.url ? (
+                  {!offline && !song.url ? (
                     <Action
                       icon="sparkles-outline"
                       label={t('Start mix')}
@@ -672,13 +660,13 @@ export function SongMenuSheet() {
                   {/* Rate (Subsonic setRating): non-Jellyfin server account and not
                       radio. Offline is recorded and uploaded on reconnect (the local
                       profile has no account, so it doesn't appear there). */}
-                  {menu.rating && !!auth && serverType !== 'jellyfin' && !song.url ? (
+                  {!!auth && serverType !== 'jellyfin' && !song.url ? (
                     <Action icon="star-outline" label={t('Rate')} onPress={() => setMode('rating')} />
                   ) : null}
                   {/* Only with a server that mints share links (`useCanShare`),
                       and never for a station: its `url` is not the server's to
                       share. */}
-                  {menu.share && canShare && !song.url ? (
+                  {canShare && !song.url ? (
                     <Action
                       icon="share-social-outline"
                       label={t('Share')}
@@ -688,32 +676,28 @@ export function SongMenuSheet() {
                       }}
                     />
                   ) : null}
-                  {menu.sleepTimer ? (
-                    <Action
-                      icon="moon-outline"
-                      label={
-                        sleepEndsAt
-                          ? t('Sleep timer ({n} min left)', { n: minutesLeft(sleepEndsAt) })
-                          : sleepAtSongEnd
-                            ? t('Sleep timer (end of song)')
-                            : t('Sleep timer')
-                      }
-                      onPress={() => setMode('sleep')}
-                    />
-                  ) : null}
-                  {menu.info ? (
-                    <Action
-                      icon="information-circle-outline"
-                      label={t('Song information')}
-                      onPress={() => {
-                        // The song travels with the action: the sheet is not
-                        // going to ask the server for it again, and offline
-                        // there would be nobody to ask.
-                        useSongInfo.getState().open(song);
-                        close();
-                      }}
-                    />
-                  ) : null}
+                  <Action
+                    icon="moon-outline"
+                    label={
+                      sleepEndsAt
+                        ? t('Sleep timer ({n} min left)', { n: minutesLeft(sleepEndsAt) })
+                        : sleepAtSongEnd
+                          ? t('Sleep timer (end of song)')
+                          : t('Sleep timer')
+                    }
+                    onPress={() => setMode('sleep')}
+                  />
+                  <Action
+                    icon="information-circle-outline"
+                    label={t('Song information')}
+                    onPress={() => {
+                      // The song travels with the action: the sheet is not
+                      // going to ask the server for it again, and offline
+                      // there would be nobody to ask.
+                      useSongInfo.getState().open(song);
+                      close();
+                    }}
+                  />
                 </ScrollView>
               )}
             </View>
@@ -776,8 +760,8 @@ const styles = themed((colors) => ({
     width: '100%',
     maxWidth: SHEET_MAX_WIDTH,
     backgroundColor: colors.surface,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    borderTopLeftRadius: radius.xxl,
+    borderTopRightRadius: radius.xxl,
     paddingHorizontal: spacing.lg,
     // Smaller than the old spacing.lg because the grabber below already brings
     // its own margin: together they add up to the same top gap as before.
@@ -789,7 +773,7 @@ const styles = themed((colors) => ({
     alignSelf: 'center',
     width: 36,
     height: 4,
-    borderRadius: 2,
+    borderRadius: radius.pill,
     backgroundColor: colors.textMuted,
     opacity: 0.5,
     marginBottom: spacing.md,

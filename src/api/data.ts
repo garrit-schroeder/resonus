@@ -199,13 +199,21 @@ export function coverArtUrl(id: string | undefined, _size?: number): string | un
 /**
  * The cover for one song, which is not always the same picture offline.
  *
- * Online a song's own art wins, because on a compilation or a live take it is
- * the one that belongs to the track. Offline that art is usually nothing: on a
- * server that gives every track its own cover id, nothing on this phone was
- * ever saved under it. What was saved is the album's, both by a download and
- * by the mirror, so offline the album's is what gets asked for. A picture from
- * the right record beats a grey square, which is what the rows of a playlist
- * were showing.
+ * A song's own art wins where there is any, because on a compilation or a live
+ * take it is the one that belongs to the track. Offline the question is not
+ * which picture is better but which one is here: asking for art that was never
+ * saved draws a grey square, and that is what the rows of a playlist used to
+ * show. So offline the song's own is preferred only once this phone is known to
+ * have it, and the album's is what stands in when it does not.
+ *
+ * Which pulls the two cases apart, and they were one before (#214). A download
+ * saves a track's own picture and files the song under it (`downloadTrackArt`),
+ * so the track that has a sleeve of its own shows it with no connection. The
+ * mirror never saved one and still holds the server's id, which resolves to
+ * nothing here, so those keep the album's exactly as they did.
+ *
+ * The test is `Local.coverUrl`, which is a map lookup rather than a look at the
+ * disk, and it is the same one `coverArtUrl` is about to make anyway.
  *
  * A station has no album to fall back to, and its `url` is what says so.
  */
@@ -214,7 +222,9 @@ export function songCoverUrl(
   size?: number,
 ): string | undefined {
   const album = song.url ? undefined : song.albumId;
-  return coverArtUrl(isOffline() ? (album ?? song.coverArt) : (song.coverArt ?? album), size);
+  if (!isOffline()) return coverArtUrl(song.coverArt ?? album, size);
+  const here = song.coverArt && Local.coverUrl(song.coverArt) ? song.coverArt : undefined;
+  return coverArtUrl(here ?? album ?? song.coverArt, size);
 }
 
 /**
@@ -254,14 +264,44 @@ export function getAlbumList(type: Subsonic.AlbumListType = 'newest', size?: num
   if (isOffline()) return Local.getAlbumList(type, size, offset);
   const a = auth();
   const ids = enabledFolderIds(a);
-  const page = !ids
-    ? Subsonic.getAlbumList(a, type, size, offset)
-    : ids.length === 1
-      ? Subsonic.getAlbumList(a, type, size, offset, ids[0])
-      : mergedAlbumPage(a, `albums|${type}`, type, ids, size ?? 20, offset ?? 0, (id, s, o) =>
-          Subsonic.getAlbumList(a, type, s, o, id),
-        );
+  const page =
+    type === 'byYear' && (!ids || ids.length === 1)
+      ? byYearPage(a, size ?? 20, offset ?? 0, ids?.[0])
+      : !ids
+        ? Subsonic.getAlbumList(a, type, size, offset)
+        : ids.length === 1
+          ? Subsonic.getAlbumList(a, type, size, offset, ids[0])
+          : mergedAlbumPage(a, `albums|${type}`, type, ids, size ?? 20, offset ?? 0, (id, s, o) =>
+              Subsonic.getAlbumList(a, type, s, o, id),
+            );
   return type === 'recent' ? page.then(onlyPlayed) : page;
+}
+
+/**
+ * "New releases", in the order the name promises.
+ *
+ * `getAlbumList2` sorts `byYear` by the year and nothing else, so every record
+ * released this year ties and the server settles it by album name: asking for
+ * twenty gave twenty albums off one end of the alphabet, never the twenty most
+ * recent. The window here is read once, sorted by the date the records actually
+ * came out, and the caller's page is cut from that.
+ */
+async function byYearPage(
+  a: Subsonic.SubsonicAuth,
+  size: number,
+  offset: number,
+  folderId?: string,
+): Promise<Subsonic.Album[]> {
+  const depth = Math.max(BYYEAR_WINDOW, offset + size);
+  const cacheKey = `albums|byYear|${profileKeyOf(a)}|${folderId ?? ''}|${depth}`;
+  let all = readAlbumCache<Subsonic.Album>(cacheKey);
+  if (!all) {
+    all = (
+      await fetchTopAlbums(depth, (s, o) => Subsonic.getAlbumList(a, 'byYear', s, o, folderId))
+    ).sort(byRelease);
+    writeAlbumCache(cacheKey, all);
+  }
+  return all.slice(offset, offset + size);
 }
 
 export function getAlbum(id: string): Promise<{ album: Subsonic.Album; songs: Subsonic.Song[] }> {
@@ -832,9 +872,18 @@ export function getAppearsOn(artistId: string, artistName: string): Promise<Subs
   );
 }
 
-export function getTopSongs(artist: string, count?: number): Promise<Subsonic.Song[]> {
+/**
+ * `artistId` is optional because not every caller has one: the autoplay chain
+ * works from the names of similar artists and never sees their ids. Offline
+ * there is nothing to resolve, the phone's catalog is keyed by name.
+ */
+export function getTopSongs(
+  artist: string,
+  count?: number,
+  artistId?: string,
+): Promise<Subsonic.Song[]> {
   if (isOffline()) return Local.getTopSongs(artist, count);
-  return Subsonic.getTopSongs(auth(), artist, count);
+  return Subsonic.getTopSongs(auth(), artist, count, artistId);
 }
 
 /** Songs similar to a given one (suggestions). Online only. */
@@ -1206,6 +1255,12 @@ async function mirrorStarred(): Promise<Subsonic.Starred> {
         const a = (await mirror.artistDetail(id))?.artist;
         if (a) artists = [a, ...artists];
       }
+    } else if (v.type === 'playlist') {
+      // Nowhere to put it: this list is Subsonic's, and Subsonic has no
+      // favourite playlists (see `StarType`). The entry still goes up on
+      // reconnect like any other. This only declines to guess it is a song,
+      // which is what the branch below would have done with it.
+      continue;
     } else if (!songs.some((x) => x.id === id)) {
       const song = await resolveSong(id);
       if (song) songs = [song, ...songs];
@@ -1255,6 +1310,13 @@ export function unstar(id: string, type?: Subsonic.StarType): Promise<void> {
 export async function flushOfflineQueue(auth: Subsonic.SubsonicAuth): Promise<void> {
   const q = useOfflineQueue.getState();
   await q.load();
+  // Read the outbox through this, never off `q`: `getState()` hands back a
+  // snapshot of the moment it was called, and both the load above and the
+  // repair below replace it. Read off the snapshot taken on the way in, a
+  // flush that had just read the file uploaded what was in memory before it,
+  // which on a cold start is an empty queue. The actions are safe to keep,
+  // they go through the store themselves.
+  const data = () => useOfflineQueue.getState().data;
 
   // Settle a possible id migration BEFORE anything goes up.
   //
@@ -1278,7 +1340,7 @@ export async function flushOfflineQueue(auth: Subsonic.SubsonicAuth): Promise<vo
   }
 
   // Favorites.
-  const favs = q.data.favs ?? {};
+  const favs = data().favs ?? {};
   const favFailed: [string, { type: Subsonic.StarType; starred: boolean }][] = [];
   for (const [id, op] of Object.entries(favs)) {
     try {
@@ -1294,7 +1356,7 @@ export async function flushOfflineQueue(auth: Subsonic.SubsonicAuth): Promise<vo
   }
 
   // Ratings.
-  const ratings = q.data.ratings ?? {};
+  const ratings = data().ratings ?? {};
   const ratingFailed: [string, number][] = [];
   for (const [id, rating] of Object.entries(ratings)) {
     try {
@@ -1312,7 +1374,8 @@ export async function flushOfflineQueue(auth: Subsonic.SubsonicAuth): Promise<vo
   // lands where it belongs in the server's history (and in Last.fm) instead of
   // arriving all at once the moment the phone finds the network. Sent oldest
   // first, and only what actually arrived is taken off the queue.
-  const plays = q.data.plays ?? [];
+  const plays = data().plays ?? [];
+  bump('outbox · plays queued', plays.length);
   const sent: PlayOp[] = [];
   let refused = 0;
   for (const play of plays) {
@@ -1323,7 +1386,11 @@ export async function flushOfflineQueue(auth: Subsonic.SubsonicAuth): Promise<vo
     } catch (e) {
       // Out of network again: the ones behind would each wait out a timeout to
       // learn the same thing. They keep their turn for the next reconnection.
-      if (e instanceof Subsonic.SubsonicRequestError && e.network) break;
+      if (e instanceof Subsonic.SubsonicRequestError && e.network) {
+        bump('outbox · plays no network');
+        break;
+      }
+      bump('outbox · plays refused');
       // The server answered and turned this one down, which is usually about
       // that listen alone (a song no longer on the server), so it doesn't get
       // to hold up the rest. Several in a row is the server or the session
@@ -1332,11 +1399,12 @@ export async function flushOfflineQueue(auth: Subsonic.SubsonicAuth): Promise<vo
       if (++refused >= 5) break;
     }
   }
+  bump('outbox · plays sent', sent.length);
   if (sent.length > 0) q.removePlays(sent);
 
   // Playlists. Rewrites the final state of each one (create/delete/rename +
   // full tracklist via reorderPlaylist, which avoids index juggling).
-  const playlists = q.data.playlists ?? {};
+  const playlists = data().playlists ?? {};
   const plFailed: [string, QueuePlaylist][] = [];
   for (const [id, edit] of Object.entries(playlists)) {
     try {
@@ -1683,6 +1751,17 @@ function dedupeById<T extends { id: string }>(items: T[]): T[] {
  */
 const MERGE_DEPTH = 100;
 
+/**
+ * How deep "New releases" reads before deciding which records are the newest.
+ *
+ * It has to cover a whole year of the library, because that is the granularity
+ * the server sorts at: anything short of it is still a slice of the alphabet.
+ * One request either way (the endpoint caps a page at 500), so what this really
+ * buys is fewer albums to parse on the JS thread, which is the part that was
+ * costing on Home (#50).
+ */
+const BYYEAR_WINDOW = 250;
+
 // ── Library sizes (for the random pool) ──
 //
 // The API has no count of its own, but `getArtists` carries `albumCount` per
@@ -1812,18 +1891,50 @@ async function fetchTopAlbums(
 
 /** Album field each list type is really ordered by, when the server sends it. */
 const ALBUM_SORT_FIELD: Partial<
-  Record<Subsonic.AlbumListType, 'created' | 'played' | 'playCount'>
+  Record<Subsonic.AlbumListType, 'created' | 'played' | 'playCount' | 'year'>
 > = {
   newest: 'created',
   recent: 'played',
   frequent: 'playCount',
 };
 
+/**
+ * The release date as one comparable number (YYYYMMDD), or -Infinity when the
+ * record does not say.
+ *
+ * A record released this March and one released this November are the same
+ * `year`, which is the only thing `getAlbumList2` sorts by: the server breaks
+ * that tie with the album name, so "New releases" came out as a slice of the
+ * alphabet. The day is in the answer already (OpenSubsonic), and this is what
+ * reads it.
+ */
+function releaseValue(album: Subsonic.Album): number {
+  const d = album.originalReleaseDate ?? album.releaseDate;
+  if (d?.year) return d.year * 10000 + (d.month ?? 0) * 100 + (d.day ?? 0);
+  return album.year != null ? album.year * 10000 : -Infinity;
+}
+
+/**
+ * Newest release first, and the most recently added of those that came out the
+ * same day.
+ *
+ * Plenty of libraries carry no more than a year per record, and every one of
+ * them ties: leaving that tie to the server is what put the alphabet on a shelf
+ * that promises new music. Of the two things left to go on, when it was added
+ * is the one that tracks what someone would call new; it only ever decides
+ * between records of the same date, so the year still comes first.
+ */
+function byRelease(a: Subsonic.Album, b: Subsonic.Album): number {
+  const diff = releaseValue(b) - releaseValue(a);
+  if (diff) return Number.isNaN(diff) ? 0 : diff;
+  return albumSortValue(b, 'created') - albumSortValue(a, 'created') || 0;
+}
+
 /** The field as a number (dates become timestamps) to sort descending by.
  *  Missing sinks to the bottom instead of jumping to the top. */
 function albumSortValue(
   album: Subsonic.Album,
-  field: 'created' | 'played' | 'playCount',
+  field: 'created' | 'played' | 'playCount' | 'year',
 ): number {
   const v = album[field];
   if (v == null) return -Infinity;
@@ -1863,6 +1974,7 @@ function mergeAlbums(perFolder: Subsonic.Album[][], type: Subsonic.AlbumListType
   // shuffling a pool built with the same amount from each, which is why the
   // pool comes weighted by library size (see `randomDepths`).
   if (type === 'random') return shuffled(all);
+  if (type === 'byYear') return all.sort(byRelease);
   const field = ALBUM_SORT_FIELD[type];
   if (field && all.some((al) => al[field] != null)) {
     return all.sort((a, b) => {
@@ -1909,7 +2021,12 @@ async function mergedAlbumPage(
   // every shelf, on every cold start. On Home that was six requests of a
   // hundred albums each, per shelf, to put twenty on screen, and all of it
   // parsed on the JS thread.
-  const depth = offset === 0 ? size : Math.ceil((offset + size) / MERGE_DEPTH) * MERGE_DEPTH;
+  const depth = Math.max(
+    offset === 0 ? size : Math.ceil((offset + size) / MERGE_DEPTH) * MERGE_DEPTH,
+    // "New releases" is sorted here, not by the server, so each library has to
+    // hand over enough of its newest year for that sort to mean anything.
+    type === 'byYear' ? BYYEAR_WINDOW : 0,
+  );
   const cacheKey = `${cacheBase}|${profileKeyOf(a)}|${ids.join(',')}|${depth}`;
   let all = readAlbumCache<Subsonic.Album>(cacheKey);
   if (!all) {

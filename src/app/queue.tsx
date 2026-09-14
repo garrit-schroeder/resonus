@@ -1,12 +1,19 @@
 /**
- * Spotify-style playback queue, in sections:
+ * Playback queue, in sections:
  *   · Previous — what is behind the cursor (optional setting).
  *   · Now playing — the current song.
- *   · Next up — manually added items (`queuedCount` block).
+ *   · Next in queue — what "Play next" put straight after it.
  *   · Next from: {source} — the rest of what was playing.
+ *   · At the end of the queue — what "Add to queue" put after everything.
  * Every row can be dragged and removed, the one playing included (#157).
- * Section headers are derived from the position, so they reposition themselves
- * on reorder.
+ *
+ * The sections come from the marks the songs carry, not from where they sit.
+ * `queuedCount` used to draw the line, and it is dissolved the moment you tap
+ * a song instead of letting the queue reach it: after that the songs somebody
+ * had added were sitting under "Next from <album>", which named a record none
+ * of them came from (#184). A mark travels with the song, so it survives the
+ * jump — and it survives a reorder too, which is what keeps the headers where
+ * they belong when a row is dragged.
  */
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useRouter } from 'expo-router';
@@ -16,11 +23,12 @@ import ReorderableList, {
   useReorderableDrag,
   type ReorderableListReorderEvent,
 } from 'react-native-reorderable-list';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { COVER, songCoverUrl } from '@/api/data';
 import { type Song } from '@/api/subsonic';
 import { Cover } from '@/components/Cover';
+import { PlayingBars } from '@/components/PlayingBars';
 import { Dialog } from '@/components/Dialog';
 import { EmptyState } from '@/components/EmptyState';
 import { ExplicitBadge, useExplicitBadge } from '@/components/ExplicitBadge';
@@ -30,6 +38,7 @@ import { songsLabel, useT } from '@/i18n';
 import { formatTotalDuration } from '@/lib/format';
 import { haptic } from '@/lib/haptics';
 import { listPerf } from '@/lib/listPerf';
+import { useAuthStore } from '@/store/auth';
 import { mixSeedOf, SOURCE_FAVORITES, SOURCE_HISTORY, usePlayerStore } from '@/store/player';
 import { usePlaylistPicker } from '@/store/playlistPicker';
 import { useSettings } from '@/store/settings';
@@ -118,7 +127,7 @@ function QueueRow({
       </Pressable>
 
       <View style={styles.actions}>
-        {current ? <Ionicons name="volume-medium" size={20} color={colors.accent} /> : null}
+        {current ? <PlayingBars size={18} /> : null}
         <Pressable hitSlop={6} onPress={() => void remove()}>
           <Ionicons name="close" size={22} color={colors.textSecondary} />
         </Pressable>
@@ -140,13 +149,16 @@ export default function QueueScreen() {
   const router = useRouter();
   const queue = usePlayerStore((s) => s.queue);
   const index = usePlayerStore((s) => s.index);
-  const queuedCount = usePlayerStore((s) => s.queuedCount);
   const source = usePlayerStore((s) => s.source);
   const mixSeed = usePlayerStore(mixSeedOf);
   const moveTrack = usePlayerStore((s) => s.moveTrack);
   const clearQueue = usePlayerStore((s) => s.clearQueue);
   const radioMode = usePlayerStore((s) => s.radioMode);
   const stopRadio = usePlayerStore((s) => s.stopRadio);
+  const restoreFromServer = usePlayerStore((s) => s.restoreFromServer);
+  // The server's copy is only there for an account with a connection: a local
+  // profile has no server, and offline there is nobody to ask.
+  const hasServerQueue = useAuthStore((s) => !!s.auth && !s.offline);
   // Subscribed, not read straight off `colors`: a stack keeps this screen
   // mounted while you are elsewhere, so without this it would keep the accent
   // and the appearance it was last painted in.
@@ -155,6 +167,10 @@ export default function QueueScreen() {
   const [confirmClear, setConfirmClear] = useState(false);
   // ⋯ menu (imperative: opening/closing doesn't re-render the screen).
   const menuRef = useRef<() => void>(() => {});
+  const insets = useSafeAreaInsets();
+  // Inside a full-screen modal iOS reports no top inset, and the close
+  // button would sit against the edge.
+  const topPad = insets.top > 0 ? insets.top : 12;
 
   const showPrevious = useSettings((s) => s.showPlayedInQueue);
   const current = queue[index] ?? null;
@@ -202,42 +218,48 @@ export default function QueueScreen() {
         ? t('History')
         : source;
   const contextHeader = sourceName ? t('Next from {name}', { name: sourceName }) : null;
-  // Where that mix begins, while it is still ahead: the source above holds
-  // until there and the block gets a header of its own, named after the song
-  // it was grown from (the one right before it). In a radio there is nothing
-  // to separate, the whole queue is the mix.
-  const mixStart = radioMode ? -1 : queue.findIndex((s) => s.fromMix);
-  const mixHeader =
-    mixStart > 0 && mixStart > index
-      ? t('Next from {name}', {
-          name: t('Mix of “{name}”', { name: queue[mixStart - 1].title }),
-        })
-      : null;
+  /**
+   * Where a song ahead of the cursor came from, which is what decides its
+   * section. In a radio the whole queue is the mix and there is nothing to
+   * separate, so nothing carries the mark there either.
+   */
+  type Kind = 'queued' | 'mix' | 'source';
+  const kindOf = (i: number): Kind =>
+    queue[i]?.queued ? 'queued' : queue[i]?.fromMix ? 'mix' : 'source';
 
   /**
    * Section header for the row at queue position `abs` (or null).
    *
-   * Headers live inside the rows, not as items of their own. That's why the
-   * list has no `itemLayoutAnimation`: when a track ends every row shifts, the
-   * one that carried the header loses it and another grows one, so animating
-   * row layout animated rows changing height and read as the list rebuilding
-   * itself. Making them real items would mean remapping the drag-to-reorder
-   * indices around them.
+   * Only the first row of each run gets one, so a header appears exactly where
+   * the queue changes hands. Headers live inside the rows, not as items of
+   * their own. That's why the list has no `itemLayoutAnimation`: when a track
+   * ends every row shifts, the one that carried the header loses it and
+   * another grows one, so animating row layout animated rows changing height
+   * and read as the list rebuilding itself. Making them real items would mean
+   * remapping the drag-to-reorder indices around them.
    */
   const headerFor = (abs: number): string | null => {
     if (abs === start && start < index) return t('Previous::queue');
     if (abs === index) return t('Now playing');
-    if (queuedCount > 0 && abs === index + 1) return t('Next in queue');
-    // Before the source's: with the queue ending right where the mix starts,
-    // both fall on the same row and the one that still applies below it is
-    // this one.
-    if (mixHeader && abs === mixStart) return mixHeader;
-    if (abs === index + 1 + queuedCount && contextHeader) return contextHeader;
-    return null;
+    if (abs < index) return null;
+    const kind = kindOf(abs);
+    if (abs > index + 1 && kindOf(abs - 1) === kind) return null;
+    if (kind === 'queued') {
+      // Straight after the current song it is what "Play next" leaves; anywhere
+      // further along, what "Add to queue" left at the end (#184).
+      return abs === index + 1 ? t('Next in queue') : t('At the end of the queue');
+    }
+    if (kind === 'mix') {
+      // Named after the song it was grown from, which is the one before it.
+      return t('Next from {name}', {
+        name: t('Mix of “{name}”', { name: queue[abs - 1]?.title ?? '' }),
+      });
+    }
+    return contextHeader;
   };
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
+    <View style={[styles.safe, { paddingTop: topPad, paddingBottom: insets.bottom }]}>
       <View style={styles.header}>
         <Pressable hitSlop={12} onPress={() => router.back()}>
           <Ionicons name="chevron-down" size={28} color={colors.text} />
@@ -348,20 +370,41 @@ export default function QueueScreen() {
 
       <SheetModal openRef={menuRef}>
         {(close) => (
-          <Pressable
-            style={({ pressed }) => [styles.action, pressed && { opacity: 0.6 }]}
-            onPress={() => {
-              close();
-              const q = usePlayerStore.getState().queue;
-              if (q.length > 0) usePlaylistPicker.getState().open(q);
-            }}
-          >
-            <Ionicons name="add" size={24} color={colors.text} />
-            <Text style={styles.actionText}>{t('Add to a playlist')}</Text>
-          </Pressable>
+          <>
+            <Pressable
+              style={({ pressed }) => [styles.action, pressed && { opacity: 0.6 }]}
+              onPress={() => {
+                close();
+                const q = usePlayerStore.getState().queue;
+                if (q.length > 0) usePlaylistPicker.getState().open(q);
+              }}
+            >
+              <Ionicons name="add" size={24} color={colors.text} />
+              <Text style={styles.actionText}>{t('Add to a playlist')}</Text>
+            </Pressable>
+            {/* The queue is pushed to the server as it changes, but what comes
+                back is only read when this device has none of its own: the copy
+                here is the faithful one and replacing it behind somebody's back
+                is not a thing to do on its own. This is that decision, taken by
+                hand — the queue left on another player, brought over. */}
+            {hasServerQueue ? (
+              <Pressable
+                style={({ pressed }) => [styles.action, pressed && { opacity: 0.6 }]}
+                onPress={() => {
+                  close();
+                  void restoreFromServer(true).then((found) => {
+                    toast(found ? t('Queue brought over') : t('The server has no saved queue'));
+                  });
+                }}
+              >
+                <Ionicons name="cloud-download-outline" size={24} color={colors.text} />
+                <Text style={styles.actionText}>{t("Get the server's queue")}</Text>
+              </Pressable>
+            ) : null}
+          </>
         )}
       </SheetModal>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -393,7 +436,7 @@ const styles = themed((colors) => ({
   headerAction: { width: 28, alignItems: 'center' },
   headerTitle: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
   headerSub: { color: colors.textSecondary, fontSize: fontSize.xs, marginTop: 2 },
-  list: { flexGrow: 1, paddingBottom: spacing.xl },
+  list: { flexGrow: 1, paddingBottom: spacing.sm },
   emptyWrap: { flex: 1, justifyContent: 'center' },
   sectionHeader: {
     color: colors.textSecondary,
