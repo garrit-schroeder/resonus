@@ -200,16 +200,6 @@ export type GridKey =
  */
 export type GridSizeKey = GridKey | `${GridKey}:wide`;
 
-/**
- * How a grid is remembered on a big screen, which is not the same answer.
- *
- * Three columns is a comfortable phone grid and a wall of stamps across a
- * tablet, and the number that is right there is right nowhere else, so the two
- * are stored apart: the choice made on a phone survives being taken to a
- * tablet and back (#131).
- */
-export type GridSizeKey = GridKey | `${GridKey}:wide`;
-
 /** Exactly what each grid looked like before it could be chosen, so nothing
  *  moves for anybody who never opens the menu. */
 export const GRID_DEFAULT_COLUMNS: Record<GridKey, number> = {
