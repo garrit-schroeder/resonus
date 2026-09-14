@@ -2,12 +2,12 @@
 import { create } from 'zustand';
 
 import { isLanguage, LANGUAGE_NAMES, type Language } from '@/i18n/languages';
-import { type TabSegment } from '@/lib/tabOrigin';
 import { hashKey } from '@/lib/localLibrary';
 import { setPerfEnabled } from '@/lib/perfLog';
 import { profileScopeGuard } from '@/lib/profileScope';
 import { queryClient } from '@/lib/query';
 import { getItem, setItem } from '@/lib/storage';
+import { type TabSegment } from '@/lib/tabOrigin';
 import {
   applyAccents,
   applyThemePreference,
