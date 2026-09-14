@@ -74,6 +74,10 @@ export interface LocalCatalog {
 /** In-memory cache, keyed by source. */
 const catalogCache = new Map<string, LocalCatalog>();
 
+/** Sources whose database is scanned, keyed up and in the cover index. Emptied
+ *  alongside the index it stands for (see `clearLocalCatalog`). */
+const ready = new Set<string>();
+
 function cacheKey(sourceMode: string, uri?: string): string {
   return uri ? `${sourceMode}:${uri}` : sourceMode;
 }
@@ -87,6 +91,29 @@ function cacheKey(sourceMode: string, uri?: string): string {
  * from being swamped: each read can bring back a cover of up to ~2 MB.
  */
 const SCAN_CONCURRENCY = 8;
+
+/**
+ * Where a scan gives up, which is not meant to be a size of library.
+ *
+ * There used to be five thousand here, and it was the wrong shape of limit: it
+ * applies per folder, so anybody who hit it could have the rest of their music
+ * by splitting it in two and adding the second folder. A limit somebody works
+ * around by rearranging their disk is not protecting anything — it is asking
+ * them to organise their library around the app.
+ *
+ * What is left is a guard against a runaway: pointing the scan at the root of a
+ * card full of everything, where the array grows for as long as the walk does.
+ * No music library reaches it. A big one is slower on every list all the same,
+ * because the local profile sorts and searches its catalog in JavaScript, and
+ * the answer to that is the database the server's downloads already use, not a
+ * number here.
+ */
+const MAX_SCAN_SONGS = 100_000;
+
+/** Notes in Diagnostics that a scan gave up rather than reaching the end. */
+function noteCapped(): void {
+  bump('local scan · hit the song cap');
+}
 
 /** Runs `worker` over `items` with at most `limit` of them in flight at once. */
 async function mapPool<T, R>(
@@ -315,7 +342,7 @@ export function hashKey(s: string): string {
 }
 
 /** A readable folder name out of its SAF URI, without the [year] prefix. */
-function folderNameFromUri(dirUri: string): string {
+export function folderNameFromUri(dirUri: string): string {
   const decoded = decodeURIComponent(dirUri);
   const last = (decoded.split('/').pop() ?? decoded).split(':').pop() ?? decoded;
   return last.replace(/^\[\d{4}\]\s*/, '').trim() || last;
@@ -572,7 +599,7 @@ export async function loadDeviceSongs(): Promise<Song[]> {
   try {
     let after: string | undefined;
     let hasNext = true;
-    while (hasNext && rawSongs.length < 5000) {
+    while (hasNext && rawSongs.length < MAX_SCAN_SONGS) {
       const page = await MediaLibrary.getAssetsAsync({
         // Lower case: `MediaType` here is the legacy object of string values,
         // not the new API's enum, which spells the same value `AUDIO`.
@@ -597,6 +624,7 @@ export async function loadDeviceSongs(): Promise<Song[]> {
       after = page.endCursor;
       hasNext = page.hasNextPage;
     }
+    if (hasNext) noteCapped();
 
     useScanProgress.getState().start(rawSongs.length);
     const bump = progressBumper(rawSongs.length);
@@ -626,7 +654,7 @@ export async function loadDeviceSongs(): Promise<Song[]> {
   }
 
   catalogCache.set(key, catalog);
-  void saveCatalogToDisk('device', undefined, catalog);
+  await saveCatalogToDisk('device', undefined, catalog);
   return songs;
 }
 
@@ -637,20 +665,116 @@ export async function pickFolder(): Promise<string | null> {
   return res.granted ? res.directoryUri : null;
 }
 
-export async function loadFolderSongs(treeUri: string): Promise<Song[]> {
-  const key = cacheKey('folder', treeUri);
+/**
+ * The key a set of folders is cached under. Sorted, so the same folders picked
+ * in a different order are the same catalog, and a single folder keys exactly
+ * as it did when there could only be one: the catalogs already on disk stay
+ * valid.
+ */
+export function folderSetKey(uris: string[]): string {
+  return [...uris].sort().join('|');
+}
+
+/**
+ * The music under a set of chosen folders.
+ *
+ * Each folder is scanned and cached on its own, and the merge of them is cached
+ * under the key of the set. That is what makes adding a folder read the tags of
+ * the new one only, instead of the whole library again.
+ */
+export async function loadFolderSongs(uris: string[]): Promise<Song[]> {
+  if (uris.length === 0) return [];
+  const setKey = folderSetKey(uris);
+  const key = cacheKey('folder', setKey);
   const cached = catalogCache.get(key);
   if (cached) return cached.songs;
-  const disk = await loadCatalogFromDisk('folder', treeUri);
+  const disk = await loadCatalogFromDisk('folder', setKey);
   if (disk) {
     catalogCache.set(key, disk);
     return disk.songs;
   }
+  if (uris.length === 1) return (await scanFolder(uris[0])).songs;
 
+  let catalog: LocalCatalog;
+  // The indicator stays up across the lot: each folder closing its own would
+  // blink it off between them.
+  try {
+    const perFolder: LocalCatalog[] = [];
+    for (const uri of uris) perFolder.push(await catalogForFolder(uri));
+    catalog = mergeCatalogs(perFolder);
+    // The pieces are on disk and the merge is what the app reads from now on:
+    // holding both would be every album and artist twice in memory.
+    for (const uri of uris) catalogCache.delete(cacheKey('folder', uri));
+  } finally {
+    useScanProgress.getState().done();
+  }
+  catalogCache.set(key, catalog);
+  // Awaited, unlike before: what reads the catalog now is the database, and a
+  // write still in flight is a library that is briefly not there.
+  await saveCatalogToDisk('folder', setKey, catalog);
+  return catalog.songs;
+}
+
+/**
+ * The folders' catalogs as one.
+ *
+ * The albums are regrouped rather than concatenated, because one album can sit
+ * in two of the chosen folders and it is still one album. The covers are the
+ * only thing that cannot be worked out again from here: a scanned song has had
+ * its artwork stripped by then (see `buildCatalog`), so each album takes the
+ * `coverUri` its own folder already resolved, which is also what saves reading
+ * every cover on disk a second time.
+ */
+function mergeCatalogs(perFolder: LocalCatalog[]): LocalCatalog {
+  // By id, which is the file's own URI: choosing a folder inside another one is
+  // a reasonable thing to do by accident and would otherwise show every song in
+  // it twice.
+  const seen = new Set<string>();
+  const songs = perFolder
+    .flatMap((c) => c.songs)
+    .filter((song) => {
+      if (seen.has(song.id)) return false;
+      seen.add(song.id);
+      return true;
+    });
+  songs.sort((a, b) => a.title.localeCompare(b.title));
+  const covers = new Map<string, string>();
+  for (const c of perFolder) {
+    for (const album of c.albums) if (album.coverUri) covers.set(album.id, album.coverUri);
+  }
+  const albums = groupByAlbum(songs);
+  for (const album of albums) album.coverUri = album.coverUri ?? covers.get(album.id);
+  const artists = groupByArtist(albums);
+  for (const a of albums) registerCover(a.id, a.coverUri);
+  for (const a of artists) registerCover(a.id, a.coverUri);
+  return { songs, albums, artists };
+}
+
+/** One folder's catalog: whatever is already cached for it, or a fresh scan. */
+async function catalogForFolder(uri: string): Promise<LocalCatalog> {
+  const cached = catalogCache.get(cacheKey('folder', uri));
+  if (cached) return cached;
+  const disk = await loadCatalogFromDisk('folder', uri);
+  if (disk) {
+    catalogCache.set(cacheKey('folder', uri), disk);
+    return disk;
+  }
+  return scanFolder(uri, false);
+}
+
+/**
+ * Walks one folder over SAF and reads the tags of what it finds. `closeWhenDone`
+ * is false when it is one folder of several: the caller owns the indicator then.
+ */
+async function scanFolder(treeUri: string, closeWhenDone = true): Promise<LocalCatalog> {
+  const key = cacheKey('folder', treeUri);
   const rawSongs: { id: string; filename: string; uri: string; dirUri: string }[] = [];
 
   async function walk(dirUri: string, depth: number): Promise<void> {
-    if (depth > 6 || rawSongs.length >= 5000) return;
+    // Ten deep, for the same reason: Genre/Artist/Album/Disc is five before
+    // anybody has done anything unusual, and a folder that falls outside is
+    // music that silently is not there.
+    if (depth > 10 || rawSongs.length >= MAX_SCAN_SONGS) return;
     let entries: string[];
     try {
       entries = await StorageAccessFramework.readDirectoryAsync(dirUri);
@@ -679,6 +803,7 @@ export async function loadFolderSongs(treeUri: string): Promise<Song[]> {
   let catalog: LocalCatalog;
   try {
     await walk(treeUri, 0);
+    if (rawSongs.length >= MAX_SCAN_SONGS) noteCapped();
 
     useScanProgress.getState().start(rawSongs.length);
     const bump = progressBumper(rawSongs.length);
@@ -696,7 +821,8 @@ export async function loadFolderSongs(treeUri: string): Promise<Song[]> {
       if (mtime) base.addedAt = mtime;
       // In folder mode each subfolder is an album, which is the most reliable
       // reading of it. Loose files at the chosen root group by their album tag
-      // instead, a single being the usual case.
+      // instead, a single being the usual case. The root is this folder's own,
+      // so a file loose in one of them is not filed under another.
       if (raw.dirUri !== treeUri) assignFolderAlbum(base, raw.dirUri, !!tags?.album);
       bump();
       return base as Song;
@@ -706,18 +832,87 @@ export async function loadFolderSongs(treeUri: string): Promise<Song[]> {
     // album, and that takes time, so the indicator has to stay up.
     catalog = await buildCatalog(songs);
   } finally {
-    useScanProgress.getState().done();
+    if (closeWhenDone) useScanProgress.getState().done();
   }
 
   catalogCache.set(key, catalog);
-  void saveCatalogToDisk('folder', treeUri, catalog);
-  return songs;
+  await saveCatalogToDisk('folder', treeUri, catalog);
+  return catalog;
 }
 
 // ── Getting at the whole catalog ───────────────────────────────────────────
 
 export function getLocalCatalog(sourceMode: string, uri?: string): LocalCatalog | undefined {
   return catalogCache.get(cacheKey(sourceMode, uri));
+}
+
+/** Which database a source's catalog is in. */
+export function localSource(sourceMode: string, uri?: string): Db.Source {
+  return { dir: CATALOG_DIR, name: dbName(sourceMode, uri) };
+}
+
+/**
+ * The current source as a database to ask, scanning it first if it has never
+ * been read.
+ *
+ * This is what the local profile leans on instead of holding its library in
+ * memory: past here the screens ask for the twenty rows they draw. The catalog
+ * the scan built is dropped as soon as it is written down, since keeping it
+ * would be the very thing this stops doing.
+ */
+export async function ensureScanned(
+  sourceMode: string,
+  uris: string[],
+): Promise<{ src: Db.Source; scanned: boolean }> {
+  const key = sourceMode === 'folder' ? folderSetKey(uris) : undefined;
+  const src = localSource(sourceMode, key);
+  // Asked once per source and not before every list a screen draws: past the
+  // first time, a query is the only round trip.
+  if (ready.has(src.name)) return { src, scanned: false };
+  if (await Db.hasSongs(src)) {
+    await fillArtistKeys(src);
+    await loadCoverIndex(src);
+    ready.add(src.name);
+    return { src, scanned: false };
+  }
+  if (sourceMode === 'folder') await loadFolderSongs(uris);
+  else await loadDeviceSongs();
+  catalogCache.delete(cacheKey(sourceMode, key));
+  await fillArtistKeys(src);
+  ready.add(src.name);
+  return { src, scanned: true };
+}
+
+/**
+ * The covers of a catalog that is on disk, into the index.
+ *
+ * A scan fills it as it goes; a catalog read back has nobody to fill it, and
+ * the songs then reach the screens with an album id that resolves to nothing.
+ * Only the albums and the artists are read, which is what the index is made of.
+ */
+async function loadCoverIndex(src: Db.Source): Promise<void> {
+  const [albums, artists] = await Promise.all([
+    Db.coverRows<LocalAlbum>(src, 'albums'),
+    Db.coverRows<LocalArtist>(src, 'artists'),
+  ]);
+  for (const a of albums) registerCover(a.id, a.coverUri);
+  for (const a of artists) registerCover(a.id, a.coverUri);
+}
+
+/**
+ * The artist id, in the column the queries look it up by.
+ *
+ * A scanned song and a scanned album carry the artist's NAME and not their id:
+ * the id is that name normalised, and it is worked out wherever it is needed
+ * (see `groupByArtist`). Nothing wrote it down, so the column it belongs in was
+ * empty and an artist's records could only be found by walking the library —
+ * which is the walk all of this is here to stop doing. It is filled once per
+ * catalog, old ones included.
+ */
+async function fillArtistKeys(src: Db.Source): Promise<void> {
+  const key = (artist: string | null) => normKey(artist || UNKNOWN_ARTIST);
+  await Db.backfillColumn(src, 'songs', 'artist_key', 'artist', key);
+  await Db.backfillColumn(src, 'albums', 'artist_key', 'artist', key);
 }
 
 // ── The cover index ───────────────────────────────────────────────────────
@@ -750,6 +945,8 @@ export function localCoverUrl(id: string | undefined): string | undefined {
 export function clearLocalCatalog(): void {
   catalogCache.clear();
   coverIndex.clear();
+  // The index is what `ready` says is loaded, so it stops being true here.
+  ready.clear();
 }
 
 // ── Keeping the catalog on disk ─────────────────────────────────────────────
@@ -876,6 +1073,7 @@ async function migrateCatalogFile(
 
 /** Deletes the catalog kept on disk, which is what scanning again does. */
 export async function clearLocalCatalogDisk(): Promise<void> {
+  ready.clear();
   try {
     // The handles first: a database whose file is deleted underneath it keeps
     // answering from a file nobody can see any more.

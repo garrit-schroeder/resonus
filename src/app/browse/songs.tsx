@@ -1,7 +1,7 @@
 /**
  * Browse the library's songs: the sibling of browsing albums and artists, with
- * the same header, the same search, the same pills in the same order and the
- * same choice of rows or a grid. Holding one starts selecting, which the other
+ * the same header, the same search, the same toolbar and the same choice of
+ * rows or a grid. Holding one starts selecting, which the other
  * two have no use for and a screen made for gathering songs does (#77).
  *
  * Which orders it offers is `songListSorts`'s to say, because the answer is the
@@ -23,7 +23,6 @@ import {
   Dimensions,
   Keyboard,
   Pressable,
-  ScrollView,
   Text,
   TextInput,
   View,
@@ -31,7 +30,6 @@ import {
 // The list must use gesture-handler so the row swipe-to-queue doesn't fight
 // the vertical scroll (with RN's FlatList the gesture is flaky).
 import { FlatList as GHFlatList } from 'react-native-gesture-handler';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { getSongList, searchSongs, songListSorts } from '@/api/data';
 import { type Song, type SongListSort } from '@/api/subsonic';
@@ -43,6 +41,7 @@ import { SelectionBar } from '@/components/SelectionBar';
 import { SongCard } from '@/components/SongCard';
 import { TrackRow } from '@/components/TrackRow';
 import { useAccent } from '@/hooks/useAccent';
+import { useSelectionMenu } from '@/hooks/useSelectionMenu';
 import { useT } from '@/i18n';
 import { haptic } from '@/lib/haptics';
 import { listPerf } from '@/lib/listPerf';
@@ -66,6 +65,8 @@ import { useGridColumns } from '@/hooks/useGridColumns';
 import { useScreenBottomPadding } from '@/hooks/useScreenBottomPadding';
 import { useListPadding } from '@/hooks/useScreenSize';
 import { BackChevron } from '@/components/BackChevron';
+import { BrowseFrame, useSearchBox, type BrowserProps } from '@/components/BrowseFrame';
+import { BrowseToolbar } from '@/components/BrowseToolbar';
 
 const PAGE = 50;
 
@@ -80,7 +81,7 @@ function cardWidth(columns: number): number {
   return (Dimensions.get('window').width - spacing.lg * 2 - GAP * (columns - 1)) / columns;
 }
 
-/** Bar height: the box (44) plus its gap to the chips below. */
+/** Bar height: the box (44) plus its gap to the row below. */
 const SEARCH_H = 44 + spacing.md;
 
 /**
@@ -102,6 +103,10 @@ const SORT_LABEL: Record<SongListSort, string> = {
 };
 
 export default function BrowseSongsScreen() {
+  return <SongsBrowser />;
+}
+
+export function SongsBrowser({ embedded, actionRef, searchOpen }: BrowserProps) {
   // Repaints on a change of appearance or accent: a stack keeps this screen
   // mounted while you are on another one, out of reach of anything else.
   useTheme();
@@ -137,8 +142,8 @@ export default function BrowseSongsScreen() {
   /**
    * Arrived at from a Home shelf, this says which one. Only the value it opens
    * on: each visit is its own screen, so there is nothing to keep in step. An
-   * order this server cannot give is ignored rather than shown as a chip that
-   * does nothing.
+   * order this server cannot give is ignored rather than offered in a menu
+   * where it would do nothing.
    */
   const { sort: sortParam } = useLocalSearchParams<{ sort?: string }>();
   const [sort, setSort] = useState<SongListSort>(
@@ -225,126 +230,142 @@ export default function BrowseSongsScreen() {
     if (sel.length > 0) fn(sel);
   }
 
-  function cancelSearch() {
+  const selectionMenu = useSelectionMenu(runSelection);
+
+  function clearSearch() {
     Keyboard.dismiss();
     setQuery('');
     setSearching(false);
     listRef.current?.scrollToOffset({ offset: 0, animated: false });
   }
 
+  // Embedded, whether the box is there is the tab's answer; on this screen it
+  // simply is.
+  const showSearch = useSearchBox(embedded, searchOpen, clearSearch);
+
+  // Embedded, the button that opens this menu is drawn by the Explore tab, in
+  // its own header: this is the way down to the menu it belongs to. Kept up to
+  // date after every render rather than during one, which is a rule the ref is
+  // not worth breaking for — it is only read from a tap, long after this.
+  useEffect(() => {
+    if (actionRef) actionRef.current = openGridMenu;
+  });
+
+  const viewButton = (
+    <Pressable
+      hitSlop={10}
+      accessibilityRole="button"
+      accessibilityLabel={t('View')}
+      onPress={openGridMenu}
+    >
+      <Ionicons name={grid ? 'grid-outline' : 'list'} size={22} color={colors.textSecondary} />
+    </Pressable>
+  );
+  const selectAll = !selecting ? null : (
+    <Pressable
+      hitSlop={10}
+      accessibilityRole="button"
+      accessibilityLabel={t('Select all')}
+      onPress={() =>
+        setSelectedIds(
+          selectedIds.size === songs.length ? new Set() : new Set(songs.map((s) => s.id)),
+        )
+      }
+    >
+      <Ionicons
+        name="checkmark-done"
+        size={24}
+        color={songs.length > 0 && selectedIds.size === songs.length ? accent : colors.text}
+      />
+    </Pressable>
+  );
+
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
+    <BrowseFrame embedded={embedded}>
       {/* Same header as browsing albums and artists: the title centred between
           the chevron and a slot of its width. While selecting it turns into
-          ✕ + counter + select all, the swap the other song lists do. */}
-      <View style={styles.header}>
-        {/* While selecting, the ✕ cancels the selection and nothing else: the
-            long press out of here belongs to the chevron. */}
-        {selecting ? (
-          <Pressable hitSlop={10} onPress={() => setSelectedIds(null)} accessibilityLabel={t('Close')}>
-            <Ionicons name="close" size={26} color={colors.text} />
-          </Pressable>
-        ) : (
-          <BackChevron />
-        )}
-        <Text style={styles.title} numberOfLines={1}>
-          {selecting ? t('{n} selected', { n: selectedIds.size }) : t('Songs')}
-        </Text>
-        <View style={styles.headerAction}>
-          {!selecting ? (
+          ✕ + counter + select all, the swap the other song lists do — and that
+          swap is the one thing the embedded section keeps a header for, since
+          the ✕ is the way out of it. */}
+      {embedded && !selecting ? null : (
+        <View style={styles.header}>
+          {/* While selecting, the ✕ cancels the selection and nothing else: the
+              long press out of here belongs to the chevron. */}
+          {selecting ? (
             <Pressable
               hitSlop={10}
-              accessibilityRole="button"
-              accessibilityLabel={t('View')}
-              onPress={openGridMenu}
+              onPress={() => setSelectedIds(null)}
+              accessibilityLabel={t('Close')}
             >
-              <Ionicons
-                name={grid ? 'grid-outline' : 'list'}
-                size={20}
-                color={colors.textSecondary}
-              />
+              <Ionicons name="close" size={26} color={colors.text} />
             </Pressable>
-          ) : (
-            <Pressable
-              hitSlop={10}
-              accessibilityRole="button"
-              accessibilityLabel={t('Select all')}
-              onPress={() =>
-                setSelectedIds(
-                  selectedIds.size === songs.length ? new Set() : new Set(songs.map((s) => s.id)),
-                )
-              }
-            >
-              <Ionicons
-                name="checkmark-done"
-                size={24}
-                color={songs.length > 0 && selectedIds.size === songs.length ? accent : colors.text}
-              />
-            </Pressable>
+          ) : embedded ? null : (
+            <BackChevron />
           )}
+          <Text style={styles.title} numberOfLines={1}>
+            {selecting ? t('{n} selected', { n: selectedIds.size }) : t('Songs')}
+          </Text>
+          {/* Embedded, the view menu is drawn by the Explore tab and this slot
+              only carries the select-all. It keeps its width either way, so the
+              title stays centred. */}
+          <View style={styles.headerAction}>
+            {selecting ? selectAll : embedded ? null : viewButton}
+          </View>
         </View>
-      </View>
+      )}
 
-      <View style={styles.searchRow}>
-        <View style={styles.searchBar}>
-          <Ionicons name="search" size={18} color={colors.textMuted} />
-          <TextInput
-            style={styles.input}
-            placeholder={t('Find a song')}
-            placeholderTextColor={colors.textMuted}
-            autoCapitalize="none"
-            autoCorrect={false}
-            value={query}
-            onChangeText={setQuery}
-            onFocus={() => setSearching(true)}
-            returnKeyType="search"
-          />
-          {query.length > 0 ? (
-            <Pressable
-              hitSlop={10}
-              accessibilityRole="button"
-              accessibilityLabel={t('Clear')}
-              onPress={() => setQuery('')}
-            >
-              <Ionicons name="close-circle" size={18} color={colors.textMuted} />
+      {/* Always there on its own screen: finding one song among many is what
+          the box is for. In the tab the magnifier asks for it. */}
+      {showSearch ? (
+        <View style={styles.searchRow}>
+          <View style={styles.searchBar}>
+            <Ionicons name="search" size={18} color={colors.textMuted} />
+            <TextInput
+              style={styles.input}
+              placeholder={t('Find a song')}
+              placeholderTextColor={colors.textMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              value={query}
+              onChangeText={setQuery}
+              onFocus={() => setSearching(true)}
+              returnKeyType="search"
+              autoFocus={embedded}
+            />
+            {query.length > 0 ? (
+              <Pressable
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel={t('Clear')}
+                onPress={() => setQuery('')}
+              >
+                <Ionicons name="close-circle" size={18} color={colors.textMuted} />
+              </Pressable>
+            ) : null}
+          </View>
+          {/* Only on its own screen: in the tab the X in the header is the way
+              out of the bar. */}
+          {searching && !embedded ? (
+            <Pressable hitSlop={8} accessibilityRole="button" onPress={clearSearch}>
+              <Text style={styles.searchCancel}>{t('Cancel')}</Text>
             </Pressable>
           ) : null}
         </View>
-        {searching ? (
-          <Pressable hitSlop={8} accessibilityRole="button" onPress={cancelSearch}>
-            <Text style={styles.searchCancel}>{t('Cancel')}</Text>
-          </Pressable>
-        ) : null}
-      </View>
+      ) : null}
 
-      {/* The chips hide while searching: results come back by relevance, so a
-          marked pill would lie about the order on screen. With a single order
-          there is nothing to choose either. */}
-      {isSearch || sorts.length < 2 ? null : (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.chips}
-          style={styles.chipsRow}
-        >
-          {sorts.map((key) => {
-            const active = key === sort;
-            return (
-              <Pressable
-                key={key}
-                style={[styles.chip, active && { backgroundColor: accent }]}
-                onPress={() => {
-                  setSort(key);
-                  setSelectedIds(null);
-                }}
-              >
-                <Text style={[styles.chipText, active && styles.chipTextActive]}>
-                  {t(SORT_LABEL[key])}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
+      {/* Gone while searching, and while selecting: results come back by
+          relevance so there is no order to show, and an action row is not what
+          a selection wants over its list. */}
+      {isSearch || selecting ? null : (
+        <BrowseToolbar
+          options={sorts.map((key) => ({ key, label: SORT_LABEL[key] }))}
+          value={sort}
+          onChange={(key) => {
+            setSort(key);
+            setSelectedIds(null);
+          }}
+          play={{ sort, source: t('Songs'), href: '/browse/songs' }}
+        />
       )}
 
       {(isSearch ? searchPending : isLoading) ? (
@@ -488,6 +509,8 @@ export default function BrowseSongsScreen() {
                   toast(t('Added to queue'));
                 }),
             },
+          ]}
+          menu={[
             ...(offline
               ? []
               : [
@@ -501,16 +524,17 @@ export default function BrowseSongsScreen() {
                       }),
                   },
                 ]),
+            ...selectionMenu.actions,
           ]}
         />
       ) : null}
+      {selectionMenu.dialogs}
       {gridSheet}
-    </SafeAreaView>
+    </BrowseFrame>
   );
 }
 
 const styles = themed((colors) => ({
-  safe: { flex: 1, backgroundColor: colors.background },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -521,13 +545,15 @@ const styles = themed((colors) => ({
   title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '600' },
   // The same width as the back chevron, so the title stays centred.
   headerAction: { width: 26, alignItems: 'flex-end' },
+  // The same row an album, a playlist and a genre have, to the same margins:
+  // what you do to the list on the left, what starts it on the right.
   searchRow: {
     height: SEARCH_H,
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
     paddingHorizontal: spacing.lg,
-    // The gap to the chips is part of the height, not an outer margin.
+    // The gap to the row below is part of the height, not an outer margin.
     paddingBottom: spacing.md,
   },
   searchBar: {
@@ -551,31 +577,6 @@ const styles = themed((colors) => ({
     fontSize: fontSize.sm,
     fontWeight: '600',
   },
-  // `flexShrink: 0` because the search bar adds a child to the column: without
-  // it flex shrinks this row and clips the pill text.
-  chipsRow: { flexGrow: 0, flexShrink: 0 },
-  chips: { gap: spacing.sm, paddingHorizontal: spacing.lg, paddingBottom: spacing.md },
-  chip: {
-    // Asymmetric padding on purpose: even without includeFontPadding, glyphs
-    // end up ~1dp low relative to the pill center (same as the browse chips).
-    paddingTop: spacing.xs - 1,
-    paddingBottom: spacing.xs + 1,
-    paddingHorizontal: spacing.md,
-    borderRadius: 999,
-    backgroundColor: colors.surfaceHighlight,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  chipText: {
-    color: colors.textSecondary,
-    fontSize: fontSize.sm,
-    fontWeight: '600',
-    // Android adds extra asymmetric padding on top of the text (font ascent):
-    // without removing it, the text doesn't center in the pill.
-    includeFontPadding: false,
-    textAlignVertical: 'center',
-  },
-  chipTextActive: { color: colors.onAccent },
   // `TrackRow` brings no horizontal padding of its own, so without this the
   // covers sit against the left edge and the ⋯ against the right one.
   list: { paddingHorizontal: spacing.lg, paddingBottom: SCREEN_BOTTOM_PADDING },

@@ -15,20 +15,27 @@ import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useBottomSheetAnim } from '@/hooks/useBottomSheetAnim';
-import { SHEET_MAX_WIDTH, spacing, themed } from '@/theme';
+import { radius, SHEET_MAX_WIDTH, spacing, themed } from '@/theme';
 
 export function SheetModal({
   openRef,
+  onClosed,
   children,
 }: {
   /** The screen holds a ref and calls `openRef.current()` to open. */
   openRef: MutableRefObject<() => void>;
+  /** Runs once the sheet is off screen, however it was closed. For an action
+   *  that unmounts the sheet along with whatever declares it. */
+  onClosed?: () => void;
   children: (close: () => void) => ReactNode;
 }) {
   const insets = useSafeAreaInsets();
   const [open, setOpen] = useState(false);
   openRef.current = () => setOpen(true);
-  const closeNow = () => setOpen(false);
+  const closeNow = () => {
+    setOpen(false);
+    onClosed?.();
+  };
   const { dismiss, pan, backdropStyle, sheetStyle, onSheetLayout } = useBottomSheetAnim(
     open,
     closeNow,
@@ -74,8 +81,8 @@ const styles = themed((colors) => ({
     width: '100%',
     maxWidth: SHEET_MAX_WIDTH,
     backgroundColor: colors.surface,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    borderTopLeftRadius: radius.xxl,
+    borderTopRightRadius: radius.xxl,
     paddingHorizontal: spacing.lg,
     // Smaller than the old spacing.lg because the grabber below already brings
     // its own margin: together they add up to the same top gap as before.
@@ -87,7 +94,7 @@ const styles = themed((colors) => ({
     alignSelf: 'center',
     width: 36,
     height: 4,
-    borderRadius: 2,
+    borderRadius: radius.pill,
     backgroundColor: colors.textMuted,
     opacity: 0.5,
     marginBottom: spacing.md,

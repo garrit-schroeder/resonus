@@ -8,6 +8,10 @@ class RendererSession(
   val location: String,
   initialDescription: DeviceDescription
 ) {
+  val isSonos: Boolean get() = description.isSonos
+
+  enum class NextUriResult { ACCEPTED, UNSUPPORTED, FAILED }
+
   @Volatile
   private var description: DeviceDescription = initialDescription
 
@@ -38,6 +42,7 @@ class RendererSession(
     val durationMs: Long,
     val trackNumber: Int?,
     val playMode: String?,
+    val currentUri: String?,
   )
 
   private data class TransportTarget(val controlUrl: String, val uid: String)
@@ -235,27 +240,6 @@ class RendererSession(
     return result.ok
   }
 
-  private suspend fun enqueueTrack(control: String, track: Track): Boolean {
-    val result = Soap.call(
-      control,
-      Services.AV_TRANSPORT,
-      "AddURIToQueue",
-      "<InstanceID>0</InstanceID>" +
-        "<EnqueuedURI>${Soap.escape(track.url)}</EnqueuedURI>" +
-        "<EnqueuedURIMetaData>${Soap.escape(Didl.forTrack(track))}</EnqueuedURIMetaData>" +
-        "<DesiredFirstTrackNumberEnqueued>0</DesiredFirstTrackNumberEnqueued>" +
-        "<EnqueueAsNext>0</EnqueueAsNext>"
-    )
-    if (!result.ok) return false
-    val firstTrack = Soap.argument(result.body, "FirstTrackNumberEnqueued")
-    val numTracks = Soap.argument(result.body, "NumTracksAdded")
-    Log.d(
-      Soap.TAG,
-      "AddURIToQueue accepted title=${track.title} firstTrack=$firstTrack numTracks=$numTracks"
-    )
-    return true
-  }
-
   private suspend fun replaceQueue(control: String, queueOwnerUid: String, tracks: List<Track>, currentIndex: Int, autoplay: Boolean, positionMs: Long, playMode: String?): Boolean {
     if (tracks.isEmpty()) return false
     val selectedIndex = currentIndex.coerceIn(0, tracks.lastIndex)
@@ -264,41 +248,9 @@ class RendererSession(
       return replaceQueueViaQueueService(control, queueOwnerUid, tracks, selectedIndex, autoplay, positionMs, playMode)
     }
 
-    if (!transport("RemoveAllTracksFromQueue", INSTANCE)) return false
-    for (track in tracks) {
-      val accepted = enqueueTrack(control, track)
-      if (!accepted) return false
-    }
-
-    val queueUri = "x-rincon-queue:$queueOwnerUid#0"
-    val queueMeta = Soap.escape(Didl.forQueueContainer(queueUri, tracks.size))
-    if (!Soap.call(
-        control,
-        Services.AV_TRANSPORT,
-        "SetAVTransportURI",
-        "<InstanceID>0</InstanceID>" +
-          "<CurrentURI>${Soap.escape(queueUri)}</CurrentURI>" +
-          "<CurrentURIMetaData>$queueMeta</CurrentURIMetaData>"
-      ).ok
-    ) {
-      return false
-    }
-
-    if (!playMode.isNullOrBlank()) {
-      if (!Soap.call(
-          control,
-          Services.AV_TRANSPORT,
-          "SetPlayMode",
-          "<InstanceID>0</InstanceID><NewPlayMode>${Soap.escape(playMode)}</NewPlayMode>"
-        ).ok
-      ) {
-        return false
-      }
-    }
-
-    if (!transport("Seek", "<InstanceID>0</InstanceID><Unit>TRACK_NR</Unit><Target>${selectedIndex + 1}</Target>")) {
-      return false
-    }
+    // AVTransport has no portable queue service. The module retains the list
+    // and progresses it; the renderer is given only the selected URI.
+    if (!setUri(control, tracks[selectedIndex])) return false
 
     if (positionMs > 0) {
       if (!seek(positionMs)) return false
@@ -308,6 +260,29 @@ class RendererSession(
       if (!play()) return false
     }
     return true
+  }
+
+  suspend fun setNextUri(track: Track): NextUriResult {
+    return setNextUri(track.url, Didl.forTrack(track))
+  }
+
+  suspend fun clearNextUri(): NextUriResult = setNextUri("", "")
+
+  private suspend fun setNextUri(uri: String, metadata: String): NextUriResult {
+    val control = avTransport ?: refreshControlUrl() ?: return NextUriResult.FAILED
+    val result = Soap.call(
+      control,
+      Services.AV_TRANSPORT,
+      "SetNextAVTransportURI",
+      "<InstanceID>0</InstanceID>" +
+        "<NextURI>${Soap.escape(uri)}</NextURI>" +
+        "<NextURIMetaData>${Soap.escape(metadata)}</NextURIMetaData>"
+    )
+    return when {
+      result.ok -> NextUriResult.ACCEPTED
+      result.unsupportedAction -> NextUriResult.UNSUPPORTED
+      else -> NextUriResult.FAILED
+    }
   }
 
   private suspend fun replaceQueueViaQueueService(
@@ -769,7 +744,8 @@ class RendererSession(
       positionMs = Didl.parseDuration(Soap.argument(position.body, "RelTime")),
       durationMs = Didl.parseDuration(Soap.argument(position.body, "TrackDuration")),
       trackNumber = trackNumber,
-      playMode = Soap.argument(settings.body, "PlayMode")
+      playMode = Soap.argument(settings.body, "PlayMode"),
+      currentUri = Soap.argument(position.body, "TrackURI")
     )
   }
 

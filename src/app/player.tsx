@@ -1,7 +1,6 @@
 /** Full-screen player (modal): cover art, progress and controls. */
 import Ionicons from '@expo/vector-icons/Ionicons';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import Slider from '@react-native-community/slider';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useIsFocused, useRouter } from 'expo-router';
@@ -9,9 +8,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   AppState,
-  Dimensions,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -19,10 +16,10 @@ import {
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
-  Easing,
   Extrapolation,
   interpolate,
   ReduceMotion,
+  useAnimatedScrollHandler,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
@@ -32,8 +29,10 @@ import Animated, {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { scheduleOnRN } from 'react-native-worklets';
 
-import { COVER, songCoverUrl, type Song } from '@/api/data';
+import { CACHED_COVER, COVER, songCoverUrl, star, unstar, type Song } from '@/api/data';
+import { ArtistPlayerCard } from '@/components/ArtistPlayerCard';
 import { AudioQualityBadge } from '@/components/AudioQualityBadge';
+import { SeekBar } from '@/components/SeekBar';
 import { Cover, useRedrawOnReturn, useSettledSource } from '@/components/Cover';
 import { ExplicitBadge } from '@/components/ExplicitBadge';
 import { FavoriteButton } from '@/components/FavoriteButton';
@@ -42,15 +41,18 @@ import { MarqueeText } from '@/components/MarqueeText';
 import { OutputSheet } from '@/components/OutputSheet';
 import { SpeedSheet } from '@/components/SpeedSheet';
 import { StarRating } from '@/components/StarRating';
+import { useAnimatedCover } from '@/hooks/useAnimatedCover';
 import { useDominantColor } from '@/hooks/useDominantColor';
 import { useFavoriteIds } from '@/hooks/useFavoriteIds';
-import { useLyrics } from '@/hooks/useLyrics';
 import { useLocalProfile } from '@/hooks/useLocalProfile';
-import { localHttpAvailable } from '@/lib/localHttp';
+import { useLyrics } from '@/hooks/useLyrics';
+import { useScreenSize } from '@/hooks/useScreenSize';
 import { useT } from '@/i18n';
 import { artistTargets } from '@/lib/artistNav';
-import { formatDuration, formatGroupedDeviceLabel } from '@/lib/format';
+import { formatGroupedDeviceLabel } from '@/lib/format';
+import { applyStarChange, resyncFavorites } from '@/lib/favoritesCache';
 import { haptic } from '@/lib/haptics';
+import { localHttpAvailable } from '@/lib/localHttp';
 import { pushOnce } from '@/lib/pushOnce';
 import { useArtistPicker } from '@/store/artistPicker';
 import { useAuthStore } from '@/store/auth';
@@ -64,12 +66,12 @@ import {
   useLiveInfo,
   usePlayerStore,
 } from '@/store/player';
-import { useSettings } from '@/store/settings';
+import { useSettings, type CoverTapAction } from '@/store/settings';
 import { useSongMenu } from '@/store/songMenu';
 import { useToast } from '@/store/toast';
 import { useUpnp } from '@/store/upnp';
-import { colors, fontSize, spacing, themed, useTheme } from '@/theme';
-import { useScreenSize } from '@/hooks/useScreenSize';
+import { colors, fontSize, radius, spacing, themed, useTheme } from '@/theme';
+import { motion } from '@/theme/motion';
 
 /** Floor: below this the cover stops giving up space and the page scrolls. */
 const COVER_MIN = 200;
@@ -106,6 +108,9 @@ const LYRICS_PEEK = 56;
  * `useSettledSource`).
  */
 const BACKDROP_FADE = 600;
+// The still copy of an animated cover, beside the title: the height of the two
+// lines of text it stands next to.
+const MINI_COVER = 56;
 
 function CircleButton({
   name,
@@ -154,43 +159,6 @@ function usePaneStyle(offset: SharedValue<number>, k: number, step: SharedValue<
   });
 }
 
-/**
- * Slider and times, kept apart on purpose.
- *
- * `positionSec` moves twice a second while music plays, and this screen is one
- * large component: cover, gradient, quality badge, controls, queue sheet. It
- * was repainting all of it on every tick, which is the one thing the mini
- * player has always been careful not to do (#50). The seek buttons read the
- * position when they are pressed instead of subscribing to it.
- */
-function PlayerProgress({
-  duration,
-  onSeek,
-}: {
-  duration: number;
-  onSeek: (sec: number) => void;
-}) {
-  const positionSec = usePlayerStore((s) => s.positionSec);
-  return (
-    <View style={styles.progress}>
-      <Slider
-        style={styles.slider}
-        minimumValue={0}
-        maximumValue={duration}
-        value={positionSec}
-        onSlidingComplete={onSeek}
-        minimumTrackTintColor={colors.text}
-        maximumTrackTintColor={colors.mediaTrack}
-        thumbTintColor={colors.text}
-      />
-      <View style={styles.times}>
-        <Text style={styles.time}>{formatDuration(positionSec)}</Text>
-        <Text style={styles.time}>{formatDuration(duration)}</Text>
-      </View>
-    </View>
-  );
-}
-
 export default function PlayerScreen() {
   // Repaints on a change of appearance or accent: a stack keeps this screen
   // mounted while you are on another one, out of reach of anything else.
@@ -227,6 +195,7 @@ export default function PlayerScreen() {
   const showRating = useSettings((s) => s.showRating);
   const showAlbumInfo = useSettings((s) => s.showAlbumInfo);
   const showLyricsCard = useSettings((s) => s.showLyricsCard);
+  const showArtistCard = useSettings((s) => s.showArtistCard);
   // Ignored on a local profile over a server: there is no heart there, so there
   // is nothing to swap and moving the ⋯ down would just leave the corner empty.
   const swapButtons = useSettings((s) => s.swapPlayerButtons);
@@ -234,6 +203,7 @@ export default function PlayerScreen() {
   // would leave each row a different size and look ragged.
   const fitCoverArt = useSettings((s) => s.fitCoverArt);
   const coverTapAction = useSettings((s) => s.coverTapAction);
+  const coverDoubleTapAction = useSettings((s) => s.coverDoubleTapAction);
   const marqueeTitles = useSettings((s) => s.marqueeTitles);
   const showQueueButton = useSettings((s) => s.showQueueButton);
   const local = useLocalProfile();
@@ -283,6 +253,10 @@ export default function PlayerScreen() {
   // a radio. Whether it is actually shown is `showsLyricsCard` below, which
   // also needs there to be lyrics.
   const wantsLyricsCard = canLyrics && showLyricsCard;
+  // Same shape for the artist card: an artist to ask about, and the setting on.
+  // Whether it draws anything is the card's own question (it needs a
+  // biography), and the room below is kept either way, as for the lyrics.
+  const wantsArtistCard = !!song?.artistId && showArtistCard;
   /**
    * The heart's state, and it does not ask whether the file is on the phone.
    *
@@ -313,11 +287,23 @@ export default function PlayerScreen() {
   // a fixed overlay (same look as animating the gradient, which can't be done).
   const background = useSettings((s) => s.playerBackground);
   const colorBackground = background === 'color';
+  const animatedCoverBg = useSettings((s) => s.animatedCoverBackground);
+  // An animated cover (GIF, animated WebP, APNG) can take the whole screen
+  // instead of playing inside the square, with a still copy of itself next to
+  // the title. Off by default. A cover that is only in the image cache
+  // (`CACHED_COVER`, offline) is not a URL and would leave the background
+  // empty, so it keeps the ordinary layout, where `Cover` knows how to read it.
+  const { isAnimated: isAnimatedDetected, onCoverLoad } = useAnimatedCover(cover);
+  const isAnimatedCover =
+    animatedCoverBg && isAnimatedDetected && !!cover && !cover.startsWith(CACHED_COVER);
   // The backdrop holds the previous artwork on purpose while the next decodes,
   // so on its own it cannot tell "not decoded yet" from "never will be". Coming
   // back from the background is the second case (see `useRedrawOnReturn`), and
   // here it would be the whole screen wearing another song's colours.
   const backdropRef = useRef<Image>(null);
+  // Same story for the full-screen animated cover: coming back from the
+  // background the view can claim it drew a picture it is not showing.
+  const animatedBgRef = useRef<Image>(null);
   // One cover at a time, and never mid-fade: skipping through a queue is faster
   // than the fade is long, and handing them over as they come is what made the
   // background jump back to the cover you started from.
@@ -326,7 +312,10 @@ export default function PlayerScreen() {
     BACKDROP_FADE,
   );
   const backdrop = useRedrawOnReturn(backdropRef, backdropSource.shown);
-  const dominant = useDominantColor(colorBackground ? cover : undefined);
+  const animatedBg = useRedrawOnReturn(animatedBgRef, isAnimatedCover ? cover : undefined);
+  // The full-screen animated cover needs the colour too, whatever the
+  // background setting says: the gradient under it fades into that colour.
+  const dominant = useDominantColor(colorBackground || isAnimatedCover ? cover : undefined);
   // Under the blurred artwork the flat colour is irrelevant, but it still
   // paints the frame before the image decodes, so it stays dark rather than
   // flashing the old grey.
@@ -335,7 +324,7 @@ export default function PlayerScreen() {
   useEffect(() => {
     // reduceMotion Never: the color fade is part of the look and some devices
     // (battery saver / "reduce motion") would skip it.
-    bgColor.value = withTiming(targetBg, { duration: 600, reduceMotion: ReduceMotion.Never });
+    bgColor.value = withTiming(targetBg, { duration: motion.duration.tint, reduceMotion: ReduceMotion.Never });
   }, [targetBg, bgColor]);
   const bgStyle = useAnimatedStyle(() => ({ backgroundColor: bgColor.value }));
   // Same query used by the lyrics card (cached): here only to know if there
@@ -417,7 +406,10 @@ export default function PlayerScreen() {
     const asRemembered =
       !!g && g.pageH === pageH && g.coverH === coverBoxH && g.coverW === coverBoxW && g.starsH === starsH;
     if (asRemembered) coverAppear.set(1);
-    else coverAppear.value = withTiming(1, { duration: 200, reduceMotion: ReduceMotion.Never });
+    else coverAppear.value = withTiming(1, {
+        duration: motion.duration.fade,
+        reduceMotion: motion.reduceMotion.essential,
+      });
   }, [coverStable, pageH, coverBoxH, coverBoxW, starsH, coverAppear]);
   useEffect(() => {
     const id = setTimeout(() => setCoverStable(true), 300);
@@ -492,7 +484,6 @@ export default function PlayerScreen() {
   // The swipe-to-close gesture should only work when scrolled to the top;
   // otherwise it would steal the gesture when returning from the lyrics card.
   const [atTop, setAtTop] = useState(true);
-  const atTopRef = useRef(true);
 
   // Cover art swipe: left → next, right → previous. It mirrors the prev/next
   // buttons, which don't wrap: you can't go back before the first track, and
@@ -609,7 +600,7 @@ export default function PlayerScreen() {
         // in the hidden panel.
         offset.value = withTiming(
           target,
-          { duration: 220, easing: Easing.out(Easing.cubic) },
+          { duration: motion.duration.move, easing: motion.easing.move },
           (finished) => {
             // Counted where the strip actually arrived, and only if it did: a
             // travel cut short by the next swipe never happened.
@@ -634,16 +625,86 @@ export default function PlayerScreen() {
   useEffect(() => {
     setInlineLyrics(false);
   }, [song?.id]);
-  const openLyrics = () => {
-    if (coverTapAction === 'inline') setInlineLyrics((v) => !v);
-    else if (coverTapAction === 'screen') pushOnce('/lyrics');
+  /**
+   * The heart, from a gesture instead of from the button.
+   *
+   * The shared list of favourites is written first and the server told after:
+   * the heart in the header reads that list, so it turns over with the tap
+   * rather than with the round trip, and goes back if the request is refused.
+   */
+  const toggleFavorite = async () => {
+    const current = usePlayerStore.getState();
+    const track = currentSong(current);
+    if (!track) return;
+    const next = !(favIds ? favIds.has(track.id) : !!track.starred);
+    haptic('medium');
+    applyStarChange('song', track.id, next, track);
+    try {
+      if (next) await star(track.id);
+      else await unstar(track.id);
+      useToast.getState().show(next ? t('Added to favorites') : t('Removed from favorites'));
+    } catch {
+      resyncFavorites();
+      useToast.getState().show(t("Couldn't complete the action"));
+    }
+  };
+  /**
+   * Every action the cover offers, wherever it was asked for.
+   *
+   * One tap and two share the list, so this is the one place that knows how to
+   * run any of them. The two lyrics actions are the only ones that can find
+   * nothing to do: a song with no lyrics leaves the tap where it was rather
+   * than opening an empty screen.
+   *
+   * Handed to `scheduleOnRN` by name, with the action as its argument: a
+   * gesture's `onEnd` is a worklet, and a function written inside one is not
+   * something the JS thread can be asked to run.
+   */
+  const runCoverAction = (action: CoverTapAction) => {
+    switch (action) {
+      case 'inline':
+        if (hasLyrics) setInlineLyrics((v) => !v);
+        break;
+      case 'screen':
+        if (hasLyrics) pushOnce('/lyrics');
+        break;
+      case 'playPause':
+        toggle();
+        break;
+      case 'favorite':
+        void toggleFavorite();
+        break;
+      case 'album':
+        if (song?.albumId) pushOnce(`/album/${song.albumId}`);
+        break;
+      default:
+        break;
+    }
   };
   const coverTap = Gesture.Tap()
     .maxDistance(10)
     .onEnd((_e, success) => {
-      if (success && hasLyrics) scheduleOnRN(openLyrics);
+      if (success) scheduleOnRN(runCoverAction, coverTapAction);
     });
-  const coverGesture = Gesture.Race(coverPan, coverTap);
+  /**
+   * Two taps on the cover (#156), for the hand that is not looking at the
+   * screen. Triple was asked for as well and is not here: every tap before it
+   * would have to wait out the ones that might follow, three taps inside half a
+   * second is the hardest thing to hit while walking, and Android already
+   * spends it on the magnifier.
+   */
+  const coverDoubleTap = Gesture.Tap()
+    .numberOfTaps(2)
+    .maxDistance(10)
+    .onEnd((_e, success) => {
+      if (success) scheduleOnRN(runCoverAction, coverDoubleTapAction);
+    });
+  // Only when there is a second action to wait for: `Exclusive` holds the
+  // single tap back until the double has been ruled out, and that wait is the
+  // whole cost of this. Off, the tap fires as it always has.
+  const coverTaps =
+    coverDoubleTapAction === 'none' ? coverTap : Gesture.Exclusive(coverDoubleTap, coverTap);
+  const coverGesture = Gesture.Race(coverPan, coverTaps);
   const paneStyles = [
     usePaneStyle(offset, 0, stepSV),
     usePaneStyle(offset, 1, stepSV),
@@ -666,7 +727,7 @@ export default function PlayerScreen() {
     })
     .onEnd((e) => {
       if (e.translationY > DISMISS_THRESHOLD || e.velocityY > 800) {
-        transY.value = withTiming(screenH, { duration: 220 }, (f) => {
+        transY.value = withTiming(screenH, { duration: motion.duration.move }, (f) => {
           if (f) scheduleOnRN(closePlayer);
         });
       } else {
@@ -676,6 +737,25 @@ export default function PlayerScreen() {
   const rootStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: transY.value }],
   }));
+  // The full-screen animated cover travels with the content instead of staying
+  // pinned to the screen, so scrolling down to the lyrics moves it out of the
+  // way. On the UI thread: read off a plain `onScroll` it followed the finger a
+  // JS frame late, which is the tearing #154 was about.
+  const scrollY = useSharedValue(0);
+  const atTopSV = useSharedValue(true);
+  const animatedBgStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: -scrollY.value }],
+  }));
+  const onScroll = useAnimatedScrollHandler((e) => {
+    scrollY.value = e.contentOffset.y;
+    const next = e.contentOffset.y <= 4;
+    if (next !== atTopSV.value) {
+      atTopSV.value = next;
+      // Only on the crossing, not on every frame: this one is a React state,
+      // it decides whether the drag-to-dismiss gesture is armed.
+      scheduleOnRN(setAtTop, next);
+    }
+  });
 
   // If there's no song (e.g. after emptying the queue), close the player. In an
   // effect (not in render) to avoid updating the Stack while painting another
@@ -765,7 +845,28 @@ export default function PlayerScreen() {
     <GestureDetector gesture={dismissPan}>
       <Animated.View style={[styles.root, rootStyle]}>
         <Animated.View style={[StyleSheet.absoluteFill, bgStyle]} />
-        {background === 'cover' && backdropSource.shown ? (
+        {isAnimatedCover && cover ? (
+          /* The animated cover itself, unblurred, over the whole screen. */
+          <Animated.View style={[StyleSheet.absoluteFill, animatedBgStyle]}>
+            <Image
+              key={animatedBg.nonce}
+              ref={animatedBgRef}
+              source={{ uri: cover }}
+              style={StyleSheet.absoluteFill}
+              contentFit="cover"
+              transition={BACKDROP_FADE}
+              onDisplay={animatedBg.onDisplay}
+            />
+            {/* Its bottom edge fades into the cover's own colour, so the
+                picture ends somewhere instead of being cut off. Inside the
+                same wrapper: it has to travel with it. */}
+            <LinearGradient
+              colors={['transparent', dominant]}
+              style={StyleSheet.absoluteFill}
+              locations={[0.7, 1]}
+            />
+          </Animated.View>
+        ) : background === 'cover' && backdropSource.shown ? (
           <>
             {/* The artwork itself, blurred, filling the screen. No
                 `recyclingKey`: it blanks the view the moment the song changes,
@@ -780,6 +881,7 @@ export default function PlayerScreen() {
               contentFit="cover"
               blurRadius={60}
               transition={BACKDROP_FADE}
+              autoplay={false}
               onDisplay={() => {
                 backdrop.onDisplay();
                 backdropSource.onDisplay();
@@ -797,14 +899,18 @@ export default function PlayerScreen() {
           style={StyleSheet.absoluteFill}
         />
         <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
-        <ScrollView
+        <Animated.ScrollView
           style={{ flex: 1 }}
           // Keeps the lyrics card clear of the navigation bar, and only then:
           // with no card below it the first page is the whole content and it is
           // shorter than the screen, so this padding was pure overflow and the
           // player scrolled by that much for nothing (#107).
           contentContainerStyle={
-            showsLyricsCard ? { paddingBottom: Math.max(insets.bottom, spacing.md) } : undefined
+            showsLyricsCard || wantsArtistCard
+              ? // The cards carry no bottom margin of their own, so the last one
+                // gets its air from here.
+                { paddingBottom: Math.max(insets.bottom, spacing.md) + spacing.xl }
+              : undefined
           }
           // Only the measurement. Whether the slot is ready to be shown is
           // decided in one place above, since it takes more than this one
@@ -815,13 +921,7 @@ export default function PlayerScreen() {
             setPageH(e.nativeEvent.layout.height);
             setLaidOut(true);
           }}
-          onScroll={(e) => {
-            const next = e.nativeEvent.contentOffset.y <= 4;
-            if (next !== atTopRef.current) {
-              atTopRef.current = next;
-              setAtTop(next);
-            }
-          }}
+          onScroll={onScroll}
           scrollEventThrottle={16}
           showsVerticalScrollIndicator={false}
         >
@@ -839,7 +939,8 @@ export default function PlayerScreen() {
             // lyrics. That is the same trade as before, taken the other way: the
             // gap is quiet, the layout jumping on every skip is not. Only a radio
             // (no lyrics ever, `wantsLyricsCard` false) gets the room back.
-            height: (pageH || approxPageH) - (wantsLyricsCard ? LYRICS_PEEK : 0),
+            height:
+              (pageH || approxPageH) - (wantsLyricsCard || wantsArtistCard ? LYRICS_PEEK : 0),
           }}
         >
         <View style={styles.topBar}>
@@ -931,28 +1032,33 @@ export default function PlayerScreen() {
             {/* Recycled carousel: the current cover centered and the neighbors at
                 one screen, already entering on drag. No fade (transition 0): a
                 panel's content only changes off-screen and a fade is pointless
-                here. */}
+                here. An animated cover is not here at all: it is the background,
+                and the empty slot it leaves is what the picture shows through. */}
             <Animated.View style={[{ width: coverSize, height: coverSize }, coverAppearStyle]}>
-              {paneStyles.map((paneStyle, k) => {
-                const rel = paneRel(k);
-                const paneSong = rel === 0 ? song : rel === 1 ? nextSong : prevSong;
-                const paneCover = rel === 0 ? cover : rel === 1 ? nextCover : prevCover;
-                return (
-                  <Animated.View key={k} style={[styles.coverPane, paneStyle]}>
-                    {/* With lyrics in place the cover is hidden: the lyrics
-                        (transparent background) sit on top of the player background. */}
-                    {paneSong && !inlineLyrics ? (
-                      <Cover
-                        uri={paneCover}
-                        size={coverSize}
-                        contentFit={fitCoverArt ? 'contain' : 'cover'}
-                        transition={0}
-                        placeholderIcon={paneSong.url ? 'radio' : 'musical-notes'}
-                      />
-                    ) : null}
-                  </Animated.View>
-                );
-              })}
+              {!isAnimatedCover ? (
+                paneStyles.map((paneStyle, k) => {
+                  const rel = paneRel(k);
+                  const paneSong = rel === 0 ? song : rel === 1 ? nextSong : prevSong;
+                  const paneCover = rel === 0 ? cover : rel === 1 ? nextCover : prevCover;
+                  return (
+                    <Animated.View key={k} style={[styles.coverPane, paneStyle]}>
+                      {/* With lyrics in place the cover is hidden: the lyrics
+                          (transparent background) sit on top of the player background. */}
+                      {paneSong && !inlineLyrics ? (
+                        <Cover
+                          uri={paneCover}
+                          size={coverSize}
+                          contentFit={fitCoverArt ? 'contain' : 'cover'}
+                          transition={0}
+                          autoplay={rel === 0}
+                          onAnimatedDetected={rel === 0 ? onCoverLoad : undefined}
+                          placeholderIcon={paneSong.url ? 'radio' : 'musical-notes'}
+                        />
+                      ) : null}
+                    </Animated.View>
+                  );
+                })
+              ) : null}
             </Animated.View>
           </GestureDetector>
           {/* Lyrics in place of the cover (setting): same frame, on top. */}
@@ -995,6 +1101,18 @@ export default function PlayerScreen() {
           ]}
         >
           <View style={styles.meta}>
+            {/* With the cover on the wall behind, a still copy of it sits by
+                the title, the height of the two lines of text. */}
+            {isAnimatedCover && cover ? (
+              <Cover
+                uri={cover}
+                size={MINI_COVER}
+                contentFit={fitCoverArt ? 'contain' : 'cover'}
+                transition={0}
+                autoplay={false}
+                placeholderIcon={song?.url ? 'radio' : 'musical-notes'}
+              />
+            ) : null}
             <View style={{ flex: 1 }}>
               {song.albumId ? (
                 <Pressable
@@ -1036,16 +1154,27 @@ export default function PlayerScreen() {
                       </Text>
                     </View>
                     {/* Its own line: next to the artist the two ran together and
-                        the album was hard to pick out. */}
+                        the album was hard to pick out. It scrolls like the
+                        title does, since the year sits at the end of it and a
+                        long album name was all anyone ever saw (#183). */}
                     {albumInfo ? (
-                      <Text
-                        style={styles.album}
-                        numberOfLines={1}
-                        onPress={goAlbum}
-                        suppressHighlighting
-                      >
-                        {albumInfo}
-                      </Text>
+                      goAlbum ? (
+                        <Pressable style={styles.albumLine} hitSlop={6} onPress={goAlbum}>
+                          <MarqueeText
+                            text={albumInfo}
+                            style={styles.album}
+                            enabled={marqueeTitles}
+                          />
+                        </Pressable>
+                      ) : (
+                        <View style={styles.albumLine}>
+                          <MarqueeText
+                            text={albumInfo}
+                            style={styles.album}
+                            enabled={marqueeTitles}
+                          />
+                        </View>
+                      )
                     ) : null}
                   </>
                 );
@@ -1068,7 +1197,11 @@ export default function PlayerScreen() {
             </View>
           ) : null}
 
-          <PlayerProgress duration={duration} onSeek={seekTo} />
+          {/* Its own component so a position tick does not repaint this one,
+              which is large: cover, gradient, quality badge, controls, queue
+              sheet (#50). The seek buttons read the position when they are
+              pressed instead of subscribing to it. */}
+          <SeekBar duration={duration} style={styles.progress} timeColor={colors.textMuted} />
 
           <View style={styles.controls}>
             <Pressable
@@ -1260,7 +1393,8 @@ export default function PlayerScreen() {
         </View>
         </View>
         {showsLyricsCard ? <LyricsCard /> : null}
-        </ScrollView>
+        {wantsArtistCard ? <ArtistPlayerCard /> : null}
+        </Animated.ScrollView>
         </SafeAreaView>
         <OutputSheet visible={outputOpen} onClose={() => setOutputOpen(false)} />
         <SpeedSheet openRef={openSpeedSheet} />
@@ -1386,27 +1520,17 @@ const styles = themed((colors) => ({
     fontSize: fontSize.md,
     flexShrink: 1,
   },
+  // The gap belongs to the line and not to the text: the text is handed to a
+  // marquee, which draws it twice.
+  albumLine: { alignSelf: 'flex-start', maxWidth: '100%', marginTop: 2 },
   // A step below the artist so the three lines read as a hierarchy
   // (title → artist → album) instead of three rows of the same weight.
   album: {
     color: colors.textMuted,
     fontSize: fontSize.sm,
-    marginTop: 2,
   },
   subInfo: { marginTop: -spacing.sm, marginBottom: spacing.xs },
   progress: { marginBottom: spacing.xs },
-  // Compensates for the slider's internal margin (~15px, where the thumb is
-  // centered at the extremes): the visible track goes edge to edge of the
-  // content, like Spotify, and the thumb extends into the gap without being
-  // clipped.
-  slider: { marginHorizontal: -15 },
-  // Snug against the bar: the slider brings lots of vertical space (touch area).
-  times: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: -2,
-  },
-  time: { color: colors.textMuted, fontSize: fontSize.xs },
   controls: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1417,7 +1541,7 @@ const styles = themed((colors) => ({
     backgroundColor: colors.text,
     width: 72,
     height: 72,
-    borderRadius: 36,
+    borderRadius: radius.pill,
     alignItems: 'center',
     justifyContent: 'center',
   },

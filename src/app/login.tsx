@@ -183,7 +183,7 @@ export default function LoginScreen() {
   async function startLocalFolder() {
     const uri = await pickFolder();
     if (!uri) return;
-    await setOfflineSource({ mode: 'folder', uri });
+    await setOfflineSource({ mode: 'folder', uris: [uri] });
     await enterOffline();
   }
 
@@ -605,7 +605,7 @@ const styles = themed((colors) => ({
   offlineIcon: {
     width: 36,
     height: 36,
-    borderRadius: 18,
+    borderRadius: radius.pill,
     backgroundColor: colors.surfaceHighlight,
     alignItems: 'center',
     justifyContent: 'center',
@@ -681,7 +681,7 @@ const styles = themed((colors) => ({
   srvLocalIcon: {
     width: 40,
     height: 40,
-    borderRadius: 20,
+    borderRadius: radius.pill,
     backgroundColor: colors.surfaceHighlight,
     alignItems: 'center',
     justifyContent: 'center',

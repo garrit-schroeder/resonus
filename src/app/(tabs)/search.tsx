@@ -1,10 +1,11 @@
 /** Album and song search on the server. */
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useNavigation } from 'expo-router';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useFocusEffect, useNavigation } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Keyboard,
   Pressable,
   Text,
   TextInput,
@@ -28,13 +29,14 @@ import { TrackRow } from '@/components/TrackRow';
 import { useDebounce } from '@/hooks/useDebounce';
 import { songsLabel, useT } from '@/i18n';
 import { haptic } from '@/lib/haptics';
-import { onTabReselect } from '@/lib/tabOrigin';
+import { onTabReselect, takeSearchFocus } from '@/lib/tabOrigin';
 import { bump } from '@/lib/perfLog';
 import { useAuthStore } from '@/store/auth';
 import { useMediaMenu } from '@/store/mediaMenu';
 import { currentSong, usePlayerStore } from '@/store/player';
 import { useRecentSearches, type RecentItem } from '@/store/recentSearches';
 import { useSettings } from '@/store/settings';
+import { useAccent } from '@/hooks/useAccent';
 import { colors, fontSize, radius, spacing, themed, useTheme } from '@/theme';
 import { useScreenBottomPadding } from '@/hooks/useScreenBottomPadding';
 import { centredPadding, useScreenSize } from '@/hooks/useScreenSize';
@@ -42,6 +44,26 @@ import { centredPadding, useScreenSize } from '@/hooks/useScreenSize';
 /** How wide a genre card wants to be, in dp: two across a phone, and as many
  *  as fit at that size on anything wider (#131). */
 const GENRE_IDEAL = 220;
+
+/**
+ * What the chips under the box narrow the answer to.
+ *
+ * One of the five kinds this screen can show, or all of them. Radio is in here
+ * because the screen searches stations too, and it is the one that is not
+ * always there: a Jellyfin account does not manage them and offline there is
+ * nothing to stream (see the query).
+ */
+type SearchFilter = 'all' | 'songs' | 'artists' | 'albums' | 'playlists' | 'radio';
+
+/** In the order the chips read, which is the order the results come in. */
+const FILTERS: { key: SearchFilter; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'songs', label: 'Songs' },
+  { key: 'artists', label: 'Artists' },
+  { key: 'albums', label: 'Albums' },
+  { key: 'playlists', label: 'Playlists' },
+  { key: 'radio', label: 'Radio' },
+];
 
 export default function SearchScreen() {
   // Counted, to answer whether a tab you have visited keeps working
@@ -82,7 +104,7 @@ export default function SearchScreen() {
   // Tapping the Search tab while already on Search raises the keyboard.
   //
   // Entering here doesn't focus on purpose: without focus the screen offers
-  // "Browse all", and the keyboard would cover it. But whoever already knows
+  // the genre grid, and the keyboard would cover it. But whoever already knows
   // what they want was paying an extra tap on the box, always. So both
   // intentions coexist, each with its own gesture.
   //
@@ -98,6 +120,7 @@ export default function SearchScreen() {
     addListener: (event: 'tabPress' | 'blur', callback: () => void) => () => void;
     isFocused: () => boolean;
   }>();
+  const accent = useAccent();
   const inputRef = useRef<TextInput>(null);
   useEffect(() => {
     const focusBox = () => {
@@ -123,13 +146,36 @@ export default function SearchScreen() {
     };
   }, [navigation]);
 
+  // Arriving from the button on Home, which asks for the box before it sends
+  // anybody here. On focus rather than on mount: the tab is never unmounted
+  // once opened, so every visit after the first is a focus and nothing else.
+  useFocusEffect(
+    useCallback(() => {
+      if (!takeSearchFocus()) return;
+      inputRef.current?.focus();
+      // Asked for twice, because once is not reliable. A screen still on its
+      // way in will take the cursor and leave the keyboard down, and there is
+      // nothing to retry from: the input answers `isFocused()` yes, so only
+      // the keyboard itself can say whether it worked. The second go is
+      // preceded by a `blur` for the reason the tab gesture below documents:
+      // asking an input that already has focus to take it does nothing at all,
+      // keyboard included.
+      const id = setTimeout(() => {
+        if (Keyboard.isVisible()) return;
+        inputRef.current?.blur();
+        inputRef.current?.focus();
+      }, 250);
+      return () => clearTimeout(id);
+    }, []),
+  );
+
   const { data, isFetching, isError, refetch } = useQuery({
     queryKey: ['search', debouncedQuery],
     queryFn: () => search(debouncedQuery),
     enabled: canSearch && debouncedQuery.length > 1,
   });
 
-  // Genres for "Browse all" (server only) when there's no active search.
+  // Genres for the browse grid (server only) when there's no active search.
   //
   // Not offline: a genre is the server's idea and there is no local index of
   // them, so the section had nothing to open even when it drew. What it did
@@ -156,10 +202,13 @@ export default function SearchScreen() {
       : [];
   // Stations, filtered the same way and for the same reason. Server only:
   // Jellyfin doesn't manage them and offline there's nothing to stream.
+  /** Whether this account has stations at all, which is also whether the chip
+   *  for them is worth drawing. */
+  const canSearchStations = !!auth && !offline && auth.serverType !== 'jellyfin';
   const { data: stations } = useQuery({
     queryKey: ['radioStations'],
     queryFn: () => getRadioStations(auth!),
-    enabled: !!auth && !offline && auth.serverType !== 'jellyfin' && debouncedQuery.length > 1,
+    enabled: canSearchStations && debouncedQuery.length > 1,
   });
   const stationMatches =
     debouncedQuery.length > 1
@@ -175,9 +224,35 @@ export default function SearchScreen() {
   // keystroke. Same elements, so React walks past the whole grid instead of
   // rebuilding it.
   const genreGrid = useMemo(
-    () => genres?.map((g) => <GenreCard key={g.value} name={g.value} width={genreW} />),
+    () =>
+      genres?.map((g) => (
+        <GenreCard key={g.value} name={g.value} albumCount={g.albumCount} width={genreW} />
+      )),
     [genres, genreW],
   );
+
+  /**
+   * Which kind of result the screen is showing, and `all` to start with.
+   *
+   * It is deliberately not reset when the box is emptied. The row is only
+   * drawn while something is being searched for, so a filter left on is a
+   * filter the next search can see: what would be wrong is a narrowing nobody
+   * was shown, applied to an answer they were about to read as everything.
+   */
+  const [filter, setFilter] = useState<SearchFilter>('all');
+  /** Whether a kind is on screen: its own chip, or `all`. */
+  const shows = (kind: SearchFilter) => filter === 'all' || filter === kind;
+  /**
+   * How many results the filter leaves on screen, which is what decides the
+   * empty state. Counting the lot would say "no results" with a chip pressed
+   * and matches of another kind sitting behind it.
+   */
+  const shownCount =
+    (shows('artists') ? (data?.artists.length ?? 0) : 0) +
+    (shows('albums') ? (data?.albums.length ?? 0) : 0) +
+    (shows('songs') ? (data?.songs.length ?? 0) : 0) +
+    (shows('playlists') ? playlistMatches.length : 0) +
+    (shows('radio') ? stationMatches.length : 0);
 
   const isEmpty = query.trim().length === 0;
   const showRecent = focused && isEmpty && recent.length > 0;
@@ -215,6 +290,33 @@ export default function SearchScreen() {
         ) : null}
         <OfflineIndicator />
       </View>
+
+      {/* Only while something is being searched for. With the box empty this
+          screen is the recent searches or the genres to browse, and a filter
+          over either of those narrows nothing: a chip is worth drawing where
+          it leaves something out. */}
+      {isEmpty ? null : (
+        <View style={[styles.filters, { paddingHorizontal: pagePad }]}>
+          {FILTERS.filter((f) => f.key !== 'radio' || canSearchStations).map((f) => {
+            const active = f.key === filter;
+            return (
+              <Pressable
+                key={f.key}
+                style={[styles.filter, active && { backgroundColor: accent }]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                // Pressing the one already on goes back to everything, so the
+                // way out is the chip you came in by and not a second target.
+                onPress={() => setFilter(active ? 'all' : f.key)}
+              >
+                <Text style={[styles.filterText, active && styles.filterTextActive]}>
+                  {t(f.label)}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
 
       <ScrollView
         contentContainerStyle={[
@@ -264,12 +366,10 @@ export default function SearchScreen() {
 
         {showBrowse ? (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>{t('Browse all')}</Text>
             <View style={styles.genreGrid}>{genreGrid}</View>
           </View>
         ) : showBrowseSkeleton ? (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>{t('Browse all')}</Text>
             <GenreGridSkeleton width={genreW} />
           </View>
         ) : null}
@@ -281,21 +381,20 @@ export default function SearchScreen() {
             text={t("Couldn't reach the server. Check your connection.")}
             onRetry={() => refetch()}
           />
-        ) : data &&
-          debouncedQuery.length > 1 &&
-          data.artists.length === 0 &&
-          data.albums.length === 0 &&
-          data.songs.length === 0 &&
-          playlistMatches.length === 0 &&
-          stationMatches.length === 0 ? (
+        ) : data && debouncedQuery.length > 1 && shownCount === 0 ? (
           <EmptyState
             icon="search-outline"
             title={t('No results')}
+            // The same sentence whichever chip is pressed. Naming the kind in
+            // it would read better and would mean dropping a translated word
+            // into the middle of a translated sentence, which is a gender and
+            // a case nobody here can get right for every language. The chip is
+            // on screen and lit, which is what says the answer is narrowed.
             subtitle={t('No results for “{q}”', { q: debouncedQuery })}
           />
         ) : null}
 
-        {data && data.artists.length > 0 ? (
+        {shows('artists') && data && data.artists.length > 0 ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>{t('Artists')}</Text>
             <ScrollView
@@ -337,7 +436,7 @@ export default function SearchScreen() {
           </View>
         ) : null}
 
-        {data && data.albums.length > 0 ? (
+        {shows('albums') && data && data.albums.length > 0 ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>{t('Albums')}</Text>
             <ScrollView
@@ -367,7 +466,7 @@ export default function SearchScreen() {
           </View>
         ) : null}
 
-        {data && data.songs.length > 0 ? (
+        {shows('songs') && data && data.songs.length > 0 ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>{t('Songs')}</Text>
             {data.songs.map((song, i) => (
@@ -394,7 +493,7 @@ export default function SearchScreen() {
           </View>
         ) : null}
 
-        {playlistMatches.length > 0 ? (
+        {shows('playlists') && playlistMatches.length > 0 ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>{t('Playlists')}</Text>
             {playlistMatches.map((p) => (
@@ -420,7 +519,7 @@ export default function SearchScreen() {
           </View>
         ) : null}
 
-        {stationMatches.length > 0 ? (
+        {shows('radio') && stationMatches.length > 0 ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>{t('Radio')}</Text>
             {stationMatches.map((r) => (
@@ -495,6 +594,33 @@ const styles = themed((colors) => ({
   content: {
     paddingHorizontal: spacing.lg,
   },
+  // The same pill "Your library" uses, and deliberately the same: they are one
+  // control in two places, and a second look for it would read as a different
+  // kind of thing.
+  //
+  // Wrapped rather than scrolled sideways, which is what the other chip rows in
+  // the app do and what this did first. Six of these come to about 465 points
+  // of content and a phone is 360 to 412 wide, so the row never fitted: at rest
+  // it cut "Radio" through the middle of its pill, which reads as a broken
+  // layout rather than as something to swipe, and a pill has a rounded end you
+  // notice the absence of. Two short rows cost a line of height on a narrow
+  // screen, show every chip at once, and come back to one row wherever there is
+  // room for one.
+  filters: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingBottom: spacing.md,
+  },
+  filter: {
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceHighlight,
+  },
+  filterText: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
+  filterTextActive: { color: colors.onAccent },
   section: {
     marginBottom: spacing.xl,
   },

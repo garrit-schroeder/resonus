@@ -215,6 +215,16 @@ export interface Album {
   year?: number;
   starred?: string;
   /**
+   * The day the record came out, not just its year (OpenSubsonic; Navidrome
+   * sends both). `year` is all `getAlbumList2` sorts by, so everything released
+   * in the same year ties and the server falls back to the album name: this is
+   * what puts the newest first (see `releaseValue` in data.ts).
+   */
+  originalReleaseDate?: { year?: number; month?: number; day?: number };
+  /** The day this particular edition came out (OpenSubsonic). Fallback for
+   *  `originalReleaseDate` on a record that only carries this one. */
+  releaseDate?: { year?: number; month?: number; day?: number };
+  /**
    * When it was added to the server. Standard Subsonic; it's what "recently
    * added" is really sorted by, so merging several libraries into one list
    * needs it (see `mergeAlbums` in data.ts).
@@ -454,12 +464,8 @@ async function retryWithCanonicalId<T>(
 ): Promise<T | null> {
   const id = extra.id;
   if (typeof id !== 'string' || !idWouldChange(id)) return null;
-  // Turned off means nothing of this runs, down to the one extra request this
-  // would spend on a song that is simply not there any more. Read through the
-  // repair module rather than the settings store so the API layer keeps its
-  // one-way dependency on it.
   const repair = await import('@/lib/navidromeRepair').catch(() => null);
-  if (!repair?.idRepairEnabled()) return null;
+  if (!repair) return null;
   let res: T;
   try {
     res = await request<T>(auth, endpoint, { ...extra, id: canonicalId(id) }, allowOffline, true);
@@ -565,6 +571,38 @@ export async function ping(auth: SubsonicAuth): Promise<void> {
  *  work: a miss costs one comparison that was going to happen anyway. */
 const lastVersionSeen = new Map<string, string>();
 
+/**
+ * Whether the server this profile talks to is at least `major.minor`.
+ *
+ * `undefined` for "no idea", which is every case that is not a plain answer:
+ * before the first `ping`, and for any version string that does not start with
+ * two numbers (a develop build carrying a git sha, a fork with its own
+ * scheme, a proxy rewriting it).
+ *
+ * Worth being clear about what this may and may not be used for. It gates
+ * whether a feature is *offered*, where being wrong costs a button that is
+ * there or is not; the repair of the ids deliberately refuses to trust it for
+ * anything else, and says why at length (`navidromeRepair.noteServerVersion`).
+ * The three-valued answer is the whole point: a caller has to decide what to
+ * do about not knowing, and for a feature the answer is to leave it out.
+ *
+ * Only meaningful next to a `serverType` check, since what the string means
+ * depends on who sent it: on Navidrome it is Navidrome's own version, and on a
+ * server that sends no `serverVersion` at all it is the Subsonic API level,
+ * where 1.16 has nothing to do with anybody's release.
+ */
+export function serverAtLeast(
+  auth: SubsonicAuth,
+  major: number,
+  minor: number,
+): boolean | undefined {
+  const seen = lastVersionSeen.get(`${auth.username}|${auth.serverUrl}`);
+  const parts = /^(\d+)\.(\d+)/.exec(seen ?? '');
+  if (!parts) return undefined;
+  const [seenMajor, seenMinor] = [Number(parts[1]), Number(parts[2])];
+  return seenMajor !== major ? seenMajor > major : seenMinor >= minor;
+}
+
 /** Which way round an order is read. It goes into the request, so it lives
  *  here with the rest of what a request can say. */
 export type SortDirection = 'asc' | 'desc';
@@ -574,6 +612,7 @@ export type AlbumListType =
   | 'recent'
   | 'frequent'
   | 'random'
+  | 'byYear'
   | 'alphabeticalByName'
   | 'alphabeticalByArtist'
   | 'starred';
@@ -593,6 +632,13 @@ export type SongListSort =
   | 'frequent'
   | 'random';
 
+/**
+ * How far back `byYear` reaches. It is not a filter anybody asked for: the list
+ * is meant to be the library by release date, and the endpoint only takes a
+ * range, so this is the floor of it.
+ */
+const FIRST_YEAR = 1900;
+
 export async function getAlbumList(
   auth: SubsonicAuth,
   type: AlbumListType = 'newest',
@@ -603,7 +649,17 @@ export async function getAlbumList(
   const res = await request<{ albumList2?: { album?: Album[] } }>(
     auth,
     'getAlbumList2.view',
-    { type, size, offset, ...(musicFolderId ? { musicFolderId } : {}) },
+    {
+      type,
+      size,
+      offset,
+      // `byYear` is the one type that takes a range, and the range is also what
+      // says which way round it is read: later to earlier is newest first.
+      ...(type === 'byYear'
+        ? { fromYear: new Date().getFullYear(), toYear: FIRST_YEAR }
+        : {}),
+      ...(musicFolderId ? { musicFolderId } : {}),
+    },
   );
   return res.albumList2?.album ?? [];
 }
@@ -1097,16 +1153,32 @@ export async function getSongList(
   return res.searchResult3?.song ?? [];
 }
 
-/** Most popular songs by an artist (by name). */
+/**
+ * Most popular songs by an artist.
+ *
+ * Both the name and the id go up, and which one the server uses is the
+ * server's business. Navidrome 0.64 takes `id` and announces it as the
+ * `topSongsByArtistId` extension; it looks the artist up by id first and falls
+ * back to the name if that finds nothing (`core/external.findArtist`). Older
+ * servers, and every other Subsonic implementation, ignore the parameter they
+ * do not know and answer by name exactly as before.
+ *
+ * So no extension check: asking `getOpenSubsonicExtensions` would spend a
+ * request to learn something that changes nothing about what we send. What the
+ * id buys is the case the name cannot express: two artists with the same name,
+ * where matching by name is `LIKE artist.name` with a limit of one and so
+ * returns whichever of them the database reaches first.
+ */
 export async function getTopSongs(
   auth: SubsonicAuth,
   artist: string,
   count = 10,
+  artistId?: string,
 ): Promise<Song[]> {
   const res = await request<{ topSongs?: { song?: Song[] } }>(
     auth,
     'getTopSongs.view',
-    { artist, count },
+    { artist, count, id: artistId },
   );
   return res.topSongs?.song ?? [];
 }
@@ -1178,12 +1250,30 @@ export async function getStarred(auth: SubsonicAuth, musicFolderId?: string): Pr
   };
 }
 
-export type StarType = 'song' | 'album' | 'artist';
+/**
+ * What a favourite can be about.
+ *
+ * `playlist` is Navidrome 0.64 and up only, and it is not in Subsonic at all.
+ * Starring one is written the same way a song is, with the plain `id`
+ * parameter, and the server works out what the id belongs to
+ * (`GetEntityByID`, navidrome/navidrome#5749). What it is *not* is readable
+ * that way: the same PR keeps annotations out of the Subsonic playlist
+ * responses on purpose, so `getStarred` will never mention a playlist and the
+ * state has to be read through the native API (`listStarredPlaylistIds`).
+ *
+ * On an older Navidrome the plain id falls through to `media_file`, matches
+ * nothing, and the server answers a cheerful OK having done nothing at all,
+ * which is why the heart is only offered where that read path exists (see
+ * `usePlaylistStars`): if we cannot read the state back, we do not pretend to
+ * write it.
+ */
+export type StarType = 'song' | 'album' | 'artist' | 'playlist';
 
 function starParam(id: string, type: StarType): Record<string, string> {
   // Subsonic uses a different parameter depending on the element type.
   if (type === 'album') return { albumId: id };
   if (type === 'artist') return { artistId: id };
+  // Songs, and playlists on Navidrome, which resolves the id itself.
   return { id };
 }
 
@@ -1305,6 +1395,16 @@ export interface SavedQueue {
   current?: string;
   /** Position in the current track, in milliseconds. */
   position: number;
+  /**
+   * When the server's copy was last written, by its own clock, and by whom.
+   *
+   * `changedBy` is the client name whoever saved it last sent (ours is
+   * `CLIENT_NAME`), which is how a queue left on another player is told from
+   * the last thing this phone pushed. Both are standard Subsonic and both are
+   * optional: a server that sends neither simply never looks newer.
+   */
+  changed?: number;
+  changedBy?: string;
 }
 
 /** Saves the play queue to the server (savePlayQueue). */
@@ -1335,11 +1435,24 @@ export async function savePlayQueue(
 /** Retrieves the saved queue from the server (getPlayQueue). */
 export async function getPlayQueue(auth: SubsonicAuth): Promise<SavedQueue | null> {
   const res = await request<{
-    playQueue?: { entry?: Song[]; current?: string; position?: number };
+    playQueue?: {
+      entry?: Song[];
+      current?: string;
+      position?: number;
+      changed?: string;
+      changedBy?: string;
+    };
   }>(auth, 'getPlayQueue.view');
   const pq = res.playQueue;
   if (!pq?.entry || pq.entry.length === 0) return null;
-  return { entries: pq.entry, current: pq.current, position: pq.position ?? 0 };
+  const changed = pq.changed ? Date.parse(pq.changed) : NaN;
+  return {
+    entries: pq.entry,
+    current: pq.current,
+    position: pq.position ?? 0,
+    changed: Number.isFinite(changed) ? changed : undefined,
+    changedBy: pq.changedBy,
+  };
 }
 
 /** Notifies the server that a song has been played (scrobble). */

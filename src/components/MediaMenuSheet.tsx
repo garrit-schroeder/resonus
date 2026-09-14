@@ -89,7 +89,7 @@ export function MediaMenuSheet() {
   const pins = usePins((s) => s.pins);
   const togglePin = usePins((s) => s.toggle);
   const playQueue = usePlayerStore((s) => s.playQueue);
-  const addToQueue = usePlayerStore((s) => s.addToQueue);
+  const queueMany = usePlayerStore((s) => s.queueMany);
   const router = useRouter();
   const openArtistPicker = useArtistPicker((s) => s.open);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -269,11 +269,21 @@ export function MediaMenuSheet() {
               />
             ))}
             <Action
+              icon="play-forward-outline"
+              label={t('Play next')}
+              onPress={() =>
+                withSongs((songs) => {
+                  queueMany(songs, 'next');
+                  toast(t('Playing next'));
+                })
+              }
+            />
+            <Action
               icon="list-outline"
               label={t('Add to queue')}
               onPress={() =>
                 withSongs((songs) => {
-                  for (const song of songs) addToQueue(song);
+                  queueMany(songs, 'end');
                   toast(t('Added to queue'));
                 })
               }
@@ -460,8 +470,8 @@ const styles = themed((colors) => ({
     width: '100%',
     maxWidth: SHEET_MAX_WIDTH,
     backgroundColor: colors.surface,
-    borderTopLeftRadius: radius.lg,
-    borderTopRightRadius: radius.lg,
+    borderTopLeftRadius: radius.xxl,
+    borderTopRightRadius: radius.xxl,
     paddingHorizontal: spacing.lg,
     // Smaller than the old spacing.lg because the grabber below already brings
     // its own margin: together they add up to the same top gap as before.
@@ -473,7 +483,7 @@ const styles = themed((colors) => ({
     alignSelf: 'center',
     width: 36,
     height: 4,
-    borderRadius: 2,
+    borderRadius: radius.pill,
     backgroundColor: colors.textMuted,
     opacity: 0.5,
     marginBottom: spacing.md,

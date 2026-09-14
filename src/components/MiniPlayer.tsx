@@ -27,6 +27,7 @@ import { CONTENT_MAX_WIDTH, useScreenSize } from '@/hooks/useScreenSize';
 import { useSettings } from '@/store/settings';
 import { useToast } from '@/store/toast';
 import { colors, fontSize, radius, spacing, themed } from '@/theme';
+import { motion } from '@/theme/motion';
 import { Cover } from './Cover';
 import { FavoriteButton } from './FavoriteButton';
 import { MarqueeText } from './MarqueeText';
@@ -94,7 +95,7 @@ export function MiniPlayer() {
         translateX.value = withSpring(0, { damping: 20, stiffness: 200 });
         translateY.value = 0;
       } else if (e.translationY > DISMISS_Y || e.velocityY > 800) {
-        translateY.value = withTiming(screenH, { duration: 220 }, (finished) => {
+        translateY.value = withTiming(screenH, { duration: motion.duration.move }, (finished) => {
           if (finished) scheduleOnRN(reset);
         });
       } else {

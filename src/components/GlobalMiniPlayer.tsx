@@ -10,6 +10,7 @@ import { Animated } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { NO_MINI_PLAYER, useTabBarShown } from '@/hooks/useTabBar';
+import { motion } from '@/theme/motion';
 import { spacing, TAB_BAR_HEIGHT } from '@/theme';
 import { MiniPlayer } from './MiniPlayer';
 
@@ -36,7 +37,7 @@ export function GlobalMiniPlayer() {
   useEffect(() => {
     Animated.timing(opacity, {
       toValue: visible ? 1 : 0,
-      duration: 200,
+      duration: motion.duration.fade,
       useNativeDriver: true,
     }).start();
   }, [visible, opacity]);

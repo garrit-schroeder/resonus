@@ -25,6 +25,7 @@ import { fetch as expoFetch } from 'expo/fetch';
 import { AppState } from 'react-native';
 import { create } from 'zustand';
 
+import { CLIENT_NAME } from '@/api/subsonic';
 import {
   getAlbum,
   getArtist,
@@ -1042,6 +1043,11 @@ async function ensurePlaybackReportSupport(auth: SubsonicAuth): Promise<boolean>
  */
 function reportState(state: PlaybackState, song: Song | undefined, positionSec: number): void {
   if (!song || song.url) return;
+  // Counted because of what the panel on the server shows: `starting` is the
+  // one report that says "from the top", so more of them than there were songs
+  // means something is announcing a track that was already playing, and that is
+  // a different fault from the position not being repeated.
+  bump(`report · ${state}`);
   const { auth, offline } = useAuthStore.getState();
   if (!auth || offline) return;
   void ensurePlaybackReportSupport(auth).then((supported) => {
@@ -1130,6 +1136,7 @@ function maybeScrobbleThreshold(positionSec: number) {
   // "Most played" on this phone, which is nobody else's business.
   if (offline) {
     usePlayCounts.getState().bump(song.id);
+    bump(auth ? 'scrobble · to outbox' : 'scrobble · local profile');
     if (auth) useOfflineQueue.getState().addPlay(song.id, at);
     return;
   }
@@ -1142,8 +1149,13 @@ function maybeScrobbleThreshold(positionSec: number) {
   // handed to a promise nobody was waiting on, and lost the moment it failed
   // (#126). A refusal from the network puts it in the same outbox an offline
   // one goes to, dated, so it goes up on the next reconnection either way.
+  bump('scrobble · sent');
   scrobble(auth, song.id, true).catch((e) => {
-    if (!(e instanceof SubsonicRequestError) || !e.network) return;
+    if (!(e instanceof SubsonicRequestError) || !e.network) {
+      bump('scrobble · server refused');
+      return;
+    }
+    bump('scrobble · to outbox (no network)');
     usePlayCounts.getState().bump(song.id);
     useOfflineQueue.getState().addPlay(song.id, at);
   });
@@ -1545,8 +1557,16 @@ async function extendWithArtistCatalog(auth: SubsonicAuth, artistId: string, hre
 
 async function maybeQueueAutoplay() {
   const { queue, index, repeat, radioMode, radioSeed, sourceHref } = usePlayerStore.getState();
-  // With repeat the queue never "runs out"; and if 2+ songs remain, not yet.
-  if (repeat !== 'off' || index < queue.length - 2) return;
+  // With repeat the queue never "runs out", so plain autoplay has no end to
+  // extend past; and if 2+ songs remain, not yet.
+  //
+  // A mix is not that. It was started by hand and the whole point of it is that
+  // it keeps arriving, so repeat does not get to stop it. Letting it was how
+  // "Start mix" came back "Couldn't find anything to mix with this song" for
+  // every song on any account that had left repeat on (#197): the report said
+  // nothing was found, and nothing had been looked for, because this line
+  // returned before a single request went out.
+  if ((repeat !== 'off' && !radioMode) || index < queue.length - 2) return;
   const { auth, offline } = useAuthStore.getState();
   if (!auth || offline) return;
   // A book read aloud must not drift into a mix when it ends. Asked of the
@@ -2504,8 +2524,12 @@ function onStatus(status: AudioStatus) {
   maybeScrobbleThreshold(positionSec);
   maybeDetectStall(intendPlay, buffering, positionSec);
   // Queue sync with the server.
-  if (status.playing) startPeriodicSync();
-  else {
+  if (status.playing) {
+    // Something is actually coming out of the speaker: from here on this
+    // device has an opinion worth sending (see `playedHere`).
+    markPlayedHere();
+    startPeriodicSync();
+  } else {
     stopPeriodicSync();
     if (prev.isPlaying) scheduleSync(); // just paused
   }
@@ -2540,11 +2564,19 @@ function onStatus(status: AudioStatus) {
 function handleSleepAtSongEnd(): boolean {
   const { sleepAtSongEnd, repeat } = usePlayerStore.getState();
   if (!sleepAtSongEnd) return false;
-  usePlayerStore.setState({ sleepAtSongEnd: false, isPlaying: false });
+  usePlayerStore.setState({ isPlaying: false });
   cutCrossfade();
   activePlayer()?.pause();
   const ni = nextIndex(false);
-  if (ni != null && repeat !== 'one') void loadIndex(ni, false);
+  // The timer stays on until the next track is in the player. Turning it off
+  // first brought the gapless queue back to life for the length of this
+  // handler, and queueing a source behind a track that has already ended does
+  // not queue anything: the player takes it as the one to play now and
+  // announces the move, late enough for that announcement to be read as a jump
+  // to whatever had been queued after it (#177).
+  const clear = () => usePlayerStore.setState({ sleepAtSongEnd: false });
+  if (ni == null || repeat === 'one') clear();
+  else void loadIndex(ni, false).finally(clear);
   return true;
 }
 
@@ -2597,6 +2629,13 @@ interface StoredQueue {
   repeat?: RepeatMode;
   /** The queue was dealt when it was started (see `queueDealt`). */
   dealt?: boolean;
+  /**
+   * When this device last wrote it (ms). Only read to compare against the
+   * server's copy: what is newer decides which of the two is somebody's last
+   * word, and a phone that listened all afternoon with no connection must not
+   * be handed yesterday's queue from another player on reconnecting.
+   */
+  savedAt?: number;
 }
 
 /** Guards what comes back from disk: the file is ours, but an older version's
@@ -2617,6 +2656,10 @@ function isRepeatMode(v: unknown): v is RepeatMode {
  * is waiting on the JS thread.
  */
 let queueDirty = true;
+
+/** When this device's queue was last written, for the comparison in
+ *  `adoptNewerServerQueue`. Zero until something is saved or restored. */
+let localSavedAt = 0;
 
 /**
  * Rewrites the ids in the queue, in memory and on disk.
@@ -2671,7 +2714,9 @@ function saveQueueLocal(force = false) {
     shuffle,
     dealt: queueDealt,
     repeat,
+    savedAt: Date.now(),
   };
+  localSavedAt = payload.savedAt ?? 0;
   void setItem(key, JSON.stringify(payload));
 }
 
@@ -2692,14 +2737,141 @@ function clearQueueLocal() {
   // a restart is the kind of difference nobody can explain to themselves
   // (reported by @ztx-lyghters).
   const { shuffle, repeat } = usePlayerStore.getState();
-  const empty: StoredQueue = { queue: [], index: 0, positionSec: 0, shuffle, repeat };
+  // Dated like any other write: emptying the queue is this device's last word
+  // on it, and what decides whether another player's is newer.
+  const empty: StoredQueue = {
+    queue: [],
+    index: 0,
+    positionSec: 0,
+    shuffle,
+    repeat,
+    savedAt: Date.now(),
+  };
+  localSavedAt = empty.savedAt ?? 0;
   void setItem(key, JSON.stringify(empty));
+}
+
+/**
+ * The queue from another player, when it is the newer of the two.
+ *
+ * The copy on this device is the faithful one — it knows about downloads,
+ * radios and how the queue was started, none of which fits in a Subsonic queue
+ * — so it is what comes back on a cold start and the server's is only a backup
+ * for a device that has none. That left no way in for the thing people
+ * actually want from this: leaving an album half played on the computer and
+ * finding it here.
+ *
+ * Two conditions, and both matter. `changedBy` says who wrote the server's copy
+ * last, and if it was us there is nothing there we do not already have. The
+ * timestamps say whether their copy is newer than this device's last word,
+ * which is what protects an afternoon of listening with no connection —
+ * nothing was pushed, but the queue here was still being written down.
+ */
+let lastAdoptCheck = 0;
+/** When the app last left the foreground, so a quick trip to another app is
+ *  not treated as somebody coming back from a different player. */
+let wentAway = 0;
+
+async function adoptNewerServerQueue(): Promise<void> {
+  if (!useSettings.getState().syncQueueFromServer) return;
+  const { auth, offline } = useAuthStore.getState();
+  if (!auth || offline) return;
+  const before = usePlayerStore.getState();
+  // Somebody is already listening: their queue is not up for replacing.
+  if (before.isPlaying) return;
+  // Coming back to the app is a common thing to do, and what this asks for is
+  // the whole queue with the metadata of every song in it — a few hundred
+  // kilobytes of JSON parsed on the thread that draws. Once a minute, and only
+  // after a while away, is as often as anybody changes players.
+  if (Date.now() - lastAdoptCheck < 60_000) return;
+  lastAdoptCheck = Date.now();
+  let saved;
+  try {
+    saved = await getPlayQueue(auth);
+  } catch {
+    return;
+  }
+  if (!saved || saved.entries.length === 0) return;
+  // Same answer the push guard asks for, already paid for here.
+  lastOwnerCheck = { at: Date.now(), theirs: !!saved.changedBy && saved.changedBy !== CLIENT_NAME };
+  if (!saved.changedBy || saved.changedBy === CLIENT_NAME) return;
+  // A server that does not date its queue cannot be shown to be newer, and
+  // guessing here is how somebody loses what they were listening to.
+  if (!saved.changed || !localSavedAt || saved.changed <= localSavedAt) return;
+  const now = usePlayerStore.getState();
+  // Anything that happened while the server was answering wins: a tap, a track
+  // change, the queue being emptied.
+  if (now.isPlaying || now.queue !== before.queue || now.index !== before.index) return;
+  await usePlayerStore.getState().restoreFromServer(true);
 }
 
 // ── Queue sync with server (savePlayQueue/getPlayQueue) ─────────────────────
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
 let syncInterval: ReturnType<typeof setInterval> | null = null;
 let appStateAttached = false;
+
+/**
+ * Whether anything has actually been listened to here since this queue arrived.
+ *
+ * A queue that came off the disk or off the server and has not been played is
+ * not this device's opinion about anything, and pushing it says otherwise. The
+ * plainest way to see why that matters: open the app, let it restore what you
+ * were on yesterday, do not press play, leave. That used to write yesterday's
+ * queue over whatever another player had left there since (#188).
+ */
+let playedHere = false;
+
+/** Called when a track actually starts on this device. */
+function markPlayedHere(): void {
+  playedHere = true;
+}
+
+/** And when the queue is somebody else's word rather than ours. */
+function clearPlayedHere(): void {
+  playedHere = false;
+}
+
+let lastOwnerCheck = { at: 0, theirs: false };
+
+/** A push of our own makes this device the last writer, which is the same
+ *  answer the check below would come back with, one request later. */
+function markWeOwnServerQueue(): void {
+  lastOwnerCheck = { at: Date.now(), theirs: false };
+}
+
+/** How long that answer is worth reusing. Pausing and then leaving the app is
+ *  two pushes moments apart, and this asks for the whole queue's worth of JSON. */
+const OWNER_CHECK_TTL = 10_000;
+
+/**
+ * Is the copy on the server somebody else's latest word?
+ *
+ * Asked before a push that is not backed by playback. Subsonic has no
+ * conditional save (no if-match, no revision), so the only way not to trample
+ * a newer queue is to look first. `changedBy` alone answers it: if the last
+ * client to write was not this one, then whoever it was spoke after us, and a
+ * paused queue here has no business overruling that.
+ *
+ * A server that sends no `changedBy` can never be shown to belong to somebody
+ * else, and then this says no and the push goes ahead, which is the behaviour
+ * every version before this one had.
+ */
+async function serverQueueIsSomeoneElses(auth: SubsonicAuth): Promise<boolean> {
+  if (Date.now() - lastOwnerCheck.at < OWNER_CHECK_TTL) return lastOwnerCheck.theirs;
+  let theirs = false;
+  try {
+    const saved = await getPlayQueue(auth);
+    theirs = !!saved && saved.entries.length > 0 && !!saved.changedBy && saved.changedBy !== CLIENT_NAME;
+  } catch {
+    // Unreachable, timed out, or a server with no getPlayQueue at all: not an
+    // answer, and refusing to push on a failed request would quietly stop the
+    // queue syncing for those servers. Not cached either, so the next push
+    // asks again rather than inheriting a guess.
+    return false;
+  }
+  lastOwnerCheck = { at: Date.now(), theirs };
+  return theirs;
+}
 
 /** Saves the queue on this device and, if there is a session, on the server. */
 function syncQueueNow(force = false, syncRemote = true) {
@@ -2709,12 +2881,33 @@ function syncQueueNow(force = false, syncRemote = true) {
   // none. Without this the queue was pushed every twenty seconds and on every
   // trip to the background, which is a phone using data its owner said not to.
   const { auth, offline } = useAuthStore.getState();
-  const { queue, index, positionSec } = usePlayerStore.getState();
+  const { queue, index, positionSec, isPlaying } = usePlayerStore.getState();
   const current = queue[index];
   if (auth && !offline && current && !current.url && !current.localUri) {
     const ids = queue.filter((s) => !s.url && !s.localUri).map((s) => s.id);
     if (ids.length > 0) {
-      void savePlayQueue(auth, ids, current.id, Math.floor(positionSec * 1000));
+      const positionMs = Math.floor(positionSec * 1000);
+      if (isPlaying) {
+        // Sounding here: this queue is the newest one there is by definition,
+        // and the twenty-second tick must not turn into two requests. Marked
+        // from the store's own state and not only from the native status, so
+        // that a queue playing on a speaker counts the same as one playing on
+        // the phone: the native player is silent during a cast.
+        markPlayedHere();
+        markWeOwnServerQueue();
+        void savePlayQueue(auth, ids, current.id, positionMs);
+      } else if (playedHere) {
+        // Paused, or on the way to the background. One look before writing.
+        void (async () => {
+          if (await serverQueueIsSomeoneElses(auth)) return;
+          // Playback may have resumed while the server answered, and then the
+          // ids and the second gathered above are already out of date; the
+          // tick that comes with playing will push the current ones.
+          if (usePlayerStore.getState().isPlaying) return;
+          markWeOwnServerQueue();
+          await savePlayQueue(auth, ids, current.id, positionMs);
+        })();
+      }
     }
   }
   if (syncRemote && remoteKind() === 'upnp') {
@@ -2737,8 +2930,23 @@ function scheduleSync() {
   syncTimer = setTimeout(syncQueueNow, 2500);
 }
 
+/**
+ * Every so often while a song plays: the queue, and where in the song it is.
+ *
+ * The server shows the position it was last told, and it is only told when
+ * something changes — so a song nobody touches sits at the second it started
+ * on, which is what the panel of a server that has been playing for a minute
+ * was showing (00:00 while the phone was at 1:20). Saying it again also keeps
+ * the entry alive, which is the other half of what a Now Playing list is.
+ */
+function periodicSync() {
+  syncQueueNow();
+  const st = usePlayerStore.getState();
+  if (st.isPlaying) reportState('playing', st.queue[st.index], st.positionSec);
+}
+
 function startPeriodicSync() {
-  if (!syncInterval) syncInterval = setInterval(syncQueueNow, 20000);
+  if (!syncInterval) syncInterval = setInterval(periodicSync, 20000);
 }
 
 function stopPeriodicSync() {
@@ -2763,6 +2971,7 @@ function attachAppState() {
       // not force a queue rewrite: minimizing the app should not touch the
       // current Sonos transport state.
       syncQueueNow(true, false);
+      wentAway = Date.now();
       return;
     }
     // Back to foreground. The native `playbackStatusUpdate` heartbeat that feeds
@@ -2790,6 +2999,12 @@ function attachAppState() {
       const song = currentSong(usePlayerStore.getState());
       if (song && lockOwner === p) applyLockScreen(p, song);
     }
+    // And whatever was left on another player while this one was in a pocket.
+    // Coming back is the moment that matters for it: a phone rarely starts
+    // cold, so leaving this to the opening would mean it almost never ran.
+    // Not for a trip to another app and back, though: changing players takes
+    // longer than that, and this is a request.
+    if (Date.now() - wentAway > 30_000) void adoptNewerServerQueue();
   });
 }
 
@@ -2934,9 +3149,10 @@ interface PlayerState {
   queue: Song[];
   index: number;
   /**
-   * Manually-added "add to queue" songs still pending; occupy
-   * positions index+1..index+queuedCount (Spotify "Next in queue"-style:
-   * they play right after the current one, before the list continues).
+   * Songs put straight after the current one by "Play next", still pending;
+   * they occupy positions index+1..index+queuedCount and are what the queue
+   * screen heads "Next in queue". "Add to queue" does not join them: it goes
+   * to the end of the whole queue (#184).
    */
   queuedCount: number;
   isPlaying: boolean;
@@ -3021,8 +3237,20 @@ interface PlayerState {
   startRadio: (seed: Song, source: string) => Promise<boolean>;
   /** Stops extending the queue. Doesn't touch it: finishes when it finishes. */
   stopRadio: () => void;
+  /** At the very end of the queue, after everything (#184). */
   addToQueue: (song: Song) => void;
+  /** Straight after the current song, at the front of the "queued" block. */
   playNext: (song: Song) => void;
+  /**
+   * A whole record's worth at once, in the order given.
+   *
+   * Not the same as calling the two above in a loop: `playNext` puts each song
+   * where the last one went, so an album handed over song by song comes out
+   * backwards, and either way a queue of a hundred is a hundred separate
+   * changes for whatever is listening to them (the remote players sync on
+   * every one).
+   */
+  queueMany: (songs: Song[], where: 'next' | 'end') => void;
   toggle: () => void;
   next: () => void;
   previous: () => void;
@@ -3052,8 +3280,15 @@ interface PlayerState {
   setSleepTimer: (minutes: number) => void;
   setSleepAtSongEnd: () => void;
   cancelSleepTimer: () => void;
-  /** Restores the queue saved on the server (without playing). */
-  restoreFromServer: () => Promise<void>;
+  /**
+   * Restores the queue saved on the server (without playing).
+   *
+   * On a cold start it only fills a gap, since the copy on this device is the
+   * faithful one. `replace` is somebody asking for it on purpose — the queue
+   * they left on another player, brought over here — and then whatever is
+   * playing gives way to it. False when the server had nothing to give.
+   */
+  restoreFromServer: (replace?: boolean) => Promise<boolean>;
   /** Restores the queue saved on this device (without playing).
    *  Returns true if there was a local copy (even an intentionally emptied
    *  queue): in that case the server backup should not enter. */
@@ -3265,6 +3500,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         index: 0,
         queuedCount: 0,
         shuffle: false,
+        // Off, for the same reason shuffle is: a mix is an endless line of
+        // tracks arriving, and the two playback modes that rearrange a queue
+        // with an end have nothing to say about one without. `one` is the case
+        // that made this worth doing rather than tidy, since it would hold the
+        // seed on screen for ever with the whole mix waiting behind it (#197).
+        repeat: 'off',
         queueDealt: false,
         originalQueue: null,
         source,
@@ -3272,6 +3513,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         radioMode: true,
         radioSeed: cur,
       });
+      // The player is already loaded and was told to loop when it was, so
+      // turning repeat off in the state above is not enough on its own: the
+      // track would go round again while the mix waited behind it.
+      applyLoop(activePlayer());
       // `loadIndex` isn't running, so nothing else is going to persist this.
       scheduleSync();
       await maybeQueueAutoplay();
@@ -3281,6 +3526,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     // for the server to respond before pressing play would make "start mix" feel
     // broken. Awaiting `maybeQueueAutoplay` afterwards doesn't delay playback,
     // only the answer of whether the mix found anything.
+    //
+    // Repeat goes off before the seed is loaded rather than after, so the load is the thing
+    // that tells the player (`applyLoop` reads the state as it goes), and
+    // `playQueue` writes it down with the rest of the queue.
+    set({ repeat: 'off' });
     await get().playQueue([seed], 0, source);
     set({ radioMode: true, radioSeed: seed });
     await maybeQueueAutoplay();
@@ -3292,21 +3542,31 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     saveQueueLocal();
   },
 
-  // Spotify-style: manually added songs play right after the current one (and
-  // after what was already added before), not at the end of the playing list.
-  //
-  // Adding one from the queue itself hands back the very object that is in it,
-  // mark and all, so a song picked out of a mix would have carried the mark
-  // into the middle of an album and taken the header with it (`handAdded`).
+  /**
+   * The end of the queue, and it means the end (#184).
+   *
+   * It used to land at the back of the "queued" block, which is where Spotify
+   * puts it — but Spotify has no "Play next" beside it. With both in the menu,
+   * one going after the current song and the other one place further along is
+   * a distinction nobody can see and a name that does not describe itself: the
+   * report was somebody adding a record and finding it before the rest of the
+   * one already playing. Every player that offers the pair reads it this way
+   * (Apple Music's "Play Last", Feishin's `Play.LAST`).
+   *
+   * The block is left alone: what is in it was put there by "Play next", and
+   * this song is not joining it.
+   *
+   * Adding one from the queue itself hands back the very object that is in it,
+   * mark and all, so a song picked out of a mix would have carried the mark
+   * into the middle of an album and taken the header with it (`handAdded`).
+   */
   addToQueue: (song) => {
-    const { queue, index, queuedCount } = get();
+    const { queue } = get();
     if (queue.length === 0) {
       void get().playQueue([song], 0);
       return;
     }
-    const next = [...queue];
-    next.splice(Math.min(index + queuedCount + 1, next.length), 0, handAdded(song));
-    set({ queue: next, queuedCount: queuedCount + 1 });
+    set({ queue: [...queue, handAdded(song)] });
     scheduleSync();
   },
 
@@ -3320,6 +3580,27 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     next.splice(index + 1, 0, handAdded(song));
     // It jumps to the front of the "queued" block; the block grows with it.
     set({ queue: next, queuedCount: queuedCount + 1 });
+    scheduleSync();
+  },
+
+  queueMany: (songs, where) => {
+    if (songs.length === 0) return;
+    const { queue, index, queuedCount } = get();
+    // Nothing playing: this is not a queue to add to, it is the queue.
+    if (queue.length === 0) {
+      void get().playQueue(songs, 0);
+      return;
+    }
+    // Built by hand rather than spread into `splice`: a playlist of thousands
+    // would be that many arguments in one call.
+    if (where === 'end') {
+      set({ queue: queue.concat(songs.map(handAdded)) });
+      scheduleSync();
+      return;
+    }
+    const at = index + 1;
+    const next = queue.slice(0, at).concat(songs.map(handAdded), queue.slice(at));
+    set({ queue: next, queuedCount: queuedCount + songs.length });
     scheduleSync();
   },
 
@@ -3762,24 +4043,30 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     set({ sleepEndsAt: null, sleepAtSongEnd: false });
   },
 
-  restoreFromServer: async () => {
+  restoreFromServer: async (replace = false) => {
     const { auth, offline } = useAuthStore.getState();
-    if (!auth || offline || get().queue.length > 0) return;
+    if (!auth || offline || (!replace && get().queue.length > 0)) return false;
     let saved;
     try {
       saved = await getPlayQueue(auth);
     } catch {
-      return;
+      return false;
     }
-    if (!saved || saved.entries.length === 0) return;
+    if (!saved || saved.entries.length === 0) return false;
     const songs = saved.entries;
     const index = saved.current
       ? Math.max(0, songs.findIndex((s) => s.id === saved.current))
       : 0;
     const positionSec = (saved.position ?? 0) / 1000;
-    // If something already started playing in the meantime, don't override the queue.
-    if (get().queue.length > 0) return;
+    // If something already started playing in the meantime, don't override the
+    // queue — unless overriding it is the whole request.
+    if (!replace && get().queue.length > 0) return false;
     attachAppState();
+    // This queue is the server's word and not this device's, so it is not
+    // pushed back until something is actually played from it (see
+    // `playedHere`). Otherwise adopting a queue and putting the phone away
+    // wrote it straight back, stamped with our name.
+    clearPlayedHere();
     set({
       queue: songs,
       index,
@@ -3802,9 +4089,10 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     // saw to that). What is left here belongs to the queue being restored, and
     // running it against another one would drop somebody else's song at the
     // position this one was left at, paused.
-    if (get().queue !== songs) return;
+    if (get().queue !== songs) return true;
     if (positionSec > 0) seekActive(positionSec);
     usePlayerStore.setState({ positionSec, isPlaying: false });
+    return true;
   },
 
   restoreFromStorage: async () => {
@@ -3818,6 +4106,8 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       return false;
     }
     if (!saved || !Array.isArray(saved.queue)) return false;
+    // What the comparison with the server's copy is made against.
+    localSavedAt = saved.savedAt ?? 0;
     // Saved empty queue = the user emptied it on purpose: nothing to
     // restore, but the server backup should also not enter. How they were
     // listening does come back: it outlived the queue while the app was open,
@@ -3883,7 +4173,15 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     // last thing the opening waits for.
     await timed('boot queue', async () => {
       const handled = await get().restoreFromStorage();
-      if (!handled && get().queue.length === 0) await get().restoreFromServer();
+      if (!handled && get().queue.length === 0) {
+        await get().restoreFromServer();
+        return;
+      }
+      // Not awaited, and not now: it is a whole queue coming down the wire and
+      // the first screens are asking for what they draw (#50). It replaces this
+      // one only if it turns out to be newer, and only while nobody has started
+      // listening here.
+      setTimeout(() => void adoptNewerServerQueue(), 4000);
     });
   },
 
@@ -3903,6 +4201,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
 
   reset: async (forProfile = false) => {
     get().cancelSleepTimer();
+    clearPlayedHere();
     autoplayFetchedFor = null;
     autoplayRound = null;
     artistFill = null;

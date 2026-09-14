@@ -1,7 +1,11 @@
 /**
  * Bottom sheet to pick a target playlist and add songs in bulk (multi-select).
- * Allows creating a new playlist, and putting them in Favorites instead.
- * Handles the addition and toasts itself, so it can be reused from any screen.
+ * Allows creating a new playlist. Handles the addition and toasts itself, so
+ * it can be reused from any screen.
+ *
+ * Favorites is not a row here any more: it is a property of the song rather
+ * than a list it belongs to, and this sheet could never take one off. It is in
+ * the ⋯ menu of the selection now (#164).
  */
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -12,12 +16,10 @@ import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-ha
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { addToPlaylist, COVER, coverArtUrl, createPlaylist, getPlaylist, getPlaylists, star } from '@/api/data';
+import { addToPlaylist, COVER, coverArtUrl, createPlaylist, getPlaylist, getPlaylists } from '@/api/data';
 import { useScreenSize } from '@/hooks/useScreenSize';
 import { type Song } from '@/api/subsonic';
 import { useBottomSheetAnim } from '@/hooks/useBottomSheetAnim';
-import { useFavoriteIds } from '@/hooks/useFavoriteIds';
-import { applyStarChange, resyncFavorites } from '@/lib/favoritesCache';
 import { songsLabel, useT } from '@/i18n';
 import { useAutoDownloads } from '@/store/autoDownloads';
 import { usePlaylistPicker } from '@/store/playlistPicker';
@@ -26,7 +28,6 @@ import { useToast } from '@/store/toast';
 import { colors, fontSize, radius, SHEET_MAX_WIDTH, spacing, themed } from '@/theme';
 import { Cover } from './Cover';
 import { Dialog } from './Dialog';
-import { FavoritesArt } from './FavoritesArt';
 
 /** Maximum height of the playlist list: proportional to the screen so it
  *  doesn't look cramped on large phones (previously a fixed 400), and read
@@ -87,14 +88,6 @@ export function PlaylistPickerSheet({
     enabled: visible,
   });
 
-  // Favorites is the other list a song can be put into, so it gets a row above
-  // the playlists. The ones already favorited are left alone, and when there is
-  // nothing left to add the row goes: that is also what hides it on the
-  // Favorites screen, where everything selected is a favorite by definition.
-  const favIds = useFavoriteIds(visible);
-  const freshFavs = songs?.filter((s) => !favIds?.has(s.id)) ?? [];
-  const canFavorite = !favIds || freshFavs.length > 0;
-
   if (!songs || songs.length === 0) return null;
 
   /** Actually adds (without checking duplicates) and closes with a toast.
@@ -143,27 +136,6 @@ export function PlaylistPickerSheet({
       // ignore
     }
     await doAdd(playlistId, name);
-  }
-
-  async function addToFavorites() {
-    const adding = freshFavs;
-    if (adding.length === 0) return;
-    close();
-    try {
-      for (const s of adding) {
-        await star(s.id, 'song');
-        // The cached list is patched, not thrown away: see `favoritesCache`.
-        applyStarChange('song', s.id, true, s);
-      }
-      toast(
-        adding.length === 1
-          ? t('Added to favorites')
-          : t('{n} added to favorites', { n: adding.length }),
-      );
-    } catch {
-      resyncFavorites();
-      toast(t("Couldn't complete the action"));
-    }
   }
 
   /** The warning has something to offer besides adding them all again. */
@@ -217,15 +189,6 @@ export function PlaylistPickerSheet({
                 </View>
                 <Text style={styles.rowText}>{t('New playlist')}</Text>
               </Pressable>
-              {canFavorite ? (
-                <Pressable
-                  style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
-                  onPress={() => void addToFavorites()}
-                >
-                  <FavoritesArt size={40} />
-                  <Text style={styles.rowText}>{t('Favorites')}</Text>
-                </Pressable>
-              ) : null}
               {isLoading ? (
                 <ActivityIndicator style={{ marginVertical: spacing.lg }} color={colors.accent} />
               ) : (
@@ -334,8 +297,8 @@ const styles = themed((colors) => ({
     width: '100%',
     maxWidth: SHEET_MAX_WIDTH,
     backgroundColor: colors.surface,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    borderTopLeftRadius: radius.xxl,
+    borderTopRightRadius: radius.xxl,
     paddingHorizontal: spacing.lg,
     // Smaller than the old spacing.lg because the grabber below already brings
     // its own margin: together they add up to the same top gap as before.
@@ -347,7 +310,7 @@ const styles = themed((colors) => ({
     alignSelf: 'center',
     width: 36,
     height: 4,
-    borderRadius: 2,
+    borderRadius: radius.pill,
     backgroundColor: colors.textMuted,
     opacity: 0.5,
     marginBottom: spacing.md,

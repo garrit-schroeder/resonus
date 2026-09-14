@@ -52,6 +52,8 @@ export default function PlaybackSettings() {
   const streamFormatCellular = useSettings((s) => s.streamFormatCellular);
   const setStreamFormatCellular = useSettings((s) => s.setStreamFormatCellular);
   const autoplaySimilar = useSettings((s) => s.autoplaySimilar);
+  const syncQueueFromServer = useSettings((s) => s.syncQueueFromServer);
+  const setSyncQueueFromServer = useSettings((s) => s.setSyncQueueFromServer);
   const setAutoplaySimilar = useSettings((s) => s.setAutoplaySimilar);
   const crossfadeSec = useSettings((s) => s.crossfadeSec);
   const setCrossfadeSec = useSettings((s) => s.setCrossfadeSec);
@@ -120,7 +122,7 @@ export default function PlaybackSettings() {
               options={[
                 {
                   label: t('Preload upcoming tracks'),
-                  description: t('Request the next few tracks ahead of time so they start instantly. Helps with proxy servers like Octo-Fiesta or slow sources that fetch tracks on demand.'),
+                  description: t('Request the next few tracks ahead of time so they start instantly. Helps with proxy servers and slow sources that fetch each track on demand.'),
                   value: preloadUpcoming,
                   onChange: setPreloadUpcoming,
                   disabled: offline,
@@ -247,6 +249,21 @@ export default function PlaybackSettings() {
                     description: t('Keep playing similar songs when your queue ends. A mix you start yourself always does, even with this off.'),
                     value: autoplaySimilar,
                     onChange: setAutoplaySimilar,
+                    disabled: offline,
+                  },
+                ]),
+            // Server only: the queue on the server is the server's, and a
+            // local profile does not have one.
+            ...(local
+              ? []
+              : [
+                  {
+                    label: t('Pick up the queue from other players'),
+                    description: t(
+                      'When you open the app with nothing playing, take the queue another player left on the server if it is newer than this one. The ⋯ of the queue screen asks for it at any time.',
+                    ),
+                    value: syncQueueFromServer,
+                    onChange: setSyncQueueFromServer,
                     disabled: offline,
                   },
                 ]),

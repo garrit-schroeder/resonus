@@ -1354,3 +1354,88 @@ index f3ae4ee4044d86032cd5c6dbcfee6f905d1ce99f..90a5811df35aa1ef06fa7743e2c0eca5
  };
  export declare class AudioRecorder extends SharedObject<RecordingEvents> {
      /**
+diff --git a/ios/AudioRecords.swift b/ios/AudioRecords.swift
+index 33db27c..7999534 100644
+--- a/ios/AudioRecords.swift
++++ b/ios/AudioRecords.swift
+@@ -70,6 +70,8 @@ struct LockScreenOptions: Record {
+   @Field var showSeekForward: Bool = false
+   @Field var showSeekBackward: Bool = false
+   @Field var isLiveStream: Bool? = false
++  @Field var showSkipPrevious: Bool = false
++  @Field var showSkipNext: Bool = false
+ }
+ 
+ enum BitRateStrategy: String, Enumerable {
+diff --git a/ios/MediaController.swift b/ios/MediaController.swift
+index e977f57..06d58dc 100644
+--- a/ios/MediaController.swift
++++ b/ios/MediaController.swift
+@@ -14,6 +14,7 @@ class MediaController {
+   private var artworkLoadToken: UUID?
+   private var currentArtworkItemIdentifier: ObjectIdentifier?
+   private var isLiveStream = false
++  private var remoteCommandTargetsRegistered = false
+ 
+   func setActivePlayer(_ player: AudioPlayer?, options: LockScreenOptions? = nil) {
+     performOnMain {
+@@ -232,6 +233,15 @@ class MediaController {
+   }
+ 
+   private func enableRemoteCommands(options: LockScreenOptions?) {
++    updateRemoteCommandAvailability(options: options)
++
++    // Registering once is what keeps a tap on next from skipping several
++    // tracks: the command centre is process wide, the closures read
++    // `activePlayer` at press time, and `removeTarget(self)` does not remove
++    // them, so every lock screen handoff would pile on another live handler.
++    guard !remoteCommandTargetsRegistered else { return }
++    remoteCommandTargetsRegistered = true
++
+     remoteCommandCenter.playCommand.addTarget { [weak self] _ in
+       guard let player = self?.activePlayer else {
+         return .commandFailed
+@@ -303,12 +313,34 @@ class MediaController {
+       return .success
+     }
+ 
++    remoteCommandCenter.nextTrackCommand.addTarget { [weak self] _ in
++      guard let player = self?.activePlayer else {
++        return .commandFailed
++      }
++
++      player.emit(event: "remoteNext")
++      return .success
++    }
++
++    remoteCommandCenter.previousTrackCommand.addTarget { [weak self] _ in
++      guard let player = self?.activePlayer else {
++        return .commandFailed
++      }
++
++      player.emit(event: "remotePrevious")
++      return .success
++    }
++  }
++
++  private func updateRemoteCommandAvailability(options: LockScreenOptions?) {
+     remoteCommandCenter.playCommand.isEnabled = true
+     remoteCommandCenter.pauseCommand.isEnabled = true
+     remoteCommandCenter.togglePlayPauseCommand.isEnabled = true
+     remoteCommandCenter.changePlaybackPositionCommand.isEnabled = !isLiveStream
+     remoteCommandCenter.skipForwardCommand.isEnabled = options?.showSeekForward ?? false
+     remoteCommandCenter.skipBackwardCommand.isEnabled = options?.showSeekBackward ?? false
++    remoteCommandCenter.nextTrackCommand.isEnabled = options?.showSkipNext ?? false
++    remoteCommandCenter.previousTrackCommand.isEnabled = options?.showSkipPrevious ?? false
+   }
+ 
+   private func disableRemoteCommands() {
+@@ -318,6 +350,8 @@ class MediaController {
+     remoteCommandCenter.changePlaybackPositionCommand.isEnabled = false
+     remoteCommandCenter.skipForwardCommand.isEnabled = false
+     remoteCommandCenter.skipBackwardCommand.isEnabled = false
++    remoteCommandCenter.nextTrackCommand.isEnabled = false
++    remoteCommandCenter.previousTrackCommand.isEnabled = false
+ 
+     // Remove event targets
+     remoteCommandCenter.playCommand.removeTarget(self)

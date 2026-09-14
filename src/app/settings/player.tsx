@@ -9,12 +9,30 @@ import { useAuthStore } from '@/store/auth';
 import { useTheme } from '@/theme';
 import {
   type CardBackground,
+  type CoverDoubleTapAction,
   type CoverTapAction,
   type LyricsSource,
   type ScreenBackground,
   type PreviousButtonMode,
   useSettings,
 } from '@/store/settings';
+
+/**
+ * The cover's actions, the same list for one tap and for two.
+ *
+ * Which of them belongs on which tap is the listener's call: play/pause on the
+ * single and the lyrics on the double is as reasonable as the other way round.
+ */
+function coverTapOptions(t: ReturnType<typeof useT>): { value: CoverTapAction; label: string }[] {
+  return [
+    { value: 'none', label: t('Nothing') },
+    { value: 'screen', label: t('Open lyrics screen') },
+    { value: 'inline', label: t('Show lyrics on the cover') },
+    { value: 'album', label: t('Go to album') },
+    { value: 'playPause', label: t('Play or pause') },
+    { value: 'favorite', label: t('Add to favorites') },
+  ];
+}
 
 export default function PlayerSettings() {
   // Repaints on a change of appearance or accent: a stack keeps this screen
@@ -42,6 +60,8 @@ export default function PlayerSettings() {
   const setPlayerBackground = useSettings((s) => s.setPlayerBackground);
   const fitCoverArt = useSettings((s) => s.fitCoverArt);
   const setFitCoverArt = useSettings((s) => s.setFitCoverArt);
+  const animatedCoverBackground = useSettings((s) => s.animatedCoverBackground);
+  const setAnimatedCoverBackground = useSettings((s) => s.setAnimatedCoverBackground);
   const miniPlayerColorBackground = useSettings((s) => s.miniPlayerColorBackground);
   const setMiniPlayerColorBackground = useSettings((s) => s.setMiniPlayerColorBackground);
   const lyricsBackground = useSettings((s) => s.lyricsBackground);
@@ -50,7 +70,11 @@ export default function PlayerSettings() {
   const setLyricsCardBackground = useSettings((s) => s.setLyricsCardBackground);
   const showLyricsCard = useSettings((s) => s.showLyricsCard);
   const setShowLyricsCard = useSettings((s) => s.setShowLyricsCard);
+  const showArtistCard = useSettings((s) => s.showArtistCard);
+  const setShowArtistCard = useSettings((s) => s.setShowArtistCard);
   const coverTapAction = useSettings((s) => s.coverTapAction);
+  const coverDoubleTapAction = useSettings((s) => s.coverDoubleTapAction);
+  const setCoverDoubleTapAction = useSettings((s) => s.setCoverDoubleTapAction);
   const setCoverTapAction = useSettings((s) => s.setCoverTapAction);
   const lyricsSource = useSettings((s) => s.lyricsSource);
   const setLyricsSource = useSettings((s) => s.setLyricsSource);
@@ -105,18 +129,31 @@ export default function PlayerSettings() {
               value: fitCoverArt,
               onChange: setFitCoverArt,
             },
+            {
+              label: t('Animated cover background'),
+              description: t(
+                'An animated cover fills the player behind the controls, with a still copy of it beside the title.',
+              ),
+              value: animatedCoverBackground,
+              onChange: setAnimatedCoverBackground,
+            },
           ]}
         />
         <SelectList<CoverTapAction>
           label={t('On cover tap')}
           description={t('What tapping the cover art in the player does.')}
-          options={[
-            { value: 'none', label: t('Nothing') },
-            { value: 'screen', label: t('Open lyrics screen') },
-            { value: 'inline', label: t('Show lyrics on the cover') },
-          ]}
+          options={coverTapOptions(t)}
           value={coverTapAction}
           onChange={setCoverTapAction}
+        />
+        <SelectList<CoverDoubleTapAction>
+          label={t('On cover double tap')}
+          description={t(
+            'A second action for the same artwork, for a hand that is not looking. With this on, a single tap waits a moment to see whether a second one is coming.',
+          )}
+          options={coverTapOptions(t)}
+          value={coverDoubleTapAction}
+          onChange={setCoverDoubleTapAction}
         />
 
         <Text style={settingsStyles.sectionTitle}>{t('Elements')}</Text>
@@ -150,6 +187,18 @@ export default function PlayerSettings() {
               value: marqueeTitles,
               onChange: setMarqueeTitles,
             },
+            // The biography comes from the server, and the local profile has
+            // none to come: the row goes rather than staying dead.
+            ...(local
+              ? []
+              : [
+                  {
+                    label: t('Show artist card'),
+                    description: t("The artist's photo and biography, below the player controls."),
+                    value: showArtistCard,
+                    onChange: setShowArtistCard,
+                  },
+                ]),
           ]}
         />
 

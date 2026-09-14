@@ -7,9 +7,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useRouter } from 'expo-router';
 import { Pressable, ScrollView, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { ScreenHeader, settingsStyles } from '@/components/SettingsUI';
+import { ScreenHeader, SettingsSafeArea, settingsStyles } from '@/components/SettingsUI';
 import { useT } from '@/i18n';
 import { useAuthStore } from '@/store/auth';
 import { anyDownloads, useDownloads } from '@/store/downloads';
@@ -108,7 +107,7 @@ export default function SettingsScreen() {
   ];
 
   return (
-    <SafeAreaView style={settingsStyles.safe} edges={['top']}>
+    <SettingsSafeArea>
       <ScreenHeader title={t('Settings')} />
       {/* The same centred pane every other settings screen gets from
           `SettingsPage`; this one draws its own header, so it says it here. */}
@@ -189,7 +188,7 @@ export default function SettingsScreen() {
         </View>
       </ScrollView>
       </View>
-    </SafeAreaView>
+    </SettingsSafeArea>
   );
 }
 
@@ -204,7 +203,7 @@ const styles = themed((colors) => ({
   avatar: {
     width: 44,
     height: 44,
-    borderRadius: 22,
+    borderRadius: radius.pill,
     backgroundColor: colors.surfaceHighlight,
     borderWidth: 2,
     borderColor: colors.accent,

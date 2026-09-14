@@ -13,11 +13,12 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { radius, spacing, themed } from '@/theme';
+import { motion } from '@/theme/motion';
 
 export function ArtistListSkeleton({ count = 10 }: { count?: number }) {
   const pulse = useSharedValue(1);
   useEffect(() => {
-    pulse.value = withRepeat(withTiming(0.45, { duration: 700 }), -1, true);
+    pulse.value = withRepeat(withTiming(0.45, { duration: motion.duration.pulse }), -1, true);
   }, [pulse]);
   const pulseStyle = useAnimatedStyle(() => ({ opacity: pulse.value }));
 
@@ -42,7 +43,7 @@ const styles = themed((colors) => {
   return {
     list: { paddingHorizontal: spacing.lg, gap: spacing.lg },
     row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-    photo: { ...block, width: 56, height: 56, borderRadius: 28 },
+    photo: { ...block, width: 56, height: 56, borderRadius: radius.pill },
     info: { flex: 1, gap: spacing.sm },
     bar: { ...block, height: 12, borderRadius: radius.sm },
     barThin: { height: 8 },

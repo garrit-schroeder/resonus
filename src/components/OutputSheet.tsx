@@ -39,7 +39,7 @@ import {
   useUpnp,
   type UpnpDevice,
 } from '@/store/upnp';
-import { colors, fontSize, SHEET_MAX_WIDTH, spacing, themed } from '@/theme';
+import { colors, fontSize, radius, SHEET_MAX_WIDTH, spacing, themed } from '@/theme';
 
 export function OutputSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
   const insets = useSafeAreaInsets();
@@ -420,8 +420,8 @@ const styles = themed((colors) => ({
     maxWidth: SHEET_MAX_WIDTH,
     maxHeight: '84%',
     backgroundColor: colors.surface,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    borderTopLeftRadius: radius.xxl,
+    borderTopRightRadius: radius.xxl,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.sm,
   },
@@ -429,7 +429,7 @@ const styles = themed((colors) => ({
     alignSelf: 'center',
     width: 36,
     height: 4,
-    borderRadius: 2,
+    borderRadius: radius.pill,
     backgroundColor: colors.textMuted,
     opacity: 0.5,
     marginBottom: spacing.md,

@@ -19,6 +19,13 @@ import { showUndoToast, useToast } from '@/store/toast';
 import { queryClient } from './query';
 
 const KEY = ['starred'];
+/**
+ * Where the favourite playlists live, which is not in `KEY` and cannot be.
+ * Declared here rather than in the hook that fills it so this module keeps
+ * owning every query key it writes to, and so nothing in `lib` has to reach
+ * up into `hooks` to learn one.
+ */
+export const PLAYLIST_KEY = ['playlistStars'];
 
 export function applyStarChange(
   type: StarType,
@@ -26,6 +33,23 @@ export function applyStarChange(
   added: boolean,
   item?: Song | Album | Artist,
 ): void {
+  // Playlists are not in this list and never will be: Navidrome keeps their
+  // annotations out of the Subsonic responses, so they are read from its
+  // native API under a key of their own (see `usePlaylistStars`). Without this
+  // branch a heart on a playlist would fall through to the bottom of this
+  // function and invalidate the whole favourites list, several MB re-parsed
+  // to record a change that is not even in it.
+  if (type === 'playlist') {
+    const ids = queryClient.getQueryData<string[] | null>(PLAYLIST_KEY);
+    // `null` is "this server cannot tell us", and a tap does not change that.
+    if (!ids) return;
+    queryClient.setQueryData<string[]>(
+      PLAYLIST_KEY,
+      added ? (ids.includes(id) ? ids : [...ids, id]) : ids.filter((x) => x !== id),
+    );
+    return;
+  }
+
   const prev = queryClient.getQueryData<Starred>(KEY);
   if (!prev) return;
 
@@ -67,6 +91,10 @@ export function applyStarChange(
 /** After a failed star/unstar, the cache may be telling a lie: ask again. */
 export function resyncFavorites(): void {
   void queryClient.invalidateQueries({ queryKey: KEY });
+  // Both, because the caller that reaches for this is a failed star and it
+  // does not say what kind: `FavoriteButton` calls it for whatever it was
+  // holding. Invalidating a key nothing is watching costs nothing.
+  void queryClient.invalidateQueries({ queryKey: PLAYLIST_KEY });
 }
 
 /**

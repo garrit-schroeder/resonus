@@ -2,12 +2,20 @@
 import { create } from 'zustand';
 
 import { isLanguage, LANGUAGE_NAMES, type Language } from '@/i18n/languages';
+import { type TabSegment } from '@/lib/tabOrigin';
 import { hashKey } from '@/lib/localLibrary';
 import { setPerfEnabled } from '@/lib/perfLog';
 import { profileScopeGuard } from '@/lib/profileScope';
 import { queryClient } from '@/lib/query';
 import { getItem, setItem } from '@/lib/storage';
-import { applyAccent, applyThemeMode, DEFAULT_ACCENT, isThemeMode, type ThemeMode } from '@/theme';
+import {
+  applyAccents,
+  applyThemePreference,
+  DEFAULT_ACCENT,
+  isThemePreference,
+  type ThemeMode,
+  type ThemePreference,
+} from '@/theme';
 import { profileScopeId, useAuthStore } from './auth';
 
 // The field is named `color` (not `value`) on purpose: Reanimated warns
@@ -44,11 +52,6 @@ const LANG_KEY = 'resonus.language';
  *  hashed: SecureStore only accepts [A-Za-z0-9._-] and the URL contains `:`, `/`, `|`. */
 function settingsKey(): string {
   return `${STORAGE_KEY}.${hashKey(profileScopeId())}`;
-}
-
-/** Marker for the one-off «Rating» migration (see `hydrate`), per profile too. */
-function ratingShownKey(): string {
-  return `${STORAGE_KEY}.ratingShown.${hashKey(profileScopeId())}`;
 }
 
 /**
@@ -181,6 +184,7 @@ export type GridKey =
   | 'library'
   | 'browseArtists'
   | 'browseAlbums'
+  | 'browsePlaylists'
   | 'browseSongs'
   | 'discography'
   | 'genre'
@@ -213,6 +217,7 @@ export const GRID_DEFAULT_COLUMNS: Record<GridKey, number> = {
   library: 3,
   browseArtists: 3,
   browseAlbums: 2,
+  browsePlaylists: 2,
   browseSongs: 2,
   discography: 2,
   genre: 2,
@@ -298,9 +303,52 @@ export type ScreenBackground = 'none' | 'color' | 'cover';
  */
 export type CardBackground = 'none' | 'color';
 
-/** What tapping the cover in the player does: nothing, open the lyrics screen,
- *  or show lyrics in place of the cover. */
-export type CoverTapAction = 'none' | 'screen' | 'inline';
+/**
+ * What tapping the cover in the player does.
+ *
+ * One tap and two draw from the same list. Which action belongs on which is
+ * nobody's business but the listener's: wanting play/pause on the single tap
+ * and the lyrics on the double is as reasonable as the other way round, and
+ * splitting the lists only made half of each unreachable.
+ */
+export const COVER_TAP_ACTIONS = [
+  'none',
+  'screen',
+  'inline',
+  'playPause',
+  'favorite',
+  'album',
+] as const;
+
+/**
+ * Derived from the list above rather than written out beside it, which is the
+ * one thing that keeps the two from disagreeing.
+ *
+ * They did. The loader used to spell out which values it would accept, three
+ * each and different threes, because the two settings once had separate lists
+ * and those were the halves. Merging the lists left the loader with the old
+ * ones, so a single tap saved as `album` was refused on the way back in and
+ * came up as `screen`: pick "Go to album", reopen the app, and it says "Open
+ * lyrics screen". The double tap had it worse and nobody noticed, since
+ * everything but play/pause and favourite fell back to `none` and turned the
+ * gesture off.
+ */
+export type CoverTapAction = (typeof COVER_TAP_ACTIONS)[number];
+
+/** Whether a value off the disk is one of them. */
+export function isCoverTapAction(value: unknown): value is CoverTapAction {
+  return COVER_TAP_ACTIONS.includes(value as CoverTapAction);
+}
+
+/**
+ * What tapping the cover twice does (#156). The same list as one tap.
+ *
+ * Off by default, and not only out of caution: with this on, a single tap has
+ * to wait to find out whether a second one is coming, so the tap that is
+ * already there gets slower for everybody who turns this on. That is a price
+ * worth asking about rather than charging.
+ */
+export type CoverDoubleTapAction = CoverTapAction;
 
 /**
  * Where lyrics come from:
@@ -324,7 +372,7 @@ export type PreferDownloads = 'always' | 'cellular' | 'original' | 'never';
 
 /** Tab the app starts on (and returns to after being in the background for a
  *  while). Matches the `(tabs)` route names. */
-export type DefaultTab = 'index' | 'search' | 'library';
+export type DefaultTab = 'index' | 'search' | 'library' | 'explore';
 
 /** "Previous" button behavior: restart the track after a few seconds (default,
  *  like Spotify) or always go to the previous track (like YouTube). */
@@ -335,9 +383,11 @@ export type SwipeAction = 'off' | 'queue' | 'next' | 'favorite' | 'menu';
 
 /** Home section row. `recentlyPlayed` and `discover` are server-only; `discover`
  *  rediscovers albums played long ago; `randomAlbums`/`randomArtists`
- *  are purely random. */
+ *  are purely random. `newReleases` is by the year on the tags, which is a
+ *  different list from `recentlyAdded`: that one is when the server got it. */
 export type HomeSectionKey =
   | 'recentlyAdded'
+  | 'newReleases'
   | 'recentlyPlayed'
   | 'mostPlayed'
   | 'mostPlayedSongs'
@@ -354,6 +404,7 @@ export interface HomeSection {
 
 const HOME_SECTION_KEYS: HomeSectionKey[] = [
   'recentlyAdded',
+  'newReleases',
   'recentlyPlayed',
   'mostPlayed',
   'mostPlayedSongs',
@@ -363,17 +414,56 @@ const HOME_SECTION_KEYS: HomeSectionKey[] = [
   'randomArtists',
 ];
 
-/** Default order and state (optional ones off to avoid cluttering Home). */
+/**
+ * Default order and state: all of them on.
+ *
+ * Five of these used to start off, to keep Home short. It kept them secret
+ * instead: a section nobody has seen is a section nobody knows to look for in
+ * the settings, and the ones held back were the discoveries (random albums and
+ * artists, new releases) rather than the obvious lists. Showing everything and
+ * letting Home be scrolled is the way round somebody can act on, since turning
+ * one off is a switch away and turning on a row you have never heard of is not.
+ *
+ * A section that is off is not drawn and asks the server nothing (see Home's
+ * own `if (!s.enabled) return null`), so this is nine requests on a first run
+ * where it used to be four. Which is also the only cost of it.
+ */
 export const DEFAULT_HOME_SECTIONS: HomeSection[] = [
   { key: 'discover', enabled: true },
-  { key: 'playlists', enabled: false },
+  { key: 'playlists', enabled: true },
   { key: 'recentlyAdded', enabled: true },
+  { key: 'newReleases', enabled: true },
   { key: 'recentlyPlayed', enabled: true },
   { key: 'mostPlayed', enabled: true },
-  { key: 'mostPlayedSongs', enabled: false },
-  { key: 'randomAlbums', enabled: false },
-  { key: 'randomArtists', enabled: false },
+  { key: 'mostPlayedSongs', enabled: true },
+  { key: 'randomAlbums', enabled: true },
+  { key: 'randomArtists', enabled: true },
 ];
+
+/**
+ * Same as the Home chips: keeps the saved order and state, drops what it does
+ * not know, and appends anything a later version added.
+ *
+ * A string where an entry should be is the shape this setting had before it
+ * had switches, and it means on: somebody who ordered their chips keeps that
+ * order and loses nothing by the upgrade.
+ */
+function normalizeExploreSections(raw: unknown): ExploreSection[] {
+  if (!Array.isArray(raw)) return DEFAULT_EXPLORE_SECTIONS.map((s) => ({ ...s }));
+  const seen = new Set<ExploreSectionKey>();
+  const out: ExploreSection[] = [];
+  for (const item of raw) {
+    const key = (typeof item === 'string' ? item : item?.key) as ExploreSectionKey;
+    if (!EXPLORE_SECTION_KEYS.includes(key) || seen.has(key)) continue;
+    seen.add(key);
+    const enabled = typeof item === 'string' ? true : item?.enabled;
+    out.push({ key, enabled: typeof enabled === 'boolean' ? enabled : true });
+  }
+  for (const def of DEFAULT_EXPLORE_SECTIONS) {
+    if (!seen.has(def.key)) out.push({ ...def });
+  }
+  return out;
+}
 
 /**
  * Sanitizes the saved list: preserves user order and state, discards unknown
@@ -397,8 +487,9 @@ function normalizeHomeSections(raw: unknown): HomeSection[] {
   return out;
 }
 
-/** Home explore row chip. `genres` and `radio` are server-only. */
-export type ExploreChipKey =
+/** One of the chips in the row at the top of Home. `genres` and `radio`
+ *  are server-only. */
+export type HomeChipKey =
   | 'shuffle'
   | 'favorites'
   | 'albums'
@@ -410,12 +501,12 @@ export type ExploreChipKey =
   | 'audiobooks';
 
 /** Chip with its state (order is determined by its position in the list). */
-export interface ExploreChip {
-  key: ExploreChipKey;
+export interface HomeChip {
+  key: HomeChipKey;
   enabled: boolean;
 }
 
-const EXPLORE_CHIP_KEYS: ExploreChipKey[] = [
+const HOME_CHIP_KEYS: HomeChipKey[] = [
   'shuffle',
   'favorites',
   'albums',
@@ -428,7 +519,7 @@ const EXPLORE_CHIP_KEYS: ExploreChipKey[] = [
 ];
 
 /** Default order and state: the usual ones, all visible. */
-export const DEFAULT_EXPLORE_CHIPS: ExploreChip[] = [
+export const DEFAULT_HOME_CHIPS: HomeChip[] = [
   { key: 'shuffle', enabled: true },
   { key: 'favorites', enabled: false },
   { key: 'albums', enabled: true },
@@ -442,120 +533,176 @@ export const DEFAULT_EXPLORE_CHIPS: ExploreChip[] = [
   { key: 'audiobooks', enabled: false },
 ];
 
+/** One of the pills at the top of Explore. `genres`, `radio` and `folders`
+ *  need a server; the rest the local catalogue answers for too. */
+export type ExploreSectionKey =
+  | 'playlists'
+  | 'albums'
+  | 'artists'
+  | 'songs'
+  | 'genres'
+  | 'radio'
+  | 'folders';
+
+/** A section with its state, the shape the Home chips already have (order is
+ *  its position in the list). */
+export interface ExploreSection {
+  key: ExploreSectionKey;
+  enabled: boolean;
+}
+
+const EXPLORE_SECTION_KEYS: ExploreSectionKey[] = [
+  'playlists',
+  'albums',
+  'artists',
+  'songs',
+  'genres',
+  'radio',
+  'folders',
+];
+
 /**
- * Sanitizes the saved list: preserves user order and state, discards unknown
- * keys, and appends new chips not present (so a future version with more chips
- * doesn't break existing config).
+ * Their order and their state, all of them on.
+ *
+ * This was the order and nothing else for a while, on the grounds that a
+ * section turned off is a part of the catalogue with no way in. Which is true
+ * and is not the whole of it: a chip for a way of browsing somebody never uses
+ * is a chip in the way, and the one thing the tab is for is picking. So the
+ * switches are here, and what keeps the reasoning is the floor under them,
+ * since the last one cannot be turned off (see the settings screen).
  */
-function normalizeExploreChips(raw: unknown): ExploreChip[] {
-  if (!Array.isArray(raw)) return DEFAULT_EXPLORE_CHIPS.map((c) => ({ ...c }));
-  const seen = new Set<ExploreChipKey>();
-  const out: ExploreChip[] = [];
+export const DEFAULT_EXPLORE_SECTIONS: ExploreSection[] = EXPLORE_SECTION_KEYS.map((key) => ({
+  key,
+  enabled: true,
+}));
+
+/**
+ * The bar at the bottom: which tabs are on it and in what order.
+ *
+ * Same shape as the Home chips, and for the same reason — it is a list the
+ * user rearranges — but with one rule they do not have: **Home cannot be
+ * turned off**. The chips can all go and the row simply disappears; a bar with
+ * nothing on it is an app with no way out of wherever you are standing.
+ */
+export interface BottomTab {
+  key: TabSegment;
+  enabled: boolean;
+}
+
+const BOTTOM_TAB_KEYS: TabSegment[] = ['index', 'search', 'library', 'explore'];
+
+/**
+ * The order they start in, all of them on.
+ *
+ * "Your library" goes last, behind Explore. It used to sit third, from when it
+ * was the only way to a playlist; Explore now holds those as well as the rest
+ * of the catalogue, so it is the one being reached for, and what is left over
+ * there is the smaller, more personal half.
+ */
+export const DEFAULT_BOTTOM_TABS: BottomTab[] = [
+  { key: 'index', enabled: true },
+  { key: 'search', enabled: true },
+  { key: 'explore', enabled: true },
+  { key: 'library', enabled: true },
+];
+
+/** The same sanitising the chips get, plus Home's exemption. */
+function normalizeBottomTabs(raw: unknown): BottomTab[] {
+  if (!Array.isArray(raw)) return DEFAULT_BOTTOM_TABS.map((t) => ({ ...t }));
+  const seen = new Set<TabSegment>();
+  const out: BottomTab[] = [];
   for (const item of raw) {
-    const key = item?.key as ExploreChipKey;
-    if (EXPLORE_CHIP_KEYS.includes(key) && !seen.has(key)) {
+    const key = item?.key as TabSegment;
+    if (BOTTOM_TAB_KEYS.includes(key) && !seen.has(key)) {
       seen.add(key);
-      out.push({ key, enabled: typeof item.enabled === 'boolean' ? item.enabled : true });
+      out.push({
+        key,
+        enabled: key === 'index' ? true : typeof item.enabled === 'boolean' ? item.enabled : true,
+      });
     }
   }
-  for (const def of DEFAULT_EXPLORE_CHIPS) {
+  // A tab added by a later version arrives on, at the end, rather than the
+  // update quietly hiding something new.
+  for (const def of DEFAULT_BOTTOM_TABS) {
     if (!seen.has(def.key)) out.push({ ...def });
   }
   return out;
 }
 
 /**
- * Hideable actions from the song ⋯ menu.
+ * The buttons at the top right of Home, in the order they sit there.
  *
- * «Remove from playlist» is not included: it only appears inside a playlist, so
- * it never gets in the way elsewhere, and it's the only way to remove a single
- * song from the menu. The criterion is not "essential" but "gets in the way
- * somewhere": the rest also have another path (the heart on rows and the
- * player, the cover and card for lyrics, multi-select for download and adding
- * to a list).
- *
- * Except `sleepTimer`, which only lives here: hiding it leaves the timer
- * inaccessible until re-enabled. This is a deliberate choice, not an oversight —
- * the app already allows disabling unique paths (swipe gesture, cover tap). If
- * it ever becomes an issue, the right fix is giving it a second location (the
- * player ⋯), not removing the toggle.
+ * A draggable list like the tabs and the chips, and with the tabs' exemption
+ * rather than the chips' freedom: **the gear cannot be turned off**. Settings
+ * is only reachable from there, so hiding it would leave no way back to this
+ * very screen.
  */
-export type SongMenuActionKey =
-  | 'playlist'
-  | 'artist'
-  | 'album'
-  | 'lyrics'
-  | 'mix'
-  | 'playNext'
-  | 'queue'
-  | 'favorite'
-  | 'rating'
-  | 'download'
-  | 'export'
-  | 'share'
-  | 'sleepTimer'
-  | 'info';
+export type HomeButtonKey = 'search' | 'history' | 'settings';
+
+export interface HomeButton {
+  key: HomeButtonKey;
+  enabled: boolean;
+}
+
+const HOME_BUTTON_KEYS: HomeButtonKey[] = ['search', 'history', 'settings'];
 
 /**
- * Visibility of each action. Map instead of list (unlike chips and Home
- * sections) on purpose: order cannot be changed here, so storing it would imply
- * otherwise.
+ * Left to right as they shipped.
+ *
+ * Search starts off. Searching already has a tab of its own at the bottom, and
+ * a second way in at the top of Home is a duplicate for most people; it is
+ * there for whoever takes that tab off the bar, or just prefers it up here.
  */
-export type SongMenuActions = Record<SongMenuActionKey, boolean>;
-
-const SONG_MENU_ACTION_KEYS: SongMenuActionKey[] = [
-  'playlist',
-  'artist',
-  'album',
-  'lyrics',
-  'mix',
-  'playNext',
-  'queue',
-  'favorite',
-  'rating',
-  'download',
-  'export',
-  'share',
-  'sleepTimer',
-  'info',
+export const DEFAULT_HOME_BUTTONS: HomeButton[] = [
+  { key: 'search', enabled: false },
+  { key: 'history', enabled: true },
+  { key: 'settings', enabled: true },
 ];
 
-/**
- * Everything visible. «Rating» used to start hidden, but rating is also off by
- * default in the player, so there was no way to rate a song without first
- * digging a toggle out of Settings — and it was the only action in the menu
- * that started hidden.
- */
-export const DEFAULT_SONG_MENU_ACTIONS: SongMenuActions = {
-  playlist: true,
-  artist: true,
-  album: true,
-  lyrics: true,
-  mix: true,
-  playNext: true,
-  queue: true,
-  favorite: true,
-  rating: true,
-  download: true,
-  export: true,
-  share: true,
-  sleepTimer: true,
-  info: true,
-};
-
-/**
- * Sanitizes saved data: only accepts booleans for known keys. Anything missing
- * (e.g. a new action) stays visible, which is the default.
- */
-function normalizeSongMenuActions(raw: unknown): SongMenuActions {
-  const out = { ...DEFAULT_SONG_MENU_ACTIONS };
-  if (!raw || typeof raw !== 'object') return out;
-  const obj = raw as Record<string, unknown>;
-  for (const key of SONG_MENU_ACTION_KEYS) {
-    if (typeof obj[key] === 'boolean') out[key] = obj[key];
+/** The same sanitising as the tabs, with the gear in Home's place. */
+function normalizeHomeButtons(raw: unknown): HomeButton[] {
+  if (!Array.isArray(raw)) return DEFAULT_HOME_BUTTONS.map((b) => ({ ...b }));
+  const seen = new Set<HomeButtonKey>();
+  const out: HomeButton[] = [];
+  for (const item of raw) {
+    const key = item?.key as HomeButtonKey;
+    if (HOME_BUTTON_KEYS.includes(key) && !seen.has(key)) {
+      seen.add(key);
+      out.push({
+        key,
+        enabled:
+          key === 'settings' ? true : typeof item.enabled === 'boolean' ? item.enabled : true,
+      });
+    }
+  }
+  for (const def of DEFAULT_HOME_BUTTONS) {
+    if (!seen.has(def.key)) out.push({ ...def });
   }
   return out;
 }
+
+/**
+ * Sanitizes the saved list: preserves user order and state, discards unknown
+ * keys, and appends new chips not present (so a future version with more chips
+ * doesn't break existing config).
+ */
+function normalizeHomeChips(raw: unknown): HomeChip[] {
+  if (!Array.isArray(raw)) return DEFAULT_HOME_CHIPS.map((c) => ({ ...c }));
+  const seen = new Set<HomeChipKey>();
+  const out: HomeChip[] = [];
+  for (const item of raw) {
+    const key = item?.key as HomeChipKey;
+    if (HOME_CHIP_KEYS.includes(key) && !seen.has(key)) {
+      seen.add(key);
+      out.push({ key, enabled: typeof item.enabled === 'boolean' ? item.enabled : true });
+    }
+  }
+  for (const def of DEFAULT_HOME_CHIPS) {
+    if (!seen.has(def.key)) out.push({ ...def });
+  }
+  return out;
+}
+
 
 /** Display name for each font (proper names: not translated). */
 export const APP_FONT_LABELS: Record<AppFont, string> = {
@@ -659,23 +806,6 @@ interface SettingsState {
    * to look, who are exactly the ones who did not need it.
    */
   updateCheck: boolean;
-  /**
-   * Whether to repair the offline library when the server renumbers its ids
-   * (Navidrome 0.64 rewrites every one of them).
-   *
-   * Off until the repair has been seen working against a server that really
-   * has migrated, which cannot happen until such a server exists. It is the
-   * only thing in the app that rewrites the whole download catalog, and the
-   * expensive way to be wrong is to run when it should not have: that is us
-   * breaking somebody's downloads ourselves, where not running only leaves
-   * them where they already were.
-   *
-   * The day it is on by default is the day after it has been tested, and this
-   * switch stays for whoever wants it off anyway. Turning it off does not
-   * disarm anything today: no released Navidrome answers to the new ids, so
-   * the repair cannot conclude anything either way.
-   */
-  navidromeIdRepair: boolean;
   /** Crossfade seconds between songs (0 = disabled). */
   crossfadeSec: number;
   /**
@@ -755,6 +885,12 @@ interface SettingsState {
   /** Player background: flat, cover color, or blurred cover art. */
   playerBackground: ScreenBackground;
   /**
+   * When the cover art is animated (GIF, animated WebP, APNG), use it as
+   * the fullscreen player background and show a small static copy beside
+   * the title. Off by default: the cover plays inside the square as before.
+   */
+  animatedCoverBackground: boolean;
+  /**
    * Show non-square artwork whole in the player instead of cropping it to a
    * square. Off by default: cropping is what it has always done, and every
    * other place in the app (lists, cards, grids) keeps cropping regardless.
@@ -764,9 +900,13 @@ interface SettingsState {
   miniPlayerColorBackground: boolean;
   /** Lyrics card below the player controls. */
   showLyricsCard: boolean;
+  /** Artist card below the player controls. */
+  showArtistCard: boolean;
   /** What tapping the player cover does (nothing / lyrics screen /
    *  lyrics in place of the cover). */
   coverTapAction: CoverTapAction;
+  /** What tapping it twice does (nothing / play or pause / favourite). */
+  coverDoubleTapAction: CoverDoubleTapAction;
   /** Marquee: long titles in the player auto-scroll. */
   marqueeTitles: boolean;
   /** Player bottom buttons (queue and devices). */
@@ -814,18 +954,22 @@ interface SettingsState {
   customGreeting: string;
   /** Home explore chips, in order (each with its state). With none active, the
    *  row disappears: that replaces the old toggle. */
-  exploreChips: ExploreChip[];
+  homeChips: HomeChip[];
+  /** The order of the pills at the top of Explore. */
+  exploreSections: ExploreSection[];
+  bottomTabs: BottomTab[];
   /** Whether those chips carry their icon, or are their name and nothing else. */
-  exploreChipIcons: boolean;
-  /** Which actions are visible in the song ⋯ menu. */
-  songMenuActions: SongMenuActions;
+  homeChipIcons: boolean;
   /** "Folders" section in the Library (directory browsing; Subsonic). */
   showFolderBrowser: boolean;
-  /** Optional button visibility, for those who prefer a minimal UI. */
-  showHistoryButton: boolean;
-  showProfileButton: boolean;
+  /** The buttons at the top right of Home, in order (each with its state).
+   *  For those who prefer a minimal UI: all but the gear can go. */
+  homeButtons: HomeButton[];
   /** App startup tab (Home/Search/Library). */
   defaultTab: DefaultTab;
+  /** Your library with no chip pressed shows Favorites and the playlists, as
+   *  it did before the mixed view, instead of everything (#217). */
+  libraryShowsPlaylists: boolean;
   /** Chosen Library sort order (recent/added/alphabetical). */
   librarySort: LibrarySort;
   /** List or grid in the Library. */
@@ -839,6 +983,12 @@ interface SettingsState {
   browseArtistsLayout: ListLayout;
   /** List or grid when browsing albums. Separate for the same reason as above. */
   browseAlbumsLayout: ListLayout;
+  /** List or grid, and the order, for the playlists section of Explore. Their
+   *  own keys and not `libraryLayout`/`librarySort`: that pair belongs to
+   *  "Your library", and one list rearranging the other on a button press is
+   *  what the split above exists to avoid. */
+  browsePlaylistsLayout: ListLayout;
+  browsePlaylistsSort: LibrarySort;
   /** List or grid when browsing songs. Its own key, same reasoning. */
   browseSongsLayout: ListLayout;
   /** List or grid in an artist's full discography. Its own key, again for the
@@ -859,10 +1009,21 @@ interface SettingsState {
   shareExpiry: ShareExpiry;
   /** Whether the last share allowed downloading (Navidrome only). */
   shareDownloadable: boolean;
-  /** Accent color (hex). */
+  /**
+   * Bring over the queue another player left on the server, on its own.
+   *
+   * Off by default: what it does when it fires is replace the queue on this
+   * device, and a queue that changes without being asked is worse than one
+   * that has to be asked for (the ⋯ of the queue screen always can).
+   */
+  syncQueueFromServer: boolean;
+  /** Accent color (hex) under the dark appearance. */
   accentColor: string;
-  /** Dark (the app's own look) or light. */
-  themeMode: ThemeMode;
+  /** The same under the light one, which is a separate choice: a colour picked
+   *  for near-black is not always the one wanted on white. */
+  accentColorLight: string;
+  /** Dark (the app's own look), light, or whichever one the device is in. */
+  themeMode: ThemePreference;
   /** UI font (system font family; `system` = default). */
   appFont: AppFont;
   setMaxBitRate: (value: number) => void;
@@ -890,7 +1051,6 @@ interface SettingsState {
   setAudiobookContinueRewindSec: (value: number) => void;
   setDiagnostics: (value: boolean) => void;
   setUpdateCheck: (value: boolean) => void;
-  setNavidromeIdRepair: (value: boolean) => void;
   setCrossfadeSec: (value: number) => void;
   setScrobblePercent: (value: number) => void;
   setScrobbleSeconds: (value: number) => void;
@@ -911,10 +1071,13 @@ interface SettingsState {
   setShowGenreChips: (value: boolean) => void;
   setBatteryWarning: (value: boolean) => void;
   setPlayerBackground: (value: ScreenBackground) => void;
+  setAnimatedCoverBackground: (value: boolean) => void;
   setFitCoverArt: (value: boolean) => void;
   setMiniPlayerColorBackground: (value: boolean) => void;
   setShowLyricsCard: (value: boolean) => void;
+  setShowArtistCard: (value: boolean) => void;
   setCoverTapAction: (value: CoverTapAction) => void;
+  setCoverDoubleTapAction: (value: CoverDoubleTapAction) => void;
   setMarqueeTitles: (value: boolean) => void;
   setShowQueueButton: (value: boolean) => void;
   setShowDevicesButton: (value: boolean) => void;
@@ -935,16 +1098,25 @@ interface SettingsState {
   setShowGreeting: (value: boolean) => void;
   /** Trims to GREETING_MAX internally: the cap doesn't depend on the caller. */
   setCustomGreeting: (value: string) => void;
-  setExploreChip: (key: ExploreChipKey, value: boolean) => void;
+  setHomeChip: (key: HomeChipKey, value: boolean) => void;
   /** Replace the full list (for reordering). */
-  setExploreChips: (chips: ExploreChip[]) => void;
-  setExploreChipIcons: (value: boolean) => void;
-  setSongMenuAction: (key: SongMenuActionKey, value: boolean) => void;
+  setHomeChips: (chips: HomeChip[]) => void;
+  setExploreSections: (sections: ExploreSection[]) => void;
+  /** One section on or off, by key, the way the Home chips do it. */
+  setExploreSection: (key: ExploreSectionKey, value: boolean) => void;
+  setBottomTab: (key: TabSegment, value: boolean) => void;
+  /** Replace the full list (for reordering). */
+  setBottomTabs: (tabs: BottomTab[]) => void;
+  setHomeChipIcons: (value: boolean) => void;
   setShowFolderBrowser: (value: boolean) => void;
-  setShowHistoryButton: (value: boolean) => void;
-  setShowProfileButton: (value: boolean) => void;
+  setHomeButton: (key: HomeButtonKey, value: boolean) => void;
+  /** Replace the full list (for reordering). */
+  setHomeButtons: (buttons: HomeButton[]) => void;
   setDefaultTab: (value: DefaultTab) => void;
+  setLibraryShowsPlaylists: (value: boolean) => void;
   setLibrarySort: (value: LibrarySort) => void;
+  setBrowsePlaylistsLayout: (value: ListLayout) => void;
+  setBrowsePlaylistsSort: (value: LibrarySort) => void;
   setLibraryLayout: (value: ListLayout) => void;
   setBrowseArtistsLayout: (value: ListLayout) => void;
   setBrowseAlbumsLayout: (value: ListLayout) => void;
@@ -955,8 +1127,9 @@ interface SettingsState {
   setGridColumns: (key: GridSizeKey, value: number) => void;
   setShareExpiry: (value: ShareExpiry) => void;
   setShareDownloadable: (value: boolean) => void;
-  setAccentColor: (value: string) => void;
-  setThemeMode: (value: ThemeMode) => void;
+  setSyncQueueFromServer: (value: boolean) => void;
+  setAccentColor: (value: string, appearance: ThemeMode) => void;
+  setThemeMode: (value: ThemePreference) => void;
   setAppFont: (value: AppFont) => void;
   /** Resets to factory defaults (language is preserved). */
   resetToDefaults: () => void;
@@ -967,6 +1140,12 @@ interface SettingsState {
 }
 
 const scope = profileScopeGuard();
+
+/** A saved accent, as the picker writes them. Anything else was not written by
+ *  this app and is not worth painting the screen with. */
+function isHexColor(value: unknown): value is string {
+  return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value);
+}
 
 function persist(state: ReturnType<typeof snapshot>) {
   const key = settingsKey();
@@ -1005,7 +1184,6 @@ function snapshot(get: () => SettingsState) {
     audiobookContinueRewindSec: s.audiobookContinueRewindSec,
     diagnostics: s.diagnostics,
     updateCheck: s.updateCheck,
-    navidromeIdRepair: s.navidromeIdRepair,
     crossfadeSec: s.crossfadeSec,
     scrobblePercent: s.scrobblePercent,
     scrobbleSeconds: s.scrobbleSeconds,
@@ -1025,10 +1203,13 @@ function snapshot(get: () => SettingsState) {
     showGenreChips: s.showGenreChips,
     batteryWarning: s.batteryWarning,
     playerBackground: s.playerBackground,
+    animatedCoverBackground: s.animatedCoverBackground,
     fitCoverArt: s.fitCoverArt,
     miniPlayerColorBackground: s.miniPlayerColorBackground,
     showLyricsCard: s.showLyricsCard,
+    showArtistCard: s.showArtistCard,
     coverTapAction: s.coverTapAction,
+    coverDoubleTapAction: s.coverDoubleTapAction,
     marqueeTitles: s.marqueeTitles,
     showQueueButton: s.showQueueButton,
     showDevicesButton: s.showDevicesButton,
@@ -1046,17 +1227,20 @@ function snapshot(get: () => SettingsState) {
     quickGridSize: s.quickGridSize,
     showGreeting: s.showGreeting,
     customGreeting: s.customGreeting,
-    exploreChips: s.exploreChips,
-    exploreChipIcons: s.exploreChipIcons,
-    songMenuActions: s.songMenuActions,
+    homeChips: s.homeChips,
+    exploreSections: s.exploreSections,
+    bottomTabs: s.bottomTabs,
+    homeChipIcons: s.homeChipIcons,
     showFolderBrowser: s.showFolderBrowser,
-    showHistoryButton: s.showHistoryButton,
-    showProfileButton: s.showProfileButton,
+    homeButtons: s.homeButtons,
     defaultTab: s.defaultTab,
+    libraryShowsPlaylists: s.libraryShowsPlaylists,
     librarySort: s.librarySort,
     libraryLayout: s.libraryLayout,
     browseArtistsLayout: s.browseArtistsLayout,
     browseAlbumsLayout: s.browseAlbumsLayout,
+    browsePlaylistsLayout: s.browsePlaylistsLayout,
+    browsePlaylistsSort: s.browsePlaylistsSort,
     browseSongsLayout: s.browseSongsLayout,
     discographyLayout: s.discographyLayout,
     genreLayout: s.genreLayout,
@@ -1064,7 +1248,9 @@ function snapshot(get: () => SettingsState) {
     gridColumns: s.gridColumns,
     shareExpiry: s.shareExpiry,
     shareDownloadable: s.shareDownloadable,
+    syncQueueFromServer: s.syncQueueFromServer,
     accentColor: s.accentColor,
+    accentColorLight: s.accentColorLight,
     themeMode: s.themeMode,
     appFont: s.appFont,
   };
@@ -1102,8 +1288,6 @@ const DEFAULTS = {
   diagnostics: false,
   // On: see the note on the field. Nothing is downloaded by it.
   updateCheck: true,
-  // Off until it has been watched doing its job against a migrated server.
-  navidromeIdRepair: false,
   crossfadeSec: 0,
   scrobblePercent: SCROBBLE_PERCENT_DEFAULT,
   scrobbleSeconds: SCROBBLE_SECONDS_DEFAULT,
@@ -1125,13 +1309,18 @@ const DEFAULTS = {
   showGenreChips: false,
   batteryWarning: true,
   playerBackground: 'cover' as ScreenBackground,
+  animatedCoverBackground: false,
   fitCoverArt: false,
   miniPlayerColorBackground: true,
   // Off by default: the card pushes the controls up on shorter screens, and
   // the lyrics screen is one tap away on the cover.
   showLyricsCard: false,
+  // Off for the same reason, and it also needs a biography to show anything.
+  showArtistCard: false,
   // By default, tapping the cover opens the lyrics screen (as always).
   coverTapAction: 'screen' as CoverTapAction,
+  // Nothing: see `CoverDoubleTapAction`.
+  coverDoubleTapAction: 'none' as CoverDoubleTapAction,
   marqueeTitles: true,
   showQueueButton: true,
   showDevicesButton: true,
@@ -1151,21 +1340,29 @@ const DEFAULTS = {
   quickGridSize: 8,
   showGreeting: true,
   customGreeting: '',
-  exploreChips: DEFAULT_EXPLORE_CHIPS.map((c) => ({ ...c })),
-  exploreChipIcons: true,
-  songMenuActions: { ...DEFAULT_SONG_MENU_ACTIONS },
+  homeChips: DEFAULT_HOME_CHIPS.map((c) => ({ ...c })),
+  exploreSections: DEFAULT_EXPLORE_SECTIONS.map((s) => ({ ...s })),
+  bottomTabs: DEFAULT_BOTTOM_TABS.map((t) => ({ ...t })),
+  homeChipIcons: true,
   showFolderBrowser: false,
-  showHistoryButton: true,
-  showProfileButton: true,
+  homeButtons: DEFAULT_HOME_BUTTONS.map((b) => ({ ...b })),
   defaultTab: 'index' as DefaultTab,
+  libraryShowsPlaylists: false,
   librarySort: 'recent' as LibrarySort,
   libraryLayout: 'list' as ListLayout,
-  // Grid by default: an artist is recognized by their face, and that's how the
-  // screen is already rendered. List is for those who prefer scanning names.
-  browseArtistsLayout: 'grid' as ListLayout,
-  // Grid by default: the cover is what identifies an album, and that's how the
-  // screen is already rendered.
-  browseAlbumsLayout: 'grid' as ListLayout,
+  // Rows, like the songs below and like everything else in Explore. A grid is
+  // how you recognise one artist you are already looking at; browsing the
+  // whole server is reading names, and a wall of faces is slower at that. The
+  // button is there for whoever disagrees.
+  browseArtistsLayout: 'list' as ListLayout,
+  // Rows, for the same reason. The cover identifies an album you know; the
+  // list is what you scan when you do not.
+  browseAlbumsLayout: 'list' as ListLayout,
+  // Rows here too, and "Recents" like "Your library" opens on: the two lists
+  // hold the same playlists and landing on a different order in each would
+  // read as a different list.
+  browsePlaylistsLayout: 'list' as ListLayout,
+  browsePlaylistsSort: 'recent' as LibrarySort,
   // Rows: a song is read by its title, and twelve of the same album are twelve
   // copies of one cover. The button is there for whoever disagrees.
   browseSongsLayout: 'list' as ListLayout,
@@ -1183,9 +1380,18 @@ const DEFAULTS = {
   shareExpiry: 'never' as ShareExpiry,
   // Off: the server has its own default for this and nothing was overriding it.
   shareDownloadable: false,
+  // On. The queue is pushed to the server whether this is on or off (that is
+  // what lets any client, this one included, pick up where you left off), so
+  // leaving the reading half off by default made the app a writer that never
+  // listened: it would overwrite what another player left and never take it
+  // (#188). Adopting is the conservative half of the pair anyway, since it only
+  // happens with nothing playing here and only for a queue another client
+  // wrote later.
+  syncQueueFromServer: true,
   accentColor: DEFAULT_ACCENT,
+  accentColorLight: DEFAULT_ACCENT,
   // Dark: the appearance the app was designed in. Light is opt-in.
-  themeMode: 'dark' as ThemeMode,
+  themeMode: 'dark' as ThemePreference,
   appFont: 'system' as AppFont,
 };
 
@@ -1301,11 +1507,6 @@ export const useSettings = create<SettingsState>((set, get) => ({
 
   setUpdateCheck: (updateCheck) => {
     set({ updateCheck });
-    persist(snapshot(get));
-  },
-
-  setNavidromeIdRepair: (navidromeIdRepair) => {
-    set({ navidromeIdRepair });
     persist(snapshot(get));
   },
 
@@ -1437,6 +1638,11 @@ export const useSettings = create<SettingsState>((set, get) => ({
     persist(snapshot(get));
   },
 
+  setAnimatedCoverBackground: (animatedCoverBackground) => {
+    set({ animatedCoverBackground });
+    persist(snapshot(get));
+  },
+
   setMiniPlayerColorBackground: (miniPlayerColorBackground) => {
     set({ miniPlayerColorBackground });
     persist(snapshot(get));
@@ -1444,6 +1650,16 @@ export const useSettings = create<SettingsState>((set, get) => ({
 
   setShowLyricsCard: (showLyricsCard) => {
     set({ showLyricsCard });
+    persist(snapshot(get));
+  },
+
+  setShowArtistCard: (showArtistCard) => {
+    set({ showArtistCard });
+    persist(snapshot(get));
+  },
+
+  setCoverDoubleTapAction: (coverDoubleTapAction) => {
+    set({ coverDoubleTapAction });
     persist(snapshot(get));
   },
 
@@ -1544,25 +1760,48 @@ export const useSettings = create<SettingsState>((set, get) => ({
     persist(snapshot(get));
   },
 
-  setExploreChip: (key, value) => {
+  setHomeChip: (key, value) => {
     set((s) => ({
-      exploreChips: s.exploreChips.map((x) => (x.key === key ? { ...x, enabled: value } : x)),
+      homeChips: s.homeChips.map((x) => (x.key === key ? { ...x, enabled: value } : x)),
     }));
     persist(snapshot(get));
   },
 
-  setSongMenuAction: (key, value) => {
-    set((s) => ({ songMenuActions: { ...s.songMenuActions, [key]: value } }));
+  setBottomTab: (key, value) => {
+    // Home's switch is not drawn, but a saved file could still say otherwise.
+    if (key === 'index') return;
+    set((s) => ({
+      bottomTabs: s.bottomTabs.map((x) => (x.key === key ? { ...x, enabled: value } : x)),
+    }));
     persist(snapshot(get));
   },
 
-  setExploreChips: (exploreChips) => {
-    set({ exploreChips });
+  setBottomTabs: (bottomTabs) => {
+    set({ bottomTabs });
     persist(snapshot(get));
   },
 
-  setExploreChipIcons: (exploreChipIcons) => {
-    set({ exploreChipIcons });
+  setHomeChips: (homeChips) => {
+    set({ homeChips });
+    persist(snapshot(get));
+  },
+
+  setExploreSection: (key, value) => {
+    set({
+      exploreSections: get().exploreSections.map((s) =>
+        s.key === key ? { ...s, enabled: value } : s,
+      ),
+    });
+    persist(snapshot(get));
+  },
+
+  setExploreSections: (exploreSections) => {
+    set({ exploreSections });
+    persist(snapshot(get));
+  },
+
+  setHomeChipIcons: (homeChipIcons) => {
+    set({ homeChipIcons });
     persist(snapshot(get));
   },
 
@@ -1571,18 +1810,29 @@ export const useSettings = create<SettingsState>((set, get) => ({
     persist(snapshot(get));
   },
 
-  setShowHistoryButton: (showHistoryButton) => {
-    set({ showHistoryButton });
+  setHomeButton: (key, value) => {
+    // The gear's switch is not drawn, but a saved file could still say
+    // otherwise.
+    if (key === 'settings') return;
+    set((s) => ({
+      homeButtons: s.homeButtons.map((x) => (x.key === key ? { ...x, enabled: value } : x)),
+    }));
     persist(snapshot(get));
   },
 
-  setShowProfileButton: (showProfileButton) => {
-    set({ showProfileButton });
+  setHomeButtons: (homeButtons) => {
+    set({ homeButtons });
     persist(snapshot(get));
   },
+
 
   setDefaultTab: (defaultTab) => {
     set({ defaultTab });
+    persist(snapshot(get));
+  },
+
+  setLibraryShowsPlaylists: (libraryShowsPlaylists) => {
+    set({ libraryShowsPlaylists });
     persist(snapshot(get));
   },
 
@@ -1593,6 +1843,16 @@ export const useSettings = create<SettingsState>((set, get) => ({
 
   setBrowseArtistsLayout: (browseArtistsLayout) => {
     set({ browseArtistsLayout });
+    persist(snapshot(get));
+  },
+
+  setBrowsePlaylistsLayout: (browsePlaylistsLayout) => {
+    set({ browsePlaylistsLayout });
+    persist(snapshot(get));
+  },
+
+  setBrowsePlaylistsSort: (browsePlaylistsSort) => {
+    set({ browsePlaylistsSort });
     persist(snapshot(get));
   },
 
@@ -1636,14 +1896,19 @@ export const useSettings = create<SettingsState>((set, get) => ({
     persist(snapshot(get));
   },
 
-  setAccentColor: (accentColor) => {
-    applyAccent(accentColor);
-    set({ accentColor });
+  setSyncQueueFromServer: (syncQueueFromServer) => {
+    set({ syncQueueFromServer });
+    persist(snapshot(get));
+  },
+
+  setAccentColor: (value, appearance) => {
+    set(appearance === 'light' ? { accentColorLight: value } : { accentColor: value });
+    applyAccents(get().accentColor, get().accentColorLight);
     persist(snapshot(get));
   },
 
   setThemeMode: (themeMode) => {
-    applyThemeMode(themeMode);
+    applyThemePreference(themeMode);
     set({ themeMode });
     persist(snapshot(get));
   },
@@ -1661,8 +1926,8 @@ export const useSettings = create<SettingsState>((set, get) => ({
   resetToDefaults: () => {
     // Language is preserved: resetting shouldn't change your language.
     set({ ...DEFAULTS, language: get().language });
-    applyAccent(DEFAULT_ACCENT);
-      applyThemeMode(DEFAULTS.themeMode);
+    applyAccents(DEFAULT_ACCENT, DEFAULT_ACCENT);
+    applyThemePreference(DEFAULTS.themeMode);
     persist(snapshot(get));
   },
 
@@ -1682,8 +1947,6 @@ export const useSettings = create<SettingsState>((set, get) => ({
       // default values for the whole read, and anything saved in that window
       // wrote those defaults over the real ones.
       const raw = (await getItem(key)) ?? (await getItem(STORAGE_KEY));
-      // Read here, with `raw`, so nothing is awaited once the store is claimed.
-      const ratingShown = await getItem(ratingShownKey());
       // A newer hydration started while we were reading (profile switch, or
       // the saved session arriving on startup): it owns the store now, and
       // applying this would restore the wrong profile's settings.
@@ -1693,8 +1956,8 @@ export const useSettings = create<SettingsState>((set, get) => ({
       // appearance are applied manually because they're side effects (the blob
       // re-applies them if present); the font is reactive and doesn't need it.
       set({ ...DEFAULTS, language: get().language });
-      applyAccent(DEFAULT_ACCENT);
-      applyThemeMode(DEFAULTS.themeMode);
+      applyAccents(DEFAULT_ACCENT, DEFAULT_ACCENT);
+      applyThemePreference(DEFAULTS.themeMode);
       applied = true;
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<{
@@ -1723,7 +1986,6 @@ export const useSettings = create<SettingsState>((set, get) => ({
           audiobookContinueRewindSec: number;
           diagnostics: boolean;
           updateCheck?: boolean;
-          navidromeIdRepair?: boolean;
           crossfadeSec: number;
           scrobblePercent: number;
           scrobbleSeconds: number;
@@ -1745,11 +2007,14 @@ export const useSettings = create<SettingsState>((set, get) => ({
           showGenreChips: boolean;
           batteryWarning: boolean;
           playerBackground: ScreenBackground;
+          animatedCoverBackground?: boolean;
           fitCoverArt: boolean;
           playerColorBackground: boolean;
           miniPlayerColorBackground: boolean;
           showLyricsCard: boolean;
+          showArtistCard: boolean;
           coverTapAction: CoverTapAction;
+          coverDoubleTapAction: CoverDoubleTapAction;
           marqueeTitles: boolean;
           showQueueButton: boolean;
           showDevicesButton: boolean;
@@ -1769,18 +2034,27 @@ export const useSettings = create<SettingsState>((set, get) => ({
           quickGridSize: number;
           showGreeting: boolean;
           customGreeting: string;
+          /** Older names for the two below, from back when the row was
+           *  called the Explore chips: still read, never written. */
           showExploreChips: boolean;
           exploreChips: unknown;
           exploreChipIcons: boolean;
-          songMenuActions: unknown;
+          homeChips: unknown;
+          exploreSections: unknown;
+          bottomTabs: unknown;
+          homeChipIcons: boolean;
           showFolderBrowser: boolean;
+          homeButtons: unknown;
+          /** Old setting (boolean); migrated to `homeButtons`. */
           showHistoryButton: boolean;
-          showProfileButton: boolean;
           defaultTab: DefaultTab;
+          libraryShowsPlaylists: boolean;
           librarySort: LibrarySort;
           libraryLayout: ListLayout;
           browseArtistsLayout: ListLayout;
           browseAlbumsLayout: ListLayout;
+          browsePlaylistsLayout: ListLayout;
+          browsePlaylistsSort: LibrarySort;
           browseSongsLayout: ListLayout;
           discographyLayout: ListLayout;
           genreLayout: ListLayout;
@@ -1788,8 +2062,10 @@ export const useSettings = create<SettingsState>((set, get) => ({
           gridColumns: Partial<Record<GridSizeKey, number>>;
           shareExpiry: ShareExpiry;
           shareDownloadable: boolean;
+          syncQueueFromServer: boolean;
           accentColor: string;
-          themeMode: ThemeMode;
+          accentColorLight: string;
+          themeMode: ThemePreference;
           appFont: AppFont;
         }>;
         if (typeof parsed.maxBitRate === 'number') {
@@ -1864,9 +2140,6 @@ export const useSettings = create<SettingsState>((set, get) => ({
         }
         if (typeof parsed.showExplicitTag === 'boolean') {
           set({ showExplicitTag: parsed.showExplicitTag });
-        }
-        if (typeof parsed.navidromeIdRepair === 'boolean') {
-          set({ navidromeIdRepair: parsed.navidromeIdRepair });
         }
         if (typeof parsed.diagnostics === 'boolean') {
           set({ diagnostics: parsed.diagnostics });
@@ -1989,15 +2262,20 @@ export const useSettings = create<SettingsState>((set, get) => ({
         if (typeof parsed.miniPlayerColorBackground === 'boolean') {
           set({ miniPlayerColorBackground: parsed.miniPlayerColorBackground });
         }
+        if (typeof parsed.animatedCoverBackground === 'boolean') {
+          set({ animatedCoverBackground: parsed.animatedCoverBackground });
+        }
         if (typeof parsed.showLyricsCard === 'boolean') {
           set({ showLyricsCard: parsed.showLyricsCard });
         }
-        if (
-          parsed.coverTapAction === 'none' ||
-          parsed.coverTapAction === 'screen' ||
-          parsed.coverTapAction === 'inline'
-        ) {
+        if (typeof parsed.showArtistCard === 'boolean') {
+          set({ showArtistCard: parsed.showArtistCard });
+        }
+        if (isCoverTapAction(parsed.coverTapAction)) {
           set({ coverTapAction: parsed.coverTapAction });
+        }
+        if (isCoverTapAction(parsed.coverDoubleTapAction)) {
+          set({ coverDoubleTapAction: parsed.coverDoubleTapAction });
         }
         if (typeof parsed.marqueeTitles === 'boolean') {
           set({ marqueeTitles: parsed.marqueeTitles });
@@ -2067,35 +2345,57 @@ export const useSettings = create<SettingsState>((set, get) => ({
         if (typeof parsed.customGreeting === 'string') {
           set({ customGreeting: parsed.customGreeting.slice(0, GREETING_MAX) });
         }
-        if (parsed.songMenuActions) {
-          set({ songMenuActions: normalizeSongMenuActions(parsed.songMenuActions) });
+        // Two older names are still read here, and this is the whole of the
+        // rename's cost. The row used to be called the Explore chips, one word
+        // away from the Explore tab and meaning something else entirely; a
+        // file written before the rename says `exploreChips`, and whoever had
+        // spent time putting those in order would have found them back at the
+        // defaults. Written under the new name from the first save on, so this
+        // only ever runs once per install.
+        const chipIcons = parsed.homeChipIcons ?? parsed.exploreChipIcons;
+        if (typeof chipIcons === 'boolean') {
+          set({ homeChipIcons: chipIcons });
         }
-        if (typeof parsed.exploreChipIcons === 'boolean') {
-          set({ exploreChipIcons: parsed.exploreChipIcons });
-        }
-        if (Array.isArray(parsed.exploreChips)) {
-          set({ exploreChips: normalizeExploreChips(parsed.exploreChips) });
+        const chips = parsed.homeChips ?? parsed.exploreChips;
+        if (Array.isArray(chips)) {
+          set({ homeChips: normalizeHomeChips(chips) });
         } else if (parsed.showExploreChips === false) {
-          // Migration from the previous single toggle: whoever had the row
-          // hidden should still not see it, not find the chips back. Turning
-          // them all off is exactly what hides it now.
-          set({ exploreChips: DEFAULT_EXPLORE_CHIPS.map((c) => ({ ...c, enabled: false })) });
+          // Migration from the single toggle that came before either name:
+          // whoever had the row hidden should still not see it, not find the
+          // chips back. Turning them all off is exactly what hides it now.
+          set({ homeChips: DEFAULT_HOME_CHIPS.map((c) => ({ ...c, enabled: false })) });
+        }
+        if (Array.isArray(parsed.bottomTabs)) {
+          set({ bottomTabs: normalizeBottomTabs(parsed.bottomTabs) });
+        }
+        if (Array.isArray(parsed.exploreSections)) {
+          set({ exploreSections: normalizeExploreSections(parsed.exploreSections) });
         }
         if (typeof parsed.showFolderBrowser === 'boolean') {
           set({ showFolderBrowser: parsed.showFolderBrowser });
         }
-        if (typeof parsed.showHistoryButton === 'boolean') {
-          set({ showHistoryButton: parsed.showHistoryButton });
-        }
-        if (typeof parsed.showProfileButton === 'boolean') {
-          set({ showProfileButton: parsed.showProfileButton });
+        if (Array.isArray(parsed.homeButtons)) {
+          set({ homeButtons: normalizeHomeButtons(parsed.homeButtons) });
+        } else if (parsed.showHistoryButton === false) {
+          // Migration from the previous single toggle: the clock was the only
+          // one of these with a switch, and whoever had it hidden should not
+          // find it back.
+          set({
+            homeButtons: DEFAULT_HOME_BUTTONS.map((b) =>
+              b.key === 'history' ? { ...b, enabled: false } : { ...b },
+            ),
+          });
         }
         if (
           parsed.defaultTab === 'index' ||
           parsed.defaultTab === 'search' ||
-          parsed.defaultTab === 'library'
+          parsed.defaultTab === 'library' ||
+          parsed.defaultTab === 'explore'
         ) {
           set({ defaultTab: parsed.defaultTab });
+        }
+        if (typeof parsed.libraryShowsPlaylists === 'boolean') {
+          set({ libraryShowsPlaylists: parsed.libraryShowsPlaylists });
         }
         if (parsed.librarySort === 'recent' || parsed.librarySort === 'added' || parsed.librarySort === 'alpha') {
           set({ librarySort: parsed.librarySort });
@@ -2108,6 +2408,16 @@ export const useSettings = create<SettingsState>((set, get) => ({
         }
         if (parsed.browseAlbumsLayout === 'list' || parsed.browseAlbumsLayout === 'grid') {
           set({ browseAlbumsLayout: parsed.browseAlbumsLayout });
+        }
+        if (parsed.browsePlaylistsLayout === 'list' || parsed.browsePlaylistsLayout === 'grid') {
+          set({ browsePlaylistsLayout: parsed.browsePlaylistsLayout });
+        }
+        if (
+          parsed.browsePlaylistsSort === 'recent' ||
+          parsed.browsePlaylistsSort === 'added' ||
+          parsed.browsePlaylistsSort === 'alpha'
+        ) {
+          set({ browsePlaylistsSort: parsed.browsePlaylistsSort });
         }
         if (parsed.browseSongsLayout === 'list' || parsed.browseSongsLayout === 'grid') {
           set({ browseSongsLayout: parsed.browseSongsLayout });
@@ -2143,28 +2453,24 @@ export const useSettings = create<SettingsState>((set, get) => ({
         if (typeof parsed.shareDownloadable === 'boolean') {
           set({ shareDownloadable: parsed.shareDownloadable });
         }
-        if (typeof parsed.accentColor === 'string' && /^#[0-9a-f]{6}$/i.test(parsed.accentColor)) {
-          set({ accentColor: parsed.accentColor });
-          applyAccent(parsed.accentColor);
+        if (typeof parsed.syncQueueFromServer === 'boolean') {
+          set({ syncQueueFromServer: parsed.syncQueueFromServer });
         }
-        if (isThemeMode(parsed.themeMode)) {
+        // The light accent falls back to the dark one rather than to the
+        // default: every profile that picked a colour before there were two of
+        // them picked it for the app, not for one of its appearances.
+        if (isHexColor(parsed.accentColor) || isHexColor(parsed.accentColorLight)) {
+          const dark = isHexColor(parsed.accentColor) ? parsed.accentColor : DEFAULT_ACCENT;
+          const light = isHexColor(parsed.accentColorLight) ? parsed.accentColorLight : dark;
+          set({ accentColor: dark, accentColorLight: light });
+          applyAccents(dark, light);
+        }
+        if (isThemePreference(parsed.themeMode)) {
           set({ themeMode: parsed.themeMode });
-          applyThemeMode(parsed.themeMode);
+          applyThemePreference(parsed.themeMode);
         }
         if (parsed.appFont && parsed.appFont in APP_FONT_FAMILY) {
           set({ appFont: parsed.appFont });
-        }
-      }
-      // One-off: «Rating» used to start hidden in the song ⋯ menu, so every
-      // profile saved before this carries an explicit `false` that was never a
-      // decision — just the old default. Turn it on once and save it. The
-      // marker is what makes hiding it again from Settings stick, instead of
-      // it coming back on every launch.
-      if (!ratingShown) {
-        void setItem(ratingShownKey(), '1');
-        if (!get().songMenuActions.rating) {
-          set((s) => ({ songMenuActions: { ...s.songMenuActions, rating: true } }));
-          persist(snapshot(get));
         }
       }
       // Language: global (not per profile). If not yet saved separately, it is
@@ -2196,8 +2502,8 @@ export const useSettings = create<SettingsState>((set, get) => ({
       // hydration has taken over.
       if (!applied && scope.accept(token, key)) {
         set({ ...DEFAULTS, language: get().language });
-        applyAccent(DEFAULT_ACCENT);
-      applyThemeMode(DEFAULTS.themeMode);
+        applyAccents(DEFAULT_ACCENT, DEFAULT_ACCENT);
+        applyThemePreference(DEFAULTS.themeMode);
       }
     } finally {
       // Read or failed, what's in memory is now what this profile gets.

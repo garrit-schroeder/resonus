@@ -1,6 +1,7 @@
 /**
- * Settings › Theme: the appearance (dark or light) and the accent colour. Both
- * apply the moment they are chosen.
+ * Settings › Theme: the appearance (dark, light, or the phone's own) and the
+ * accent colour of whichever one is on screen — each keeps its own. All of it
+ * applies the moment it is chosen.
  *
  * The light one carries "(experimental)" in its own label rather than a warning
  * off to one side. It is a whole second palette across every screen in the app,
@@ -14,14 +15,46 @@ import { Pressable, ScrollView, Text, View } from 'react-native';
 import { SelectList, SettingsPage, settingsStyles } from '@/components/SettingsUI';
 import { useT } from '@/i18n';
 import { ACCENT_OPTIONS, useSettings } from '@/store/settings';
-import { fontSize, spacing, themed, useTheme, type ThemeMode } from '@/theme';
+import { fontSize, radius, spacing, themed, type ThemePreference, useThemeMode } from '@/theme';
+
+/** The row of colours. Which appearance it is picking for is the one on screen;
+ *  see the note where it is used. */
+function Swatches({ value, onPick }: { value: string; onPick: (hex: string) => void }) {
+  const t = useT();
+  return (
+    <View style={styles.swatches}>
+      {ACCENT_OPTIONS.map((opt) => {
+        const active = opt.color.toLowerCase() === value.toLowerCase();
+        return (
+          <Pressable
+            key={opt.color}
+            onPress={() => onPick(opt.color)}
+            accessibilityRole="button"
+            accessibilityLabel={t(opt.name)}
+            style={[styles.swatch, { backgroundColor: opt.color }, active && styles.swatchActive]}
+          >
+            {/* The swatches are the colours as named — the vivid ones — in
+                both appearances, so black is always the tick that reads on
+                them. What the light theme paints with is a darkened version
+                of whichever one is picked (see `readableOn` in the theme):
+                the same colour, taken down to where it can be read on
+                white. */}
+            {active ? <Ionicons name="checkmark" size={24} color="#000" /> : null}
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
 
 export default function ThemeSettings() {
   // Repaints on a change of appearance or accent: a stack keeps this screen
-  // mounted while you are on another one, out of reach of anything else.
-  useTheme();
+  // mounted while you are on another one, out of reach of anything else. The
+  // appearance is also read, since it is the one being given a colour.
+  const mode = useThemeMode();
   const t = useT();
   const accentColor = useSettings((s) => s.accentColor);
+  const accentColorLight = useSettings((s) => s.accentColorLight);
   const setAccentColor = useSettings((s) => s.setAccentColor);
   const themeMode = useSettings((s) => s.themeMode);
   const setThemeMode = useSettings((s) => s.setThemeMode);
@@ -33,39 +66,26 @@ export default function ThemeSettings() {
             off, and two headings with the same word one level apart read as a
             mistake. */}
         <Text style={styles.label}>{t('Mode')}</Text>
-        <SelectList<ThemeMode>
+        <SelectList<ThemePreference>
           collapsible={false}
           value={themeMode}
           onChange={setThemeMode}
           options={[
+            { value: 'system', label: t('Follow system') },
             { value: 'dark', label: t('Dark (default)') },
             { value: 'light', label: t('Light (experimental)') },
           ]}
         />
 
+        {/* One row, and it belongs to the appearance you are looking at: each
+            keeps its own colour, so switching mode brings back the one chosen
+            there rather than repainting it with the other's. Nothing has to say
+            so on screen — the ticked swatch is already the answer. */}
         <Text style={[styles.label, styles.secondLabel]}>{t('Accent color')}</Text>
-        <View style={styles.swatches}>
-          {ACCENT_OPTIONS.map((opt) => {
-            const active = opt.color.toLowerCase() === accentColor.toLowerCase();
-            return (
-              <Pressable
-                key={opt.color}
-                onPress={() => setAccentColor(opt.color)}
-                accessibilityRole="button"
-                accessibilityLabel={t(opt.name)}
-                style={[styles.swatch, { backgroundColor: opt.color }, active && styles.swatchActive]}
-              >
-                {/* The swatches are the colours as named — the vivid ones — in
-                    both appearances, so black is always the tick that reads on
-                    them. What the light theme paints with is a darkened version
-                    of whichever one is picked (see `readableOn` in the theme):
-                    the same colour, taken down to where it can be read on
-                    white. */}
-                {active ? <Ionicons name="checkmark" size={24} color="#000" /> : null}
-              </Pressable>
-            );
-          })}
-        </View>
+        <Swatches
+          value={mode === 'light' ? accentColorLight : accentColor}
+          onPick={(hex) => setAccentColor(hex, mode)}
+        />
       </ScrollView>
     </SettingsPage>
   );
@@ -83,7 +103,7 @@ const styles = themed((colors) => ({
   swatch: {
     width: 56,
     height: 56,
-    borderRadius: 28,
+    borderRadius: radius.pill,
     alignItems: 'center',
     justifyContent: 'center',
   },

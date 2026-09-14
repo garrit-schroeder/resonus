@@ -14,6 +14,7 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { radius, spacing, themed } from '@/theme';
+import { motion } from '@/theme/motion';
 import { useScreenSize } from '@/hooks/useScreenSize';
 import { BackButton } from './BackButton';
 
@@ -29,7 +30,7 @@ export function TrackListSkeleton() {
   const cover = Math.round(Math.min(width * 0.58, height * 0.4, 250));
   const pulse = useSharedValue(1);
   useEffect(() => {
-    pulse.value = withRepeat(withTiming(0.45, { duration: 700 }), -1, true);
+    pulse.value = withRepeat(withTiming(0.45, { duration: motion.duration.pulse }), -1, true);
   }, [pulse]);
   const pulseStyle = useAnimatedStyle(() => ({ opacity: pulse.value }));
 
@@ -84,8 +85,8 @@ const styles = themed((colors) => {
       marginVertical: spacing.lg,
     },
     actionsLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.lg },
-    smallCircle: { ...block, width: 26, height: 26, borderRadius: 13 },
-    playCircle: { ...block, width: 56, height: 56, borderRadius: 28 },
+    smallCircle: { ...block, width: 26, height: 26, borderRadius: radius.pill },
+    playCircle: { ...block, width: 56, height: 56, borderRadius: radius.pill },
     row: {
       flexDirection: 'row',
       alignItems: 'center',

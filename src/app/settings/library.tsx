@@ -11,7 +11,7 @@ import { getScanStatus, startScan } from '@/api/backend';
 import { Field, SettingRow, SettingsPage, SwitchList, settingsStyles } from '@/components/SettingsUI';
 import { useT } from '@/i18n';
 import { clearExportCache } from '@/lib/exportSong';
-import { ensureAudioPermission, pickFolder } from '@/lib/localLibrary';
+import { ensureAudioPermission, folderNameFromUri, pickFolder } from '@/lib/localLibrary';
 import { queryClient } from '@/lib/query';
 import { useAuthStore } from '@/store/auth';
 import { profileKeyOf, useLibraries } from '@/store/libraries';
@@ -27,6 +27,7 @@ export default function LibrarySettings() {
   const offline = useAuthStore((s) => s.offline);
   const source = useAuthStore((s) => s.offlineSource);
   const setSource = useAuthStore((s) => s.setOfflineSource);
+  const setFolders = useAuthStore((s) => s.setOfflineFolders);
   const toast = useToast((s) => s.show);
   const insets = useSafeAreaInsets();
   // Server libraries (Navidrome multi-library): one switch per folder.
@@ -58,7 +59,7 @@ export default function LibrarySettings() {
   async function chooseFolder() {
     const uri = await pickFolder();
     if (!uri) return;
-    await setSource({ mode: 'folder', uri });
+    await setSource({ mode: 'folder', uris: [uri] });
     setChanging(false);
     toast(t('Source updated'));
   }
@@ -72,6 +73,31 @@ export default function LibrarySettings() {
     await setSource({ mode: 'device' });
     setChanging(false);
     toast(t('Source updated'));
+  }
+
+  const folderUris = source?.mode === 'folder' ? source.uris : [];
+
+  async function addFolder() {
+    const uri = await pickFolder();
+    if (!uri) return;
+    if (folderUris.includes(uri)) {
+      toast(t('That folder is already there'));
+      return;
+    }
+    await setFolders([...folderUris, uri]);
+    toast(t('Rescanning your music…'));
+  }
+
+  async function removeFolder(uri: string) {
+    // The same rule as the server's libraries: a local profile with no folder
+    // is a profile with no music, and the way out of that is choosing another
+    // source, not emptying this list.
+    if (folderUris.length <= 1) {
+      toast(t('Keep at least one folder'));
+      return;
+    }
+    await setFolders(folderUris.filter((u) => u !== uri));
+    toast(t('Rescanning your music…'));
   }
 
   async function rescanNow() {
@@ -126,6 +152,30 @@ export default function LibrarySettings() {
               label={t('Source')}
               value={source?.mode === 'folder' ? t('Folder') : t('Device')}
             />
+            {source?.mode === 'folder' ? (
+              <>
+                <Text style={settingsStyles.sectionTitle}>{t('Music folders')}</Text>
+                {folderUris.map((uri) => (
+                  <View key={uri} style={[settingsStyles.cardBox, settingsStyles.row]}>
+                    <Ionicons name="folder-outline" size={20} color={colors.text} />
+                    <View style={settingsStyles.rowLabelBox}>
+                      <Text style={settingsStyles.rowLabel} numberOfLines={1}>
+                        {folderNameFromUri(uri)}
+                      </Text>
+                    </View>
+                    <Pressable
+                      hitSlop={12}
+                      accessibilityRole="button"
+                      accessibilityLabel={t('Remove')}
+                      onPress={() => removeFolder(uri)}
+                    >
+                      <Ionicons name="close" size={20} color={colors.textMuted} />
+                    </Pressable>
+                  </View>
+                ))}
+                <SettingRow icon="add" label={t('Add another folder')} onPress={addFolder} />
+              </>
+            ) : null}
             <SettingRow
               icon="refresh"
               label={rescanning ? t('Rescanning your music…') : t('Rescan')}
@@ -207,8 +257,8 @@ const sheetStyles = themed((colors) => ({
     width: '100%',
     maxWidth: SHEET_MAX_WIDTH,
     backgroundColor: colors.surface,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    borderTopLeftRadius: radius.xxl,
+    borderTopRightRadius: radius.xxl,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.lg,
     gap: spacing.md,

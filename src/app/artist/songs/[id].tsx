@@ -45,6 +45,7 @@ import { useAccent } from '@/hooks/useAccent';
 import { useDownloadMessage } from '@/hooks/useDownloadMessage';
 import { useScreenBottomPadding } from '@/hooks/useScreenBottomPadding';
 import { useListPadding } from '@/hooks/useScreenSize';
+import { useSelectionMenu } from '@/hooks/useSelectionMenu';
 import { useSongSort } from '@/hooks/useSongSort';
 import { songsLabel, useT } from '@/i18n';
 import { splitArtistAlbums } from '@/lib/artistAlbums';
@@ -182,6 +183,8 @@ export default function ArtistSongsScreen() {
     setSelectedIds(null);
     if (sel.length > 0) fn(sel);
   }
+
+  const selectionMenu = useSelectionMenu(runSelection);
 
   async function deleteArtistDownloads() {
     const files = useDownloads.getState().files;
@@ -383,6 +386,8 @@ export default function ArtistSongsScreen() {
                   toast(t('Added to queue'));
                 }),
             },
+          ]}
+          menu={[
             ...(offline
               ? []
               : [
@@ -396,9 +401,11 @@ export default function ArtistSongsScreen() {
                       }),
                   },
                 ]),
+            ...selectionMenu.actions,
           ]}
         />
       ) : null}
+      {selectionMenu.dialogs}
       {sortSheet}
 
       <SheetModal openRef={menuRef}>

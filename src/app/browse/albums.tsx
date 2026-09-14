@@ -1,4 +1,9 @@
-/** Browse all server albums, with sort, search and infinite scroll. */
+/**
+ * Browse all server albums, with sort, search and infinite scroll.
+ *
+ * A screen of its own and, `embedded`, the Albums section of the Explore tab
+ * (see `BrowseFrame`).
+ */
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useLocalSearchParams } from 'expo-router';
@@ -8,13 +13,11 @@ import {
   Dimensions,
   Keyboard,
   Pressable,
-  ScrollView,
   Text,
   TextInput,
   View,
 } from 'react-native';
 import { FlatList as GHFlatList } from 'react-native-gesture-handler';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { getAlbumList, searchAlbums, type Album, type AlbumListType } from '@/api/data';
 import { AlbumCard } from '@/components/AlbumCard';
@@ -37,6 +40,8 @@ import {
 } from '@/theme';
 import { listPerf } from '@/lib/listPerf';
 import { BackChevron } from '@/components/BackChevron';
+import { BrowseFrame, useSearchBox, type BrowserProps } from '@/components/BrowseFrame';
+import { BrowseToolbar } from '@/components/BrowseToolbar';
 import { useGridColumns } from '@/hooks/useGridColumns';
 import { useScreenBottomPadding } from '@/hooks/useScreenBottomPadding';
 
@@ -48,7 +53,7 @@ function cardWidth(columns: number): number {
   return (Dimensions.get('window').width - spacing.lg * 2 - GAP * (columns - 1)) / columns;
 }
 
-/** Bar height: the box (44) plus its gap to the chips below. */
+/** Bar height: the box (44) plus its gap to the row below. */
 const SEARCH_H = 44 + spacing.md;
 
 /**
@@ -61,14 +66,15 @@ const SEARCH_COUNT = 50;
 /** Delay before querying the server: without this it'd be one request per keystroke. */
 const DEBOUNCE_MS = 300;
 
-// Same chips and same order as Artists: they're sibling screens and seeing
-// them ordered differently felt jarring. 'alphabeticalByArtist' was dropped
+// Same orders, in the same order, as Artists: they're sibling screens and
+// seeing them listed differently felt jarring. 'alphabeticalByArtist' was dropped
 // for this reason, by symmetry: it has no equivalent in Artists, where sorting
 // by artist is exactly what A-Z already does.
 const SORTS: { key: AlbumListType; label: string }[] = [
   { key: 'recent', label: 'Recently played' },
   { key: 'frequent', label: 'Most played::albums' },
   { key: 'newest', label: 'Recently added' },
+  { key: 'byYear', label: 'New releases' },
   { key: 'alphabeticalByName', label: 'A-Z' },
   { key: 'random', label: 'Shuffle' },
 ];
@@ -79,6 +85,10 @@ function sortFromParam(value: string | undefined): AlbumListType | undefined {
 }
 
 export default function BrowseAlbumsScreen() {
+  return <AlbumsBrowser />;
+}
+
+export function AlbumsBrowser({ embedded, actionRef, searchOpen }: BrowserProps) {
   // Repaints on a change of appearance or accent: a stack keeps this screen
   // mounted while you are on another one, out of reach of anything else.
   useTheme();
@@ -146,12 +156,16 @@ export default function BrowseAlbumsScreen() {
     enabled: canFetch && debounced.length > 0,
   });
 
-  function cancelSearch() {
+  function clearSearch() {
     Keyboard.dismiss();
     setQuery('');
     setSearching(false);
     listRef.current?.scrollToOffset({ offset: 0, animated: false });
   }
+
+  // Embedded, whether the box is there is the tab's answer; on this screen it
+  // simply is.
+  const showSearch = useSearchBox(embedded, searchOpen, clearSearch);
 
   // When searching, the search results rule: the typed text, not the debounce,
   // so the full list doesn't flash back for an instant between keystrokes.
@@ -162,32 +176,41 @@ export default function BrowseAlbumsScreen() {
   // flash between keystrokes.
   const searchPending = isSearch && (searchLoading || debounced !== query.trim());
 
-  return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
-      <View style={styles.header}>
-        <BackChevron />
-        <Text style={styles.title}>{t('Albums')}</Text>
-        {/* Takes the same width as the back chevron so the title stays centered;
-            there used to be an empty slot of the same width here. */}
-        <View style={styles.headerAction}>
-          <Pressable
-            hitSlop={10}
-            accessibilityRole="button"
-            accessibilityLabel={t('View')}
-            onPress={openGridMenu}
-          >
-            <Ionicons
-              name={grid ? 'grid-outline' : 'list'}
-              size={20}
-              color={colors.textSecondary}
-            />
-          </Pressable>
-        </View>
-      </View>
+  // Embedded, the button that opens this menu is drawn by the Explore tab, in
+  // its own header: this is the way down to the menu it belongs to. Kept up to
+  // date after every render rather than during one, which is a rule the ref is
+  // not worth breaking for — it is only read from a tap, long after this.
+  useEffect(() => {
+    if (actionRef) actionRef.current = openGridMenu;
+  });
 
-      {/* Always visible: finding an album is what this screen is for, so the
-          bar is not worth hiding behind a gesture nobody discovers. */}
-      <View style={styles.searchRow}>
+  const viewButton = (
+    <Pressable
+      hitSlop={10}
+      accessibilityRole="button"
+      accessibilityLabel={t('View')}
+      onPress={openGridMenu}
+    >
+      <Ionicons name={grid ? 'grid-outline' : 'list'} size={20} color={colors.textSecondary} />
+    </Pressable>
+  );
+
+  return (
+    <BrowseFrame embedded={embedded}>
+      {embedded ? null : (
+        <View style={styles.header}>
+          <BackChevron />
+          <Text style={styles.title}>{t('Albums')}</Text>
+          {/* Takes the same width as the back chevron so the title stays
+              centered; there used to be an empty slot of the same width here. */}
+          <View style={styles.headerAction}>{viewButton}</View>
+        </View>
+      )}
+
+      {/* Always there on its own screen: finding an album is what it is for.
+          In the tab the magnifier asks for it (see `useSearchBox`). */}
+      {showSearch ? (
+        <View style={styles.searchRow}>
           <View style={styles.searchBar}>
             <Ionicons name="search" size={18} color={colors.textMuted} />
             <TextInput
@@ -200,6 +223,9 @@ export default function BrowseAlbumsScreen() {
               onChangeText={setQuery}
               onFocus={() => setSearching(true)}
               returnKeyType="search"
+              // Embedded it was opened on purpose, so the keyboard is what
+              // comes next; on the screen it would cover the list on arrival.
+              autoFocus={embedded}
             />
             {query.length > 0 ? (
               <Pressable
@@ -212,38 +238,26 @@ export default function BrowseAlbumsScreen() {
               </Pressable>
             ) : null}
           </View>
-          {searching ? (
-            <Pressable hitSlop={8} accessibilityRole="button" onPress={cancelSearch}>
+          {/* Only on its own screen. In the tab the magnifier has turned into
+              an X, and a second way out beside the box is one too many. */}
+          {searching && !embedded ? (
+            <Pressable hitSlop={8} accessibilityRole="button" onPress={clearSearch}>
               <Text style={styles.searchCancel}>{t('Cancel')}</Text>
             </Pressable>
           ) : null}
-      </View>
+        </View>
+      ) : null}
 
-      {/* The chips hide when searching: the server returns by relevance, so
-          ordering results isn't in its hands and a marked pill would lie about
-          the visible order. */}
+      {/* Gone while searching: the server returns by relevance, so ordering
+          results isn't in its hands, and what "play everything" would start is
+          not what you were looking for either. */}
       {isSearch ? null : (
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.chips}
-        style={styles.chipsRow}
-      >
-        {SORTS.map((s) => {
-          const active = s.key === sort;
-          return (
-            <Pressable
-              key={s.key}
-              style={[styles.chip, active && { backgroundColor: colors.accent }]}
-              onPress={() => setSort(s.key)}
-            >
-              <Text style={[styles.chipText, active && styles.chipTextActive]}>
-                {t(s.label)}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
+        <BrowseToolbar
+          options={SORTS}
+          value={sort}
+          onChange={setSort}
+          play={{ source: t('Library'), href: '/browse/albums' }}
+        />
       )}
 
       {(isSearch ? searchPending : isLoading) ? (
@@ -311,12 +325,11 @@ export default function BrowseAlbumsScreen() {
         />
       )}
       {gridSheet}
-    </SafeAreaView>
+    </BrowseFrame>
   );
 }
 
 const styles = themed((colors) => ({
-  safe: { flex: 1, backgroundColor: colors.background },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -326,13 +339,14 @@ const styles = themed((colors) => ({
   },
   title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '600' },
   headerAction: { width: 26, alignItems: 'flex-end' },
+
   searchRow: {
     height: SEARCH_H,
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
     paddingHorizontal: spacing.lg,
-    // The gap to the chips is part of the height, not an outer margin.
+    // The gap to the row below is part of the height, not an outer margin.
     paddingBottom: spacing.md,
   },
   searchBar: {
@@ -347,31 +361,6 @@ const styles = themed((colors) => ({
   },
   input: { flex: 1, color: colors.text, fontSize: fontSize.md, paddingVertical: 0 },
   searchCancel: { color: colors.text, fontSize: fontSize.sm, fontWeight: '600' },
-  // `flexShrink: 0` because the search bar adds a child to the column: without
-  // it flex shrinks this row and clips the pill text.
-  chipsRow: { flexGrow: 0, flexShrink: 0 },
-  chips: { gap: spacing.sm, paddingHorizontal: spacing.lg, paddingBottom: spacing.md },
-  chip: {
-    // Asymmetric padding on purpose: even without includeFontPadding, glyphs
-    // end up ~1dp low relative to the pill center (measured in screenshot).
-    paddingTop: spacing.xs - 1,
-    paddingBottom: spacing.xs + 1,
-    paddingHorizontal: spacing.md,
-    borderRadius: 999,
-    backgroundColor: colors.surfaceHighlight,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  chipText: {
-    color: colors.textSecondary,
-    fontSize: fontSize.sm,
-    fontWeight: '600',
-    // Android adds extra asymmetric padding on top of the text (font ascent):
-    // without removing it, the text doesn't center in the pill.
-    includeFontPadding: false,
-    textAlignVertical: 'center',
-  },
-  chipTextActive: { color: colors.onAccent },
   list: {
     paddingHorizontal: spacing.lg,
     paddingBottom: SCREEN_BOTTOM_PADDING,

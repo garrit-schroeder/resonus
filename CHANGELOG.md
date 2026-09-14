@@ -9,17 +9,142 @@ Releases before 0.2.1 are only listed on the
 
 ## [Unreleased]
 
+### Added
+
+- Your library can show Favorites and your playlists again when no chip is pressed, instead of everything mixed together, with Settings > Appearance > Start on your playlists (#217).
+
 ### Changed
 
-- Headings and screen titles are lighter: Android draws Roboto's 800 as a real ExtraBold, which closes the letters up, so they sit at 600 instead.
+- You can pin up to 50 items instead of 25 (#217).
 
 ### Fixed
 
+- Deleting a playlist or a radio station, or taking an album out of your favourites with its heart, no longer leaves a hidden pin that still counts toward the limit (#217).
+
+## [0.7.7] - 2026-09-13
+
+### Added
+
+- Chips under the search box narrow the results to songs, artists, albums, playlists or radio. They show up as soon as you type, and pressing the one already lit gives you everything back.
+- An animated cover can fill the player behind the controls, with a still copy of it beside the title, instead of playing inside the square; it starts off, under Settings > Player > Cover art, and comes from @Anakin-bb8 (#190).
+- Ukrainian is complete again, thanks to @albedych (#191).
+- The sections of Explore can be shown or hidden as well as reordered, from Settings > Appearance > Explore sections. The last one on stays on: Explore is the only way into the whole of a library, so a tab with no chips would be a catalogue with no way in.
+- A playlist can be a favourite, with the heart its albums and artists already have. It needs Navidrome 0.64 or newer, which is where playlist favourites start existing, and the heart simply isn't there on a server that has no way to remember it.
+- Polish, a complete translation, thanks to @pegaz19803-spec (#200). It also made the Language screen's own three lines translatable, which they were not in any language: they were English sitting in the code.
+- Navidrome 0.64 gives every song, album and playlist a new id, and the music already on the phone is filed under the old ones. Resonus now notices a server that has renumbered and rewrites the downloads, the offline library, the queue, the pins and the listens still waiting to be sent, so nothing has to be downloaded again. It only acts on proof: the server has to answer to the new id and refuse the old one, since a song that was simply deleted looks the same from outside. A server that has not migrated is left alone.
+
+### Changed
+
+- Home opens with every section on. Five of them used to start off to keep it short, which mostly kept them secret: a section nobody has seen is one nobody knows to look for in the settings. Turn off what you do not want from Settings > Appearance > Home sections. Anyone who has already set these keeps what they chose.
+- "Your library" opens on everything you have, playlists, favourite albums and favourite artists in one list saying which is which, and the chips narrow it from there instead of being the only way to see any of it.
+- The chip you press in "Your library" is now the only one left in the row, behind an X that gives the whole library back, and Playlists brings Yours and Public with it, each when it has something to leave out; picking one of those leaves the two words sitting together as one answer.
+- The search box of Explore is now behind the same magnifier "Your library" has, at the top right, where it becomes the X that puts the box away; Back closes it too, and a section opens on its list rather than on a box you were not looking for.
+
+### Fixed
+
+- "On cover tap" keeps what you picked. "Go to album", "Play or pause" and "Add to favorites" were thrown away when the app reopened and came back as "Open lyrics screen"; the same went for the double tap, which came back off unless it was set to play/pause or favorites. Reported by BrawlReturns.
+- An animated cover no longer stutters in the player: only the copy you are looking at plays, and the blurred background behind it holds still.
+- The popular songs on an artist's page are that artist's, where two of them share a name. They were asked for by name alone, so whichever one the server happened to reach first answered for both.
+- "Start mix" works with repeat turned on. It used to answer that it could not find anything to mix with the song, whichever song it was, and nothing had been looked for: the queue never runs out with repeat on, so the search that fills a mix was skipped before it began. Starting a mix now also turns repeat off, the way it already turned shuffle off (#197).
+- A downloaded track with a sleeve of its own shows it offline, instead of the record's. Its picture was never saved, so offline had nothing to show but the album's; downloading now brings it along, and a track without one still gets the album's as before. Albums already on the phone keep the album cover until they are downloaded again (#214).
+- The colour an artist's page is tinted with comes from their photo and not from the grey square standing in for it while the server is still looking the photo up, which it could keep doing for as long as the picture stayed in the cache.
+
+## [0.7.6] - 2026-08-26
+
+### Added
+
+- The row playing in a list shows a set of bars that move while it plays and settle when you pause it.
+- One tap and two on the player's artwork now offer the same actions, the album among them, so play or pause on one and the lyrics on the other is a choice you can make either way round.
+- Holding a playlist on the Home shelf opens the same menu the library gives it (#182).
+- The tabs at the bottom can be reordered, and all but Home hidden, from Settings > Appearance > Navigation bar.
+- A fourth tab, Explore, holds everything the server has: all albums, all artists, all songs, the genres, the radio stations and the folders, each with its own search and orders.
+- Italian is complete again, and Explicit, Clean and Lyrics read as Italian instead of English, thanks to @Anakin-bb8 (#189).
+- On iOS the app wears an icon of its own, also from @Anakin-bb8 (#189).
+- Playlists are the first section of Explore, with their own search, order and rows-or-cards button, so the server's public ones are reachable from the tab that holds its catalogue.
+- The icons at the top of Home can be reordered, and all but the gear hidden, from Settings > Appearance > Home buttons. There is a new one among them, a search button that opens the box with the cursor already in it; it starts off, since searching already has a tab of its own.
+
+### Removed
+
+- The setting that picked which actions a song's ⋯ menu shows: every action is back in it, and each one is still only there when it applies.
+- The avatar on Home, and the setting that showed it: it was never a button, and the account is one tap away behind the gear beside it.
+
+### Changed
+
+- Song, album and artist rows dim under the finger, late enough that scrolling past one never lights it up.
+- Corners are rounder throughout, sheets and panels most of all. Covers keep the corner they had: letting it grow with the artwork ate into the picture on the big ones.
+- Every sheet rises with the same rounded top; half of them used to be less rounded than the other half.
+- The library tab is now called "Your library", at the bottom of the screen and at the top of the tab itself.
+- The row of chips on Home is now called "Home chips" and not "Explore chips", which named the Explore tab it has nothing to do with; the order you put them in survives the rename.
+- "Pick up the queue from other players" starts on, so a queue left on another device is taken as well as sent; it was only ever sent before (#188).
+- Albums and artists start as rows rather than as a grid, in Explore and anywhere else they are browsed, and the view button still switches them.
+- "Your library" is the last tab at the bottom rather than the third, behind Explore, and it can still be dragged anywhere from Settings > Appearance > Navigation bar.
+- Browsing all albums, all artists and all songs picks its order from a menu that says which one is on, instead of a scrolling row of pills, and the albums and the songs gained play and shuffle beside it.
+- A genre card now says how many albums it holds and fans out the covers of its first two, in Search and in the genres screen alike.
+- The album and year line in the player scrolls when it does not fit, so a long album name no longer keeps the year off the screen (#183).
+- Folders moved out of Your library and into the new Explore tab, which is where the rest of the server's own catalogue now lives.
+- Settings > Appearance > "Open the app on" can pick the new tab.
+
+### Fixed
+
+- "Add to queue" puts what you add at the end of the queue, where "Play next" already put things right after the current song (#184).
+- The queue's headings say where each stretch of it came from, instead of leaving songs you added under the name of a record none of them are on (#184).
+- The dropdowns in Settings open flush against their row again, instead of a status bar's height below it.
+- Opening Your library for the first time no longer draws it under the status bar for an instant before dropping it into place.
+- "New releases" shows the newest records instead of a slice of the alphabet: the list goes by the day each record came out, and by when it reached the server for those tagged with a year and nothing more.
+- Offline mode no longer looks for a new version of Resonus by itself, since asking GitHub is still using the network somebody said not to use (#179).
+- The queue Resonus saves on the server no longer overwrites a newer one another player left there, and a queue that has only been restored, never played, is not sent at all (#188).
+
+## [0.7.5] - 2026-08-24
+
+### Added
+
+- The local profile can read from more than one folder, added and removed in Settings > Local music, and adding one reads the tags of the new folder only instead of the whole library again (#158).
+- Home can show a "New releases" shelf, off by default in Settings > Home sections, with the albums ordered by the year they came out rather than by when the server got hold of them (#173).
+- The theme can follow the phone's own light or dark setting, from Settings > Appearance > Theme, and changes with it while the app is open (#173).
+- The accent colour is now remembered per appearance: the swatches set the colour of the theme you are in, and switching between dark and light brings back the one chosen there (#173).
+- The queue another player left on the server can be brought over from the ⋯ of the queue screen, and taken on its own with the new switch in Settings > Playback: with it on, opening the app with nothing playing picks up that queue when it is the newer of the two.
+- Tapping the player's artwork twice can play, pause or favourite the song, from a new setting in Settings > Player that starts off (#156).
+- An album, a playlist or the favourites can be played next from their ⋯ menu, instead of only going to the end of the queue.
+
+### Fixed
+
+- The server's Now Playing panel follows the song instead of sitting at 0:00: the position was only reported when something changed, so a track nobody touched stayed at the second it started on.
+- Dragging the progress bar now moves the time under it, so the number says where you are about to land instead of where the song still is.
+- On iOS the buttons to skip to the next and the previous song work from the lock screen, the Dynamic Island, Bluetooth and the car, where they were greyed out, thanks to @Anakin-bb8.
+- On iOS the accent colour reads the whole cover instead of a sample of it and takes the colour the cover is made of, so a green sleeve no longer comes out grey, thanks to @Anakin-bb8.
+- The sleep timer's "When the song ends" no longer leaves the player describing one song while holding another: the track it stops on is the one that plays when you press play again (#177).
+
+### Changed
+
+- The local profile no longer keeps its library in memory: it asks its catalog for the rows a screen is about to draw, the way a server's downloads already did, so opening the app and moving around it stop costing what the whole library costs.
+- The local profile no longer stops at five thousand songs per folder: what is left is a guard against a scan pointed at a whole card, far above any music library, and a scan that ever reaches it says so in Diagnostics instead of quietly leaving the rest out.
+- Folders are followed ten levels deep instead of six, so a library filed under more folders than usual is read whole.
+
+## [0.7.5-beta.1] - 2026-08-22
+
+### Added
+
+- The player can show a card with the artist's photo and biography below the controls, off by default in Settings > Player, thanks to @Anakin-bb8.
+- Italian is much more complete: over 140 strings that were missing or read unnaturally, thanks to @Anakin-bb8.
+- A selection of songs can be exported to a folder, or have its downloads deleted, from the ⋯ of the selection bar (#164).
+
+### Changed
+
+- The selection bar keeps two buttons and a ⋯ that opens the rest, so favouriting and unfavouriting several songs at once are finally somewhere you would look for them, instead of hidden in the "Add to a playlist" sheet (#164).
+- Headings and screen titles are lighter: Android draws Roboto's 800 as a real ExtraBold, which closes the letters up, so they sit at 600 instead.
+- The genre grid on Search no longer carries a "Browse all" heading above it.
+- Expo SDK 57 and React Native 0.86 underneath, with media3 unchanged at 1.9.0.
+
+### Fixed
+
+- Casting to an ordinary UPnP renderer no longer stops after a few tracks with the screen locked: the queue and the move to the next track now live in the native module, which keeps running while Android suspends the app's JavaScript, and the next track is handed to the renderer in advance where it supports it.
+- Listens saved while offline reach the server on reconnect: the upload read the outbox as it was before the file on disk was opened, so a queue restored on a cold start went up empty.
 - ALAC files play on devices whose own decoder cannot handle them, several Samsung phones among them, through a bundled decoder that only steps in when the system refuses the format (#134).
 - Casting to Sonos survives editing the queue: moving the song that is playing, or any row around it, is now mirrored on the speaker instead of leaving the connection unable to play, pause or seek for the rest of the session.
 - Sonos turns off shuffle in one piece: the whole queue goes back to album order, not just the part after the song playing.
 - Skipping to another song already in the Sonos queue is immediate, because the queue is no longer torn down and sent again song by song.
 - Crossfade set in Resonus is passed on to Sonos, both on connecting and when the setting is changed while casting.
+- The last song in the queue no longer sits under the navigation bar: the screen clears whatever height that bar actually has instead of guessing a fixed gap, which fell short with three-button navigation.
 
 ## [0.7.4] - 2026-08-19
 

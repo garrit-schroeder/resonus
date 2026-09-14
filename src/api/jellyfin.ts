@@ -71,12 +71,12 @@ const ALBUM_FIELDS = 'ChildCount,DateCreated,Genres';
 const SONG_FIELDS = 'MediaSources,DateCreated,NormalizationGain,Genres';
 const PLAYLIST_FIELDS = 'ChildCount,DateCreated,DateLastMediaAdded';
 /**
- * How many albums an artist has. Jellyfin does not put counts on an item
- * unless they are asked for, and an artist row that says "0 albums" is what
- * happens when nobody asks (#129). It is one field on a request that is already
- * being made, not a request per artist.
+ * How many albums an artist or a genre has. Jellyfin does not put counts on an
+ * item unless they are asked for, and an artist row that says "0 albums" is
+ * what happens when nobody asks (#129). It is one field on a request that is
+ * already being made, not a request per name.
  */
-const ARTIST_FIELDS = 'ItemCounts';
+const ITEM_COUNTS = 'ItemCounts';
 
 /** Subset of BaseItemDto that the app uses. */
 interface JfItem {
@@ -94,8 +94,9 @@ interface JfItem {
   ParentIndexNumber?: number;
   ProductionYear?: number;
   ChildCount?: number;
-  /** Only present when `ItemCounts` is among the requested fields. */
+  /** Both only present when `ItemCounts` is among the requested fields. */
   AlbumCount?: number;
+  SongCount?: number;
   DateCreated?: string;
   DateLastMediaAdded?: string;
   Genres?: string[];
@@ -402,6 +403,9 @@ const ALBUM_SORT: Record<AlbumListType, { SortBy: string; SortOrder?: string; Fi
     recent: { SortBy: 'DatePlayed', SortOrder: 'Descending' },
     frequent: { SortBy: 'PlayCount', SortOrder: 'Descending' },
     random: { SortBy: 'Random' },
+    // The release date, which Jellyfin keeps whole and Subsonic only has the
+    // year of. `ProductionYear` catches an album tagged with a year and no day.
+    byYear: { SortBy: 'PremiereDate,ProductionYear,SortName', SortOrder: 'Descending' },
     alphabeticalByName: { SortBy: 'SortName' },
     alphabeticalByArtist: { SortBy: 'AlbumArtist,SortName' },
     starred: { SortBy: 'SortName', Filters: 'IsFavorite' },
@@ -434,9 +438,12 @@ export async function getGenres(auth: SubsonicAuth): Promise<Genre[]> {
   const res = await request<JfItems>(auth, '/MusicGenres', {
     UserId: auth.jfUserId,
     SortBy: 'SortName',
+    // How many albums a genre has, which the card shows under its name.
+    // Jellyfin only counts when asked, the same as it does for artists.
+    Fields: ITEM_COUNTS,
   });
   return (res.Items ?? [])
-    .map((it) => ({ value: it.Name ?? '' }))
+    .map((it) => ({ value: it.Name ?? '', albumCount: it.AlbumCount, songCount: it.SongCount }))
     .filter((g) => g.value);
 }
 
@@ -546,7 +553,7 @@ export async function getArtists(auth: SubsonicAuth, _musicFolderId?: string): P
   const res = await request<JfItems>(auth, '/Artists/AlbumArtists', {
     UserId: auth.jfUserId,
     SortBy: 'SortName',
-    Fields: ARTIST_FIELDS,
+    Fields: ITEM_COUNTS,
   });
   return (res.Items ?? []).map(toArtist);
 }
@@ -597,7 +604,7 @@ export async function getArtistInfo(auth: SubsonicAuth, id: string): Promise<Art
     request<JfItems>(auth, `/Items/${id}/Similar`, {
       UserId: auth.jfUserId,
       Limit: 12,
-      Fields: ARTIST_FIELDS,
+      Fields: ITEM_COUNTS,
     }).catch(() => ({ Items: [] }) as JfItems),
   ]);
   return {
@@ -607,11 +614,19 @@ export async function getArtistInfo(auth: SubsonicAuth, id: string): Promise<Art
   };
 }
 
-/** Most played songs by an artist (Jellyfin filters by name). */
+/**
+ * Most played songs by an artist (Jellyfin filters by name).
+ *
+ * `_artistId` is taken and ignored: the Subsonic side sends it so Navidrome can
+ * resolve the artist by id, and both modules have to answer to the same call.
+ * Jellyfin's `Artists` filter is a name, and its id-based equivalent
+ * (`ArtistIds`) is a different query than the one this endpoint is.
+ */
 export async function getTopSongs(
   auth: SubsonicAuth,
   artist: string,
   count = 10,
+  _artistId?: string,
 ): Promise<Song[]> {
   const res = await request<JfItems>(auth, `/Users/${auth.jfUserId}/Items`, {
     IncludeItemTypes: 'Audio',
@@ -727,7 +742,7 @@ export async function search(
       UserId: auth.jfUserId,
       SearchTerm: query,
       Limit: 20,
-      Fields: ARTIST_FIELDS,
+      Fields: ITEM_COUNTS,
     }),
     items('MusicAlbum'),
     items('Audio'),
@@ -755,7 +770,7 @@ export async function getStarred(auth: SubsonicAuth, _musicFolderId?: string): P
     request<JfItems>(auth, '/Artists', {
       UserId: auth.jfUserId,
       IsFavorite: true,
-      Fields: ARTIST_FIELDS,
+      Fields: ITEM_COUNTS,
     }),
   ]);
   return {

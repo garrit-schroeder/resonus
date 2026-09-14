@@ -10,9 +10,14 @@
  * That list is the fix for a report that the switch did nothing. It used to be
  * the launch alone, once per process, and a music player's process outlives its
  * launches by days, so for anyone who never swipes the app away there was no
- * second occasion. The check also sat behind the app's offline flag, which
- * is about the music server rather than the internet: a local-profile user has
- * no server and never lost a connection, and never got asked either.
+ * second occasion.
+ *
+ * The one state that stops all four is offline mode chosen by hand, which is
+ * the only place anybody says "use no network" (#179). Not the app's offline
+ * flag as a whole: that one is on for the local profile, where it means having
+ * no music server rather than wanting no internet, and reading it as the latter
+ * is what left those users never asked at all. Nor an automatic offline, where
+ * the server is what stopped answering and the connection is very likely fine.
  *
  * Closing it asks again on the next round, and the switch in Settings › About
  * is the one that stops all of it. There is no per-version dismissal: a few
@@ -37,6 +42,7 @@ import {
 import { useAccent } from '@/hooks/useAccent';
 import { useT } from '@/i18n';
 import { clearDownloadedApk, currentVersion, RELEASES_PAGE } from '@/lib/appUpdate';
+import { useAuthStore } from '@/store/auth';
 import { useNetworkType } from '@/store/networkType';
 import { useSettings } from '@/store/settings';
 import { useUpdate } from '@/store/update';
@@ -61,6 +67,11 @@ export function UpdatePrompt() {
   const hydrated = useSettings((s) => s.hydrated);
   const cellular = useNetworkType((s) => s.cellular);
   const connected = useNetworkType((s) => s.connected);
+  // Offline mode as an instruction rather than as a circumstance: a server
+  // account whose owner pressed the button in Settings. The local profile
+  // (`offline` with no account) and a fall to offline are both `offline` too,
+  // and neither of them is somebody asking for radio silence.
+  const byChoice = useAuthStore((s) => s.offline && !s.autoOffline && !!s.auth);
   const phase = useUpdate((s) => s.phase);
   const release = useUpdate((s) => s.release);
   const progress = useUpdate((s) => s.progress);
@@ -85,7 +96,7 @@ export function UpdatePrompt() {
   // what makes "the network came back" one of the occasions: the effect re-runs
   // on the change and the first thing it does is ask.
   useEffect(() => {
-    if (!hydrated || !enabled || !connected) return;
+    if (!hydrated || !enabled || !connected || byChoice) return;
     void check();
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') void check();
@@ -95,7 +106,7 @@ export function UpdatePrompt() {
       sub.remove();
       clearInterval(timer);
     };
-  }, [hydrated, enabled, connected, check]);
+  }, [hydrated, enabled, connected, byChoice, check]);
 
   // The answer to «install unknown apps» is not returned to us: the system
   // screen is another app, and coming back is the only news we get.

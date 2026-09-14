@@ -11,6 +11,8 @@
  *
  * Run with `pnpm canonical:check` (Node strips the TypeScript itself).
  */
+import { createHash } from 'node:crypto';
+
 import { canonicalId, idWouldChange } from '../src/lib/navidromeIds.ts';
 import {
   isTemporaryId,
@@ -84,6 +86,69 @@ for (const [input, what] of MD5_SHAPED) {
     failures++;
     console.error(`  ✗ ${what}: expected a remap, id came back unchanged`);
   }
+}
+
+// From model/id/id_test.go: the golden values of `Encode`, reached through the
+// 32-hex branch because that is the one path that hands our encoder a byte
+// array we choose. Both ends of the range, since a zero-padding bug shows only
+// at the bottom and a carry bug only at the top.
+console.log('Encode golden values');
+check('sixteen zero bytes', canonicalId('0'.repeat(32)), '0000000000000000000000');
+check('sixteen 0xff bytes', canonicalId('f'.repeat(32)), '7N42dgm5tFLK9N8MT7fHC7');
+
+/**
+ * Navidrome's `id.NewHash`, reimplemented here and nowhere else.
+ *
+ * This is the family the migration leaves alone: artists, albums, tags and
+ * folders are all named by a hash of their parts, and the exemption of those
+ * four tables rests on every such id already being canonical. The check below
+ * is the one from `model/id/id_test.go` ("is the identity on every NewHash
+ * id"), which is worth having on our side too: if our transform ever moved one
+ * of these, a repair would rewrite every artist and album id on the phone into
+ * something the server has never heard of, and the probe would never catch it
+ * because it only ever asks about songs.
+ *
+ * Deliberately built from `node:crypto` and `BigInt` rather than from anything
+ * in `navidromeIds.ts`. The point is to be a second opinion: an independent md5
+ * and an independent base62 encoder, so agreement means the arithmetic is right
+ * rather than that it is consistently wrong. The golden ids below are what pins
+ * this reimplementation itself to the server's.
+ *
+ * The separator is U+200B, a zero-width space, which is what Navidrome writes
+ * between parts and after the last one.
+ */
+function newHash(...parts) {
+  const hash = createHash('md5');
+  for (const part of parts) hash.update(part + '​', 'utf8');
+  const value = BigInt('0x' + hash.digest('hex'));
+  const digits = [];
+  for (let rest = value; rest > 0n; rest /= 62n) {
+    digits.unshift('0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'[Number(rest % 62n)]);
+  }
+  return digits.join('').padStart(22, '0');
+}
+
+console.log('NewHash ids are already canonical');
+// The goldens from model/id/id_test.go, which check our `newHash` above as
+// much as they check the transform.
+check('NewHash("test")', newHash('test'), '5cLJPkLA5DK2BADhoeotPk');
+check('NewHash("[unknown artist]")', newHash('[unknown artist]'), '7lsE5pS09fPS1VuFqwXbia');
+check('NewTagID("genre", "electronic")', newHash('genre', 'electronic'), '7bLYq0Np81m1Wgy5N31nuG');
+
+// The invariant itself, over the same inputs the Go suite uses.
+for (const parts of [
+  [''],
+  ['a'],
+  ['The Beatles'],
+  ['genre', 'electronic'],
+  ['/music/Artist/Album', '1'],
+  ['x'.repeat(500)],
+]) {
+  const hashed = newHash(...parts);
+  const what = `NewHash(${parts.map((p) => JSON.stringify(p.slice(0, 20))).join(', ')})`;
+  check(`${what} is 22 chars`, String(hashed.length), '22');
+  // The whole exemption in one line: a hash id must survive the transform.
+  check(`${what} is left alone`, canonicalId(hashed), hashed);
 }
 
 // The gate used on every hot path has to agree with the transform itself, or

@@ -1,5 +1,6 @@
 /**
- * Main tab navigation: Home, Search and Library.
+ * Main tab navigation. Which tabs, and in what order, is the user's
+ * (Settings › Appearance › Navigation bar).
  * Solid bottom bar over the app background.
  *
  * With "Always show the navigation bar" on, the drawing is handed over to
@@ -14,8 +15,21 @@ import { View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useT } from '@/i18n';
+import { type TabSegment } from '@/lib/tabOrigin';
 import { useSettings } from '@/store/settings';
 import { colors, TAB_BAR_HEIGHT, useTheme } from '@/theme';
+
+/**
+ * The icon each tab wears, beside the name it goes by (`TABS`). Two halves of
+ * the same answer, kept apart because the name is also what the other bar and
+ * the back arrow read, and neither of those draws an icon.
+ */
+const TAB_OPTIONS: Record<TabSegment, { label: string; icon: 'home' | 'search' | 'library' | 'albums' }> = {
+  index: { label: 'Home', icon: 'home' },
+  search: { label: 'Search', icon: 'search' },
+  library: { label: 'Your library', icon: 'library' },
+  explore: { label: 'Explore', icon: 'albums' },
+};
 
 export default function TabsLayout() {
   // Repaints on a change of appearance or accent: a stack keeps this screen
@@ -24,6 +38,7 @@ export default function TabsLayout() {
   const insets = useSafeAreaInsets();
   const t = useT();
   const alwaysShowTabs = useSettings((s) => s.alwaysShowTabs);
+  const bottomTabs = useSettings((s) => s.bottomTabs);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -62,33 +77,30 @@ export default function TabsLayout() {
           },
         }}
       >
-        <Tabs.Screen
-          name="index"
-          options={{
-            title: t('Home'),
-            tabBarIcon: ({ focused, color, size }) => (
-              <Ionicons name={focused ? 'home' : 'home-outline'} color={color} size={size} />
-            ),
-          }}
-        />
-        <Tabs.Screen
-          name="search"
-          options={{
-            title: t('Search'),
-            tabBarIcon: ({ focused, color, size }) => (
-              <Ionicons name={focused ? 'search' : 'search-outline'} color={color} size={size} />
-            ),
-          }}
-        />
-        <Tabs.Screen
-          name="library"
-          options={{
-            title: t('Library'),
-            tabBarIcon: ({ focused, color, size }) => (
-              <Ionicons name={focused ? 'library' : 'library-outline'} color={color} size={size} />
-            ),
-          }}
-        />
+        {/* Declared in the order the user put them in, because that is what
+            sets the order on screen (`getSortedChildren`), and `href: null` is
+            what hides one. A tab that is off keeps its route: anything already
+            pointing at it still opens it. */}
+        {bottomTabs.map(({ key, enabled }) => {
+          const tab = TAB_OPTIONS[key];
+          return (
+            <Tabs.Screen
+              key={key}
+              name={key}
+              options={{
+                title: t(tab.label),
+                href: enabled ? undefined : null,
+                tabBarIcon: ({ focused, color, size }) => (
+                  <Ionicons
+                    name={focused ? tab.icon : `${tab.icon}-outline`}
+                    color={color}
+                    size={size}
+                  />
+                ),
+              }}
+            />
+          );
+        })}
       </Tabs>
     </View>
   );

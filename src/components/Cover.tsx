@@ -22,7 +22,20 @@ interface Props {
    * `contain` so non-square artwork is shown whole, letterboxed.
    */
   contentFit?: ImageContentFit;
+  /**
+   * Whether animated images (GIF, animated WebP) should auto-play. Disabling
+   * this on off-screen or blurred copies avoids running multiple decoders for
+   * the same animation, which would cause frame drops.
+   */
+  autoplay?: boolean;
   style?: StyleProp<ViewStyle | ImageStyle>;
+  /**
+   * Called once the picture has loaded, with the `uri` it was asked for and
+   * whether the decoder found it animated. The player reads it to move an
+   * animated cover to the background (see `useAnimatedCover`); the `uri` comes
+   * back with it because by then the song may have changed.
+   */
+  onAnimatedDetected?: (uri: string, isAnimated: boolean) => void;
 }
 
 /**
@@ -285,7 +298,9 @@ export function Cover({
   transition = 200,
   placeholderIcon = 'musical-notes',
   contentFit = 'cover',
+  autoplay = true,
   style,
+  onAnimatedDetected,
 }: Props) {
   // If the image fails to load (e.g. offline without cache or download), we fall
   // back to the placeholder instead of leaving a gap. Reset on `uri` change
@@ -326,7 +341,17 @@ export function Cover({
   const shown = cacheOnly ? (cached && cached.uri === uri ? cached.path : undefined) : uri;
   const imageRef = useRef<Image>(null);
   const redraw = useRedrawOnReturn(imageRef, shown);
-  const borderRadius = rounded ? size / 2 : radius.md;
+  // One corner for every cover, whatever its size. Letting it climb with the
+  // picture was tried and reverted: at the top of the scale the corner eats
+  // into the artwork, and a sleeve is somebody else's rectangle to crop.
+  // Small covers (≤56 px) sit inside the mini-player container whose own
+  // radius is radius.md with spacing.sm padding; radius.sm (6) nests
+  // visually without looking square or eating into the art.
+  const borderRadius = rounded
+    ? radius.pill
+    : size <= 56
+      ? radius.sm
+      : radius.md;
   if (!shown || failed) {
     return (
       <View
@@ -359,7 +384,11 @@ export function Cover({
       contentFit={contentFit}
       transition={transition}
       recyclingKey={shown}
+      autoplay={autoplay}
       onDisplay={redraw.onDisplay}
+      onLoad={(e) => {
+        if (onAnimatedDetected && uri) onAnimatedDetected(uri, !!e.source?.isAnimated);
+      }}
       // expo-image defaults to 'disk', which keeps the file but not the decoded
       // image: scrolling a list back up decoded every cover again. Covers are
       // small and the same handful come round constantly, which is what a

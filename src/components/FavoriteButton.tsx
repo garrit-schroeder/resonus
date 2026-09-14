@@ -7,6 +7,7 @@ import { star, unstar, type StarType } from '@/api/data';
 import { applyStarChange, resyncFavorites, unstarWithUndo } from '@/lib/favoritesCache';
 import { haptic } from '@/lib/haptics';
 import { useAuthStore } from '@/store/auth';
+import { usePins } from '@/store/pins';
 import { useToast } from '@/store/toast';
 import { useT } from '@/i18n';
 import { colors } from '@/theme';
@@ -57,6 +58,8 @@ export function FavoriteButton({ id, type = 'song', starred, size = 22, undo }: 
       // Only the id is known here, so removing is exact and adding leaves the
       // list to refresh when something needs it (see `favoritesCache`).
       applyStarChange(type, id, nextFav);
+      // Albums are only listed as favourites, so the pin would outlive the row.
+      if (!nextFav && type === 'album') usePins.getState().unpin(`album:${id}`);
       toast(nextFav ? t('Added to favorites') : t('Removed from favorites'));
     } catch {
       setFav(!nextFav); // revert on failure

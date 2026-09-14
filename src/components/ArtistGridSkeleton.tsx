@@ -13,11 +13,12 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { radius, spacing, themed } from '@/theme';
+import { motion } from '@/theme/motion';
 
 export function ArtistGridSkeleton({ width, count = 12 }: { width: number; count?: number }) {
   const pulse = useSharedValue(1);
   useEffect(() => {
-    pulse.value = withRepeat(withTiming(0.45, { duration: 700 }), -1, true);
+    pulse.value = withRepeat(withTiming(0.45, { duration: motion.duration.pulse }), -1, true);
   }, [pulse]);
   const pulseStyle = useAnimatedStyle(() => ({ opacity: pulse.value }));
 
@@ -25,7 +26,7 @@ export function ArtistGridSkeleton({ width, count = 12 }: { width: number; count
     <Animated.View style={[styles.grid, pulseStyle]}>
       {Array.from({ length: count }, (_, i) => (
         <View key={i} style={[styles.card, { width }]}>
-          <View style={[styles.block, { width, height: width, borderRadius: width / 2 }]} />
+          <View style={[styles.block, { width, height: width, borderRadius: radius.pill }]} />
           <View style={[styles.bar, { width: width * 0.7 }]} />
         </View>
       ))}

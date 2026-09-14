@@ -44,12 +44,10 @@ export default function AppearanceSettings() {
   const language = useSettings((s) => s.language);
   const alwaysShowTabs = useSettings((s) => s.alwaysShowTabs);
   const setAlwaysShowTabs = useSettings((s) => s.setAlwaysShowTabs);
-  const showHistoryButton = useSettings((s) => s.showHistoryButton);
-  const setShowHistoryButton = useSettings((s) => s.setShowHistoryButton);
-  const showProfileButton = useSettings((s) => s.showProfileButton);
-  const setShowProfileButton = useSettings((s) => s.setShowProfileButton);
   const defaultTab = useSettings((s) => s.defaultTab);
   const setDefaultTab = useSettings((s) => s.setDefaultTab);
+  const libraryShowsPlaylists = useSettings((s) => s.libraryShowsPlaylists);
+  const setLibraryShowsPlaylists = useSettings((s) => s.setLibraryShowsPlaylists);
   const swipeAction = useSettings((s) => s.swipeAction);
   const setSwipeAction = useSettings((s) => s.setSwipeAction);
   const swipeLeftAction = useSettings((s) => s.swipeLeftAction);
@@ -99,30 +97,32 @@ export default function AppearanceSettings() {
             {
               label: t('Always show the navigation bar'),
               description: t(
-                'Keep Home, Search and Library at the bottom of every screen. Holding the back arrow goes back to the one you came from either way.',
+                'Keep the tabs at the bottom of every screen. Holding the back arrow goes back to the one you came from either way.',
               ),
               value: alwaysShowTabs,
               onChange: setAlwaysShowTabs,
             },
           ]}
         />
+        <SettingRow
+          label={t('Navigation bar')}
+          description={t('Which tabs are at the bottom, and in what order.')}
+          chevron
+          onPress={() => router.push('/settings/navigation-bar')}
+        />
+        <SettingRow
+          label={t('Explore sections')}
+          description={t('In what order the sections of Explore are.')}
+          chevron
+          onPress={() => router.push('/settings/explore-sections')}
+        />
 
         <Text style={settingsStyles.sectionTitle}>{t('Home')}</Text>
-        <SwitchList
-          options={[
-            {
-              label: t('Show history button'),
-              description: t('The clock button on Home.'),
-              value: showHistoryButton,
-              onChange: setShowHistoryButton,
-            },
-            {
-              label: t('Show profile button'),
-              description: t('Your avatar on Home.'),
-              value: showProfileButton,
-              onChange: setShowProfileButton,
-            },
-          ]}
+        <SettingRow
+          label={t('Home buttons')}
+          description={t('Which icons are at the top of Home, and in what order.')}
+          chevron
+          onPress={() => router.push('/settings/home-buttons')}
         />
 
         <SettingRow
@@ -133,10 +133,10 @@ export default function AppearanceSettings() {
         />
 
         <SettingRow
-          label={t('Explore chips')}
+          label={t('Home chips')}
           description={t('Show, hide and reorder the chips at the top of Home.')}
           chevron
-          onPress={() => router.push('/settings/explore-chips')}
+          onPress={() => router.push('/settings/home-chips')}
         />
 
         <SettingRow
@@ -160,10 +160,23 @@ export default function AppearanceSettings() {
           options={[
             { value: 'index', label: t('Home') },
             { value: 'search', label: t('Search') },
-            { value: 'library', label: t('Library') },
+            { value: 'explore', label: t('Explore') },
+            { value: 'library', label: t('Your library') },
           ]}
           value={defaultTab}
           onChange={setDefaultTab}
+        />
+        <SwitchList
+          options={[
+            {
+              label: t('Start on your playlists'),
+              description: t(
+                'With no chip pressed, Your library shows Favorites and your playlists instead of everything mixed together.',
+              ),
+              value: libraryShowsPlaylists,
+              onChange: setLibraryShowsPlaylists,
+            },
+          ]}
         />
         {/* Guarded as a whole, not with a spread inside the list: SwitchList
             always draws its card, so an empty array left a blank box. */}
@@ -173,7 +186,7 @@ export default function AppearanceSettings() {
               {
                 label: t('Folder browsing'),
                 description: t(
-                  'Browse your library by folders in a Folders tab (Subsonic servers).',
+                  'Browse your library by folders, in the Explore tab (Subsonic servers).',
                 ),
                 value: showFolderBrowser,
                 onChange: setShowFolderBrowser,
@@ -209,12 +222,6 @@ export default function AppearanceSettings() {
           ]}
           value={swipeLeftAction}
           onChange={setSwipeLeftAction}
-        />
-        <SettingRow
-          label={t('Song menu')}
-          description={t("Choose which actions show in a song's ⋯ menu.")}
-          chevron
-          onPress={() => router.push('/settings/song-menu')}
         />
         <SwitchList
           options={[

@@ -401,7 +401,9 @@ export async function buildBrowseTree(deep = true): Promise<CarTree> {
   await mapConcurrent(starred.artists.slice(0, MAX_PREFETCH_ARTISTS).map((a) => a.id), CONCURRENCY, async (id) => {
     try {
       const { artist, albums } = await data.getArtist(id);
-      const top = artist.name ? await data.getTopSongs(artist.name, 10).catch(() => [] as Song[]) : [];
+      const top = artist.name
+        ? await data.getTopSongs(artist.name, 10, id).catch(() => [] as Song[])
+        : [];
       const parent = `artist:${id}`;
       const children: CarNode[] = [...top.map((s) => songNode(s, parent)), ...albums.map(albumNode)];
       tree[parent] = children;
@@ -499,7 +501,7 @@ export async function handleBrowsePlay(mediaId: string, parentId?: string): Prom
     else if (prefix === 'favorites') songs = (await data.getStarred()).songs;
     else if (prefix === 'artist') {
       const { artist } = await data.getArtist(id);
-      songs = artist.name ? await data.getTopSongs(artist.name, 20) : [];
+      songs = artist.name ? await data.getTopSongs(artist.name, 20, id) : [];
     }
   } catch {
     songs = [];

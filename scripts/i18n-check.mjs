@@ -11,6 +11,7 @@
  * What it refuses:
  *   · a locale file that is not valid JSON
  *   · a key that is not in English, so nothing would ever look it up
+ *   · a string the code asks for that en.json has not got
  *   · a translation that lost a `{placeholder}` the English has
  *   · a note in context.jsonc for a key that no longer exists
  *   · an English key nothing in the app asks for
@@ -67,6 +68,13 @@ for (const key of keepEnglish) {
 const sites = callSites();
 for (const key of enKeys) {
   if (!sites.has(key)) fail(`en.json has "${key}", which nothing in the app uses`);
+}
+
+// And the other way round: a string the code asks for that en.json does not
+// hold is never offered to a translator, so every other language shows it in
+// English and nobody finds out. From HeLLsSs, in #205.
+for (const key of sites.keys()) {
+  if (!(baseKey(key) in en)) fail(`the app uses "${key}", which is not in en.json`);
 }
 
 // And the page somebody reads on GitHub says what the code says.

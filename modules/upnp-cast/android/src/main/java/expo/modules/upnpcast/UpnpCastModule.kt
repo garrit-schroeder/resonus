@@ -5,6 +5,7 @@ import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.records.Field
 import expo.modules.kotlin.records.Record
+import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -38,6 +39,8 @@ class TrackInfo(
  * session and sent to JS as a "state" event.
  */
 class UpnpCastModule : Module() {
+  private enum class NextUriCapability { UNKNOWN, SUPPORTED, UNSUPPORTED }
+
   private data class QueueRequest(
     val tracks: List<Track>,
     val currentIndex: Int,
@@ -52,6 +55,23 @@ class UpnpCastModule : Module() {
 
   private val known = ConcurrentHashMap<String, RendererSession>()
   @Volatile private var session: RendererSession? = null
+
+  // Guarded by transportMutex. Sonos keeps using its renderer-side queue; this
+  // state is authoritative only for ordinary AVTransport renderers.
+  private var nativeQueue: List<Track> = emptyList()
+  private var nativeQueueIndex = -1
+  private var nativePlayMode = "NORMAL"
+  private var nativeQueueManaged = false
+  private var lastPlaybackState = ""
+  private var lastNonzeroPositionMs = 0L
+  private var lastNonzeroDurationMs = 0L
+  private var observedPlaying = false
+  private var stoppedByUs = false
+  private var transitionInProgress = false
+  private var stoppedPolls = 0
+  private var stagedNextIndex: Int? = null
+  private var stagedNextUrl: String? = null
+  private var nextUriCapability = NextUriCapability.UNKNOWN
 
   private fun parseQueueRequest(payloadJson: String): QueueRequest {
     val payload = JSONObject(payloadJson)
@@ -134,9 +154,14 @@ class UpnpCastModule : Module() {
         promise.resolve(false)
         return@AsyncFunction
       }
-      session = target
-      startPolling()
-      promise.resolve(true)
+      scope.launch {
+        transportMutex.withLock {
+          session = target
+          clearNativeQueueState()
+        }
+        startPolling()
+        promise.resolve(true)
+      }
     }
 
     AsyncFunction("join") { deviceId: String, targetDeviceId: String, promise: Promise ->
@@ -166,6 +191,9 @@ class UpnpCastModule : Module() {
       }
       scope.launch {
         val ok = transportMutex.withLock {
+          if (session !== current) return@withLock false
+          clearNativeQueueState()
+          stoppedByUs = !autoplay
           current.load(
             Track(
               url = url,
@@ -193,13 +221,30 @@ class UpnpCastModule : Module() {
         try {
           val request = parseQueueRequest(payloadJson)
           val ok = transportMutex.withLock {
-            current.loadQueue(
+            if (session !== current) return@withLock false
+            if (!current.isSonos) {
+              installNativeQueue(request.tracks, request.currentIndex, request.playMode)
+              stoppedByUs = !request.autoplay
+              transitionInProgress = true
+            }
+            val loaded = current.loadQueue(
               tracks = request.tracks,
               currentIndex = request.currentIndex,
               autoplay = request.autoplay,
               positionMs = request.positionMs,
               playMode = request.playMode
             )
+            if (!current.isSonos) {
+              transitionInProgress = false
+              if (loaded) {
+                resetTrackObservation(request.positionMs)
+                Log.d(Soap.TAG, "Native queue loaded count=${nativeQueue.size} currentIndex=$nativeQueueIndex title=${trackLabel(nativeQueueIndex)}")
+                stageNextLocked(current)
+              } else {
+                Log.w(Soap.TAG, "Native queue load failed currentIndex=$nativeQueueIndex")
+              }
+            }
+            loaded
           }
           promise.resolve(ok)
         } catch (e: Exception) {
@@ -218,12 +263,17 @@ class UpnpCastModule : Module() {
         try {
           val request = parseQueueRequest(payloadJson)
           val ok = transportMutex.withLock {
-            current.syncQueue(
-              tracks = request.tracks,
-              currentIndex = request.currentIndex,
-              positionMs = request.positionMs,
-              playMode = request.playMode
-            )
+            if (session !== current) return@withLock false
+            if (current.isSonos) {
+              current.syncQueue(
+                tracks = request.tracks,
+                currentIndex = request.currentIndex,
+                positionMs = request.positionMs,
+                playMode = request.playMode
+              )
+            } else {
+              syncNativeQueueLocked(current, request)
+            }
           }
           promise.resolve(ok)
         } catch (e: Exception) {
@@ -233,15 +283,22 @@ class UpnpCastModule : Module() {
     }
 
     AsyncFunction("play") { promise: Promise ->
-      scope.launch { promise.resolve(session?.play() ?: false) }
+      scope.launch { promise.resolve(transportMutex.withLock {
+        stoppedByUs = false
+        session?.play() ?: false
+      }) }
     }
 
     AsyncFunction("pause") { promise: Promise ->
-      scope.launch { promise.resolve(session?.pause() ?: false) }
+      scope.launch { promise.resolve(transportMutex.withLock {
+        stoppedByUs = true
+        observedPlaying = false
+        session?.pause() ?: false
+      }) }
     }
 
     AsyncFunction("seek") { positionMs: Double, promise: Promise ->
-      scope.launch { promise.resolve(session?.seek(positionMs.toLong()) ?: false) }
+      scope.launch { promise.resolve(transportMutex.withLock { session?.seek(positionMs.toLong()) ?: false }) }
     }
 
     AsyncFunction("setVolume") { volume: Int, promise: Promise ->
@@ -249,7 +306,15 @@ class UpnpCastModule : Module() {
     }
 
     AsyncFunction("setPlayMode") { playMode: String, promise: Promise ->
-      scope.launch { promise.resolve(session?.setPlayMode(playMode) ?: false) }
+      scope.launch { promise.resolve(transportMutex.withLock {
+        nativePlayMode = playMode
+        stagedNextIndex = null
+        stagedNextUrl = null
+        val current = session ?: return@withLock false
+        val accepted = if (current.isSonos) current.setPlayMode(playMode) else true
+        if (!current.isSonos) stageNextLocked(current, clearIfNone = true)
+        accepted
+      }) }
     }
 
     AsyncFunction("setCrossfadeMode") { enabled: Boolean, promise: Promise ->
@@ -267,7 +332,12 @@ class UpnpCastModule : Module() {
       pollJob = null
       session = null
       scope.launch {
-        current?.stop()
+        transportMutex.withLock {
+          stoppedByUs = true
+          observedPlaying = false
+          clearNativeQueueState()
+          current?.stop()
+        }
         promise.resolve(true)
       }
     }
@@ -277,7 +347,13 @@ class UpnpCastModule : Module() {
     pollJob?.cancel()
     pollJob = scope.launch {
       while (isActive) {
-        val state = session?.state()
+        val current = session
+        val state = if (current == null) null else transportMutex.withLock {
+          if (session !== current) return@withLock null
+          val polled = current.state()
+          if (polled != null && !current.isSonos) handleGenericStateLocked(current, polled)
+          polled
+        }
         if (state != null) {
           val currentTrackNumber = state.trackNumber
           val playMode = state.playMode
@@ -297,6 +373,8 @@ class UpnpCastModule : Module() {
               "durationMs" to state.durationMs.toDouble(),
               "trackNumber" to (currentTrackNumber?.toDouble() ?: 0.0),
               "playMode" to (playMode ?: ""),
+              "nativeQueueManaged" to (nativeQueueManaged && current?.isSonos == false),
+              "queueIndex" to if (nativeQueueManaged && current?.isSonos == false) nativeQueueIndex.toDouble() else -1.0,
             ),
           )
         }
@@ -304,4 +382,212 @@ class UpnpCastModule : Module() {
       }
     }
   }
+
+  private fun installNativeQueue(tracks: List<Track>, requestedIndex: Int, playMode: String) {
+    nativeQueue = tracks
+    nativeQueueIndex = if (tracks.isEmpty()) -1 else requestedIndex.coerceIn(0, tracks.lastIndex)
+    nativePlayMode = playMode
+    nativeQueueManaged = tracks.isNotEmpty()
+    stagedNextIndex = null
+    stagedNextUrl = null
+    stoppedPolls = 0
+  }
+
+  private fun clearNativeQueueState() {
+    nativeQueue = emptyList()
+    nativeQueueIndex = -1
+    nativePlayMode = "NORMAL"
+    nativeQueueManaged = false
+    lastPlaybackState = ""
+    lastNonzeroPositionMs = 0
+    lastNonzeroDurationMs = 0
+    observedPlaying = false
+    stoppedByUs = false
+    transitionInProgress = false
+    stoppedPolls = 0
+    stagedNextIndex = null
+    stagedNextUrl = null
+    nextUriCapability = NextUriCapability.UNKNOWN
+  }
+
+  private fun resetTrackObservation(positionMs: Long = 0) {
+    lastPlaybackState = ""
+    lastNonzeroPositionMs = positionMs.coerceAtLeast(0)
+    lastNonzeroDurationMs = 0
+    observedPlaying = false
+    stoppedPolls = 0
+  }
+
+  private fun nextQueueIndex(): Int? {
+    if (!nativeQueueManaged) return null
+    return GenericQueueProgression.nextIndex(nativeQueue.size, nativeQueueIndex, nativePlayMode)
+  }
+
+  private suspend fun stageNextLocked(current: RendererSession, clearIfNone: Boolean = false) {
+    if (!nativeQueueManaged || nextUriCapability == NextUriCapability.UNSUPPORTED || transitionInProgress) return
+    val nextIndex = nextQueueIndex()
+    if (nextIndex == null) {
+      if (clearIfNone && nextUriCapability == NextUriCapability.SUPPORTED) {
+        when (current.clearNextUri()) {
+          RendererSession.NextUriResult.ACCEPTED -> Log.d(Soap.TAG, "Cleared staged next URI at end of queue")
+          RendererSession.NextUriResult.UNSUPPORTED -> nextUriCapability = NextUriCapability.UNSUPPORTED
+          RendererSession.NextUriResult.FAILED -> Log.w(Soap.TAG, "Transient failure clearing staged next URI")
+        }
+      }
+      return
+    }
+    val track = nativeQueue.getOrNull(nextIndex) ?: return
+    if (stagedNextIndex == nextIndex && stagedNextUrl == track.url) return
+    Log.d(Soap.TAG, "SetNextAVTransportURI attempt index=$nextIndex title=${track.title}")
+    when (current.setNextUri(track)) {
+      RendererSession.NextUriResult.ACCEPTED -> {
+        nextUriCapability = NextUriCapability.SUPPORTED
+        stagedNextIndex = nextIndex
+        stagedNextUrl = track.url
+        Log.d(Soap.TAG, "SetNextAVTransportURI accepted; next URI staged index=$nextIndex title=${track.title}")
+      }
+      RendererSession.NextUriResult.UNSUPPORTED -> {
+        nextUriCapability = NextUriCapability.UNSUPPORTED
+        stagedNextIndex = null
+        stagedNextUrl = null
+        Log.d(Soap.TAG, "SetNextAVTransportURI marked unsupported; native STOPPED fallback enabled")
+      }
+      RendererSession.NextUriResult.FAILED ->
+        Log.w(Soap.TAG, "SetNextAVTransportURI transient failure index=$nextIndex; playback unchanged")
+    }
+  }
+
+  private suspend fun syncNativeQueueLocked(current: RendererSession, request: QueueRequest): Boolean {
+    if (request.tracks.isEmpty()) return false
+    val oldCurrentUrl = nativeQueue.getOrNull(nativeQueueIndex)?.url
+    nativeQueue = request.tracks
+    nativeQueueIndex = oldCurrentUrl?.let { url -> request.tracks.indexOfFirst { it.url == url }.takeIf { it >= 0 } }
+      ?: request.currentIndex.coerceIn(0, request.tracks.lastIndex)
+    nativePlayMode = request.playMode
+    nativeQueueManaged = true
+    stagedNextIndex = null
+    stagedNextUrl = null
+    Log.d(Soap.TAG, "Native queue updated count=${nativeQueue.size} currentIndex=$nativeQueueIndex title=${trackLabel(nativeQueueIndex)}")
+    stageNextLocked(current, clearIfNone = true)
+    return true
+  }
+
+  private suspend fun handleGenericStateLocked(current: RendererSession, state: RendererSession.State) {
+    if (!nativeQueueManaged) return
+    val playback = state.playbackState.uppercase()
+    val stagedIndex = stagedNextIndex
+    val stagedTrack = stagedIndex?.let(nativeQueue::getOrNull)
+    val uriIdentifiedHandoff = state.currentUri?.isNotBlank() == true && state.currentUri == stagedNextUrl
+    val positionIdentifiedHandoff = stagedTrack != null && GenericQueueProgression.isStagedHandoff(
+      playbackState = playback,
+      positionMs = state.positionMs,
+      durationMs = state.durationMs,
+      previousPositionMs = lastNonzeroPositionMs,
+      previousDurationMs = lastNonzeroDurationMs,
+      stagedDurationMs = stagedTrack.durationSeconds * 1_000L,
+    )
+    val stagedStarted = stagedIndex != null && stagedIndex != nativeQueueIndex && (
+      uriIdentifiedHandoff || positionIdentifiedHandoff ||
+        (lastPlaybackState == "STOPPED" && playback == "PLAYING")
+      )
+    if (stagedStarted) {
+      nativeQueueIndex = stagedIndex!!
+      stagedNextIndex = null
+      stagedNextUrl = null
+      resetTrackObservation(state.positionMs)
+      observedPlaying = playback == "PLAYING"
+      stoppedByUs = false
+      val evidence = when {
+        uriIdentifiedHandoff -> "TrackURI"
+        positionIdentifiedHandoff -> "position/duration reset"
+        else -> "STOPPED -> PLAYING"
+      }
+      Log.d(Soap.TAG, "Renderer consumed staged URI ($evidence); native current index changed to $nativeQueueIndex title=${trackLabel(nativeQueueIndex)}")
+      stageNextLocked(current)
+    }
+
+    // Repeat-one can keep the same URI and index, so TrackURI cannot identify
+    // the handoff. A position wrap after the prior lap reached its end does.
+    val repeatOneWrapped = stagedNextIndex == nativeQueueIndex &&
+      nativePlayMode.equals("REPEAT_ONE", ignoreCase = true) &&
+      playback == "PLAYING" && state.positionMs in 0..2_000L &&
+      lastNonzeroPositionMs > 3_000L &&
+      (lastNonzeroDurationMs <= 0 || lastNonzeroPositionMs >= lastNonzeroDurationMs - maxOf(5_000L, lastNonzeroDurationMs / 10))
+    if (repeatOneWrapped) {
+      stagedNextIndex = null
+      stagedNextUrl = null
+      resetTrackObservation(state.positionMs)
+      observedPlaying = true
+      Log.d(Soap.TAG, "Native repeat-one lap restarted index=$nativeQueueIndex title=${trackLabel(nativeQueueIndex)}")
+      stageNextLocked(current)
+    }
+
+    if (state.positionMs > 0) lastNonzeroPositionMs = state.positionMs
+    if (state.durationMs > 0) lastNonzeroDurationMs = state.durationMs
+    if (playback == "PLAYING") {
+      observedPlaying = true
+      stoppedByUs = false
+      stoppedPolls = 0
+    }
+
+    if (playback == "STOPPED" && lastPlaybackState != "STOPPED") {
+      val windowMs = maxOf(5_000L, lastNonzeroDurationMs / 10)
+      val nearEnd = lastNonzeroDurationMs <= 0 || lastNonzeroPositionMs >= lastNonzeroDurationMs - windowMs
+      Log.d(Soap.TAG, "PLAYING -> STOPPED check index=$nativeQueueIndex positionMs=$lastNonzeroPositionMs durationMs=$lastNonzeroDurationMs observedPlaying=$observedPlaying stoppedByUs=$stoppedByUs nearEnd=$nearEnd")
+    }
+
+    if (playback == "STOPPED") stoppedPolls++ else if (playback != "TRANSITIONING") stoppedPolls = 0
+    val naturalEnd = GenericQueueProgression.isNaturalEnd(
+      observedPlaying,
+      stoppedByUs,
+      lastNonzeroPositionMs,
+      lastNonzeroDurationMs,
+    )
+    val rendererHandoffGrace = nextUriCapability == NextUriCapability.SUPPORTED && stagedNextIndex != null && stoppedPolls < 2
+    if (playback == "STOPPED" && naturalEnd && !rendererHandoffGrace) {
+      if (transitionInProgress) {
+        Log.d(Soap.TAG, "Duplicate transition suppressed index=$nativeQueueIndex")
+      } else {
+        if (advanceNativeQueueLocked(current)) {
+          // Do not let the STOPPED snapshot which triggered our explicit load
+          // masquerade as a renderer-side STOPPED -> PLAYING handoff next poll.
+          lastPlaybackState = "TRANSITIONING"
+          return
+        }
+      }
+    }
+    lastPlaybackState = playback
+  }
+
+  private suspend fun advanceNativeQueueLocked(current: RendererSession): Boolean {
+    val nextIndex = nextQueueIndex()
+    observedPlaying = false // makes repeated STOPPED polls idempotent
+    stoppedPolls = 0
+    if (nextIndex == null) {
+      stagedNextIndex = null
+      stagedNextUrl = null
+      Log.d(Soap.TAG, "Native queue reached end at index=$nativeQueueIndex")
+      return false
+    }
+    val track = nativeQueue[nextIndex]
+    transitionInProgress = true
+    stagedNextIndex = null
+    stagedNextUrl = null
+    Log.d(Soap.TAG, "Automatic native advancement $nativeQueueIndex -> $nextIndex title=${track.title}")
+    val loaded = current.load(track)
+    val played = loaded && current.play()
+    transitionInProgress = false
+    if (!played) {
+      Log.w(Soap.TAG, "Automatic native advancement failed targetIndex=$nextIndex")
+      return false
+    }
+    nativeQueueIndex = nextIndex
+    stoppedByUs = false
+    resetTrackObservation()
+    Log.d(Soap.TAG, "Native current index changed to $nativeQueueIndex title=${track.title}")
+    stageNextLocked(current)
+    return true
+  }
+
+  private fun trackLabel(index: Int): String = nativeQueue.getOrNull(index)?.title.orEmpty()
 }

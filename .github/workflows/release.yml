@@ -4,7 +4,11 @@ name: Release APK
 # tag con formato v* (p. ej. v0.1.0-beta). El borrador se revisa y se publica
 # a mano desde GitHub.
 
+# `workflow_dispatch` para poder relanzarlo a mano contra un tag que ya existe:
+# si GitHub no despacha el build (una caída de Actions, sin ir más lejos), la
+# alternativa era borrar y recrear el tag.
 on:
+  workflow_dispatch:
   push:
     tags:
       - 'v*'

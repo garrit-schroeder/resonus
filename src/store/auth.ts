@@ -19,7 +19,7 @@ import {
 } from '@/api/backend';
 import { primaryUrl } from '@/lib/serverUrls';
 import { bump, timed } from '@/lib/perfLog';
-import { clearLocalCatalog } from '@/lib/localLibrary';
+import { clearLocalCatalog, folderSetKey } from '@/lib/localLibrary';
 import { deleteProfileData } from '@/lib/profileData';
 import { setOfflineMode } from '@/api/netGate';
 import { clearProfileCache, queryClient } from '@/lib/query';
@@ -31,10 +31,32 @@ const OFFLINE_KEY = 'resonus.offline';
 const OFFLINE_AUTO_KEY = 'resonus.offlineAuto';
 const OFFLINE_SOURCE_KEY = 'resonus.offlineSource';
 
-/** Where offline mode gets its music from. */
+/** Where offline mode gets its music from. Several folders, since one profile
+ *  can have its music spread over more than one (#158). */
 export type OfflineSource =
   | { mode: 'device' }
-  | { mode: 'folder'; uri: string };
+  | { mode: 'folder'; uris: string[] };
+
+/**
+ * A source as it may have been written to disk: before #158 there was one
+ * folder, under `uri`. Both `resonus.offlineSource` and the `source` of every
+ * saved profile carry the old shape.
+ *
+ * Null for a folder source with nothing in it, which is not a source: it would
+ * put the app into a local profile with no music instead of onto the screen
+ * that asks where the music is.
+ */
+function migrateSource(raw: unknown): OfflineSource | null {
+  const src = raw as { mode?: string; uri?: string; uris?: unknown };
+  if (src?.mode === 'device') return { mode: 'device' };
+  if (src?.mode !== 'folder') return null;
+  const uris = Array.isArray(src.uris)
+    ? src.uris.filter((u): u is string => typeof u === 'string')
+    : src.uri
+      ? [src.uri]
+      : [];
+  return uris.length > 0 ? { mode: 'folder', uris } : null;
+}
 
 export type ServerProfile = SubsonicAuth & { _type: 'server' };
 export type OfflineProfile = { _type: 'offline'; name: string; source: OfflineSource };
@@ -72,13 +94,18 @@ function same(a: Profile, b: Profile): boolean {
 }
 
 function sameSource(a: OfflineSource, b: OfflineSource): boolean {
-  if (a.mode === 'folder' && b.mode === 'folder') return a.uri === b.uri;
+  if (a.mode === 'folder' && b.mode === 'folder') {
+    return folderSetKey(a.uris) === folderSetKey(b.uris);
+  }
   return a.mode === b.mode;
 }
 
+/** The profile's name: the first folder's, and only the first. Adding folders
+ *  to a profile does not rename it, which it must not — profiles are told apart
+ *  by name (see `same`). */
 function offlineLabel(source: OfflineSource): string {
-  if (source.mode === 'folder') {
-    const decoded = decodeURIComponent(source.uri);
+  if (source.mode === 'folder' && source.uris[0]) {
+    const decoded = decodeURIComponent(source.uris[0]);
     return decoded.split(/[:/]/).filter(Boolean).pop() ?? 'Sin conexión';
   }
   return 'Sin conexión';
@@ -161,6 +188,10 @@ interface AuthState {
   /** Goes back online on the same account (instant, no re-login). */
   goOnline: () => Promise<void>;
   setOfflineSource: (source: OfflineSource | null) => Promise<void>;
+  /** Changes which folders the local profile reads, keeping everything else it
+   *  has. Not `setOfflineSource`: that one is for choosing a source from
+   *  scratch and throws the favourites and the local playlists away with it. */
+  setOfflineFolders: (uris: string[]) => Promise<void>;
   logout: () => Promise<void>;
   hydrate: () => Promise<void>;
 }
@@ -204,7 +235,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       );
       const profiles: Profile[] = rawProfiles
         ? (JSON.parse(rawProfiles) as any[]).map((p: any): Profile => {
-            if (p._type === 'offline') return p as OfflineProfile;
+            if (p._type === 'offline') {
+              // A profile whose source cannot be read keeps its place in the
+              // list, reading the phone, rather than disappearing from it.
+              return { ...p, source: migrateSource(p.source) ?? { mode: 'device' } } as OfflineProfile;
+            }
             // Server profiles (with or without `_type`): ensure `urls`.
             return { ...withUrls(p), _type: 'server' } as ServerProfile;
           })
@@ -215,7 +250,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         profiles,
         offline: rawOffline === '1',
         autoOffline: rawAuto === '1',
-        offlineSource: rawSource ? (JSON.parse(rawSource) as OfflineSource) : null,
+        offlineSource: rawSource ? migrateSource(JSON.parse(rawSource)) : null,
       });
     } catch {
       // If something fails, login will be required again.
@@ -561,6 +596,33 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       queryClient.removeQueries({ queryKey: ['starred'] });
       set({ offlineSource: source });
     }
+  },
+
+  setOfflineFolders: async (uris) => {
+    if (uris.length === 0) return;
+    const prev = get().offlineSource;
+    const source: OfflineSource = { mode: 'folder', uris };
+    await setItem(OFFLINE_SOURCE_KEY, JSON.stringify(source));
+    const prof: OfflineProfile = { _type: 'offline', name: offlineLabel(source), source };
+    // The entry this profile already had is replaced, not left behind: dropping
+    // the first folder renames it, and a stale entry would be a second profile
+    // pointing at music this one still has.
+    const profiles = [
+      prof,
+      ...get().profiles.filter((p) => {
+        if (same(p, prof)) return false;
+        return !(p._type === 'offline' && prev && sameSource(p.source, prev));
+      }),
+    ];
+    await setItem(PROFILES_KEY, JSON.stringify(profiles));
+    // Only the catalog. The favourites and the local playlists belong to the
+    // profile and adding a folder is not leaving it.
+    clearLocalCatalog();
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require('@/lib/localQueries').resetLocalLoading();
+    queryClient.removeQueries({ queryKey: ['localSongs'] });
+    set({ offlineSource: source, profiles });
+    void queryClient.invalidateQueries();
   },
 
   logout: async () => {

@@ -3,8 +3,8 @@
  *
  * A stack can get deep: an artist, one of its albums, another artist off a
  * track, a genre from there, and Home is five taps back. With "Always show the
- * navigation bar" on, this puts Home, Search and Library within one tap of
- * anywhere, and that tap also clears the stack it was covering.
+ * navigation bar" on, this puts every tab within one tap of anywhere, and that
+ * tap also clears the stack it was covering.
  *
  * It is the only bar there is. The tabs navigator draws none of its own
  * (`tabBar={() => null}` in the tabs layout) and this is rendered next to the
@@ -30,15 +30,17 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTabBarShown } from '@/hooks/useTabBar';
+import { motion } from '@/theme/motion';
 import { useT } from '@/i18n';
 import { rememberTab, reselectTab, tabOrigin, TABS } from '@/lib/tabOrigin';
 import { useSettings } from '@/store/settings';
 import { colors, TAB_BAR_HEIGHT, themed } from '@/theme';
 
-const ICONS: Record<string, 'home' | 'search' | 'library'> = {
+const ICONS: Record<string, 'home' | 'search' | 'library' | 'albums'> = {
   index: 'home',
   search: 'search',
   library: 'library',
+  explore: 'albums',
 };
 
 export function GlobalTabBar() {
@@ -50,6 +52,7 @@ export function GlobalTabBar() {
   // With the setting off the tabs keep their own bar and this draws nothing at
   // all: off is the app exactly as it was, down to the last pixel.
   const always = useSettings((s) => s.alwaysShowTabs);
+  const bottomTabs = useSettings((s) => s.bottomTabs);
   const root = segments[0];
   const inTabs = root === '(tabs)' || root === undefined;
   // Where a stack opened from here would belong; the back arrow reads the same
@@ -78,7 +81,7 @@ export function GlobalTabBar() {
     // Straight back on the way in: coming out of the player the bar was there
     // before and belongs there again, and until the modal finishes dismissing
     // nobody can see it anyway.
-    fade.value = shown ? 1 : withTiming(0, { duration: 150 });
+    fade.value = shown ? 1 : withTiming(0, { duration: motion.duration.exit });
   }, [shown, fade]);
   const fadeStyle = useAnimatedStyle(() => ({ opacity: fade.value }));
 
@@ -104,7 +107,14 @@ export function GlobalTabBar() {
         fadeStyle,
       ]}
     >
-      {TABS.map((tab) => {
+      {/* The user's order, and only the ones they kept (Settings › Appearance
+          › Navigation bar). `TABS` stays the catalogue: it is what says where
+          each one goes and what it is called. */}
+      {bottomTabs
+        .filter((t) => t.enabled)
+        .map(({ key }) => TABS.find((x) => x.segment === key))
+        .filter((tab): tab is (typeof TABS)[number] => !!tab)
+        .map((tab) => {
         // On a tab screen the bar says which one you are on. Off the tabs
         // nothing is current, and the tab the stack came from is only marked
         // enough to keep the bar from looking dead.
@@ -137,8 +147,8 @@ export function GlobalTabBar() {
               {t(tab.label)}
             </Text>
           </Pressable>
-        );
-      })}
+          );
+        })}
     </Animated.View>
   );
 }

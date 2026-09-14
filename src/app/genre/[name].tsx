@@ -44,6 +44,7 @@ import { SheetModal } from '@/components/SheetModal';
 import { TrackRow } from '@/components/TrackRow';
 import { useAccent } from '@/hooks/useAccent';
 import { useDownloadMessage } from '@/hooks/useDownloadMessage';
+import { useSelectionMenu } from '@/hooks/useSelectionMenu';
 import { useServerSort } from '@/hooks/useServerSort';
 import { albumsLabel, songsLabel, useT } from '@/i18n';
 import { useAuthStore } from '@/store/auth';
@@ -189,6 +190,8 @@ export default function GenreScreen() {
     setSelectedIds(null);
     if (sel.length > 0) fn(sel);
   }
+
+  const selectionMenu = useSelectionMenu(runSelection);
 
   const href = `/genre/${encodeURIComponent(genre)}`;
 
@@ -366,7 +369,7 @@ export default function GenreScreen() {
               size={24}
               // From the setting, like the artist's song list draws the same
               // tick. `colors.accent` would have been the right colour too,
-              // since `applyAccent` hot-swaps it, but only from the next render
+              // since `applyAccents` hot-swaps it, but only from the next render
               // onwards and nothing makes that render happen: the hook is what
               // subscribes.
               color={songs.length > 0 && selectedIds.size === songs.length ? accent : colors.text}
@@ -612,6 +615,8 @@ export default function GenreScreen() {
                   toast(t('Added to queue'));
                 }),
             },
+          ]}
+          menu={[
             ...(offline
               ? []
               : [
@@ -625,9 +630,11 @@ export default function GenreScreen() {
                       }),
                   },
                 ]),
+            ...selectionMenu.actions,
           ]}
         />
       ) : null}
+      {selectionMenu.dialogs}
       {gridSheet}
       {sortSheet}
       {albumSortSheet}
@@ -732,7 +739,7 @@ const styles = themed((colors) => ({
     paddingTop: spacing.xs - 1,
     paddingBottom: spacing.xs + 1,
     paddingHorizontal: spacing.md,
-    borderRadius: 999,
+    borderRadius: radius.pill,
     backgroundColor: colors.surfaceHighlight,
     justifyContent: 'center',
     alignItems: 'center',

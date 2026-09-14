@@ -46,8 +46,33 @@ de Release con el APK adjunto, para que lo revises antes de publicarlo.
    ```
 
 3. El workflow construye el APK y crea un **borrador** de Release con
-   `resonus-v0.1.0-beta.apk`. Ábrelo en la pestaña Releases, revisa las notas y
+   `resonus-v0.1.0-beta.apk`. El mismo tag dispara
+   `.github/workflows/unsignedipa.yaml`, que adjunta `resonus-v0.1.0-beta.ipa`
+   a ese mismo borrador. Ábrelo en la pestaña Releases, revisa las notas y
    pulsa **Publish**.
+4. Añade la versión a `Source.json` (ver abajo).
+
+## `Source.json`: la fuente de iOS
+
+`Source.json`, en la raíz del repo, es la fuente de AltStore/SideStore desde la
+que se instala la versión de iOS. Dos cosas:
+
+- **No lo muevas de sitio ni lo renombres.** Su URL está guardada dentro del
+  AltStore de cada persona suscrita a la fuente, así que cambiarla se las rompe
+  a todas a la vez y no hay manera de avisarlas. Por lo mismo, el enlace que se
+  reparte tiene que ser el de `raw.githubusercontent.com`: la URL de `blob`
+  devuelve la página HTML de GitHub y AltStore espera JSON.
+- **Añade una entrada por release**, y ponla **la primera del array
+  `versions`**: AltStore toma la primera como la última versión, así que una
+  añadida al final deja el fichero válido y a nadie actualizado.
+
+Cada entrada lleva `version`, `date` en ISO 8601, `size` en bytes, el
+`downloadURL` del `.ipa` de la Release y `localizedDescription` con el changelog
+de esa versión en texto plano. El tamaño exacto se saca sin descargar nada:
+
+```sh
+gh release view v0.1.0-beta --json assets --jq '.assets[] | "\(.name) \(.size)"'
+```
 
 ## Notas
 
