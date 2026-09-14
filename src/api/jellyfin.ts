@@ -40,6 +40,7 @@ import {
   type StarType,
   type SubsonicAuth,
 } from './subsonic';
+import { wordsAt } from '@/lib/lyricWords';
 // Not the global `fetch`: it never resolves in the background. See the note
 // in `src/api/subsonic.ts`.
 import { fetch } from 'expo/fetch';
@@ -1042,7 +1043,14 @@ export async function getLyricsBySongId(
   auth: SubsonicAuth,
   id: string,
 ): Promise<SongLyrics | null> {
-  let res: { Lyrics?: { Text?: string; Start?: number }[] };
+  let res: {
+    Lyrics?: {
+      Text?: string;
+      Start?: number;
+      /** Word timings: where each word starts in `Text`, and when, in ticks. */
+      Cues?: { Position: number; Start: number; End?: number | null }[] | null;
+    }[];
+  };
   try {
     res = await request(auth, `/Audio/${id}/Lyrics`);
   } catch {
@@ -1051,12 +1059,28 @@ export async function getLyricsBySongId(
   const lines = res?.Lyrics ?? [];
   if (lines.length === 0) return null;
   const synced = lines.some((l) => l.Start !== undefined);
+  const ms = (ticks: number) => Math.round(ticks / TICKS_PER_MS);
   return {
     synced,
-    lines: lines.map((l) => ({
-      value: l.Text ?? '',
-      ...(synced && l.Start !== undefined ? { start: Math.round(l.Start / TICKS_PER_MS) } : {}),
-    })),
+    lines: lines.map((l) => {
+      const value = l.Text ?? '';
+      const words =
+        synced && l.Cues?.length
+          ? wordsAt(
+              value,
+              l.Cues.map((c) => ({
+                at: c.Position,
+                start: ms(c.Start),
+                ...(c.End != null ? { end: ms(c.End) } : {}),
+              })),
+            )
+          : undefined;
+      return {
+        value,
+        ...(synced && l.Start !== undefined ? { start: ms(l.Start) } : {}),
+        ...(words ? { words } : {}),
+      };
+    }),
   };
 }
 

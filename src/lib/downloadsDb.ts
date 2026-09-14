@@ -27,7 +27,13 @@ import { planRemap, remapAlbum, remapSong } from './navidromeRemap';
 import { timed } from './perfLog';
 
 /** Downloaded album: the server's, plus its local cover and download date. */
-export type DlAlbum = Album & { coverUri?: string; addedAt?: number; dlBytes?: number };
+export type DlAlbum = Album & {
+  coverUri?: string;
+  addedAt?: number;
+  dlBytes?: number;
+  /** Server cover id → file, for the tracks with a picture of their own (#214). */
+  trackCovers?: Record<string, string>;
+};
 
 /**
  * A downloaded album's artist, with their own picture.

@@ -290,6 +290,7 @@ export async function upnpConnect(device: UpnpDevice): Promise<boolean> {
 /** Cuts the session; with silent it doesn't notify the player (e.g. when switching to cast). */
 export async function upnpDisconnect(silent = false): Promise<void> {
   if (!isUpnpConnected()) return;
+  const disconnectedAtSec = lastPositionSec;
   stateSub?.remove();
   stateSub = undefined;
   // Closes the casting media session on any disconnect path
@@ -309,7 +310,7 @@ export async function upnpDisconnect(silent = false): Promise<void> {
   } catch {
     // ignore
   }
-  if (!silent) events?.onDisconnected(lastPositionSec);
+  if (!silent) events?.onDisconnected(disconnectedAtSec);
 }
 
 function firstNonBlank(...values: (string | undefined | null)[]): string | undefined {

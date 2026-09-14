@@ -13,6 +13,8 @@ import * as Crypto from 'expo-crypto';
 // This one answers there, and honours `AbortSignal` properly with it.
 import { fetch } from 'expo/fetch';
 
+import { markAbsentCovers, omitsAbsentCovers } from '@/lib/absentCovers';
+import { wordsFromCues } from '@/lib/lyricWords';
 import { canonicalId, idWouldChange } from '@/lib/navidromeIds';
 import { timed } from '@/lib/perfLog';
 import { assertCanRequest } from './netGate';
@@ -531,6 +533,7 @@ async function request<T>(
     }
     throw new SubsonicRequestError(sub.error?.message ?? 'Subsonic error', false, code);
   }
+  if (omitsAbsentCovers(sub)) markAbsentCovers(sub);
   return sub as T;
 }
 
@@ -1343,10 +1346,24 @@ export async function getLyrics(
   return res.lyrics?.value?.trim() ?? '';
 }
 
+/** A word or a syllable of a synced line, and when it is sung. */
+export interface LyricWord {
+  /** Milliseconds from the start of the track. */
+  start: number;
+  end?: number;
+  /** Its text, with whatever follows it up to the next word (a space, often). */
+  value: string;
+}
+
 export interface LyricLine {
   /** Milliseconds from the start of the track; only in synced lyrics. */
   start?: number;
   value: string;
+  /**
+   * Word by word, when the lyrics were timed that finely (#165). Put back
+   * together they are `value`, spaces included.
+   */
+  words?: LyricWord[];
 }
 
 export interface SongLyrics {
@@ -1358,35 +1375,68 @@ export interface SongLyrics {
  * Structured lyrics by song id (OpenSubsonic extension `songLyrics`,
  * supported by Navidrome and Ampache 7): lines with timestamps if the lyrics
  * are synced. Throws on servers without the extension; null if no lyrics.
+ *
+ * Asked with `enhanced`, which version 2 of the extension answers with each
+ * line's words and when they are sung (`cueLine`): Navidrome 0.63 reads those
+ * out of TTML, enhanced LRC, SRT and YAML files (#165). A server without it
+ * ignores the parameter and answers as before.
  */
 export async function getLyricsBySongId(
   auth: SubsonicAuth,
   id: string,
 ): Promise<SongLyrics | null> {
+  interface CueLine {
+    /** The `line` it times. */
+    index?: number;
+    value?: string;
+    cue?: { start: number; end?: number; value?: string; byteStart?: number }[];
+  }
   interface StructuredLyrics {
+    /** Only with `enhanced`: `main`, `translation` or `pronunciation`. */
+    kind?: string;
     synced?: boolean;
     /** Global offset in ms; positive = lyrics should appear earlier. */
     offset?: number;
     line?: { start?: number; value?: string }[];
+    cueLine?: CueLine[];
   }
   const res = await request<{ lyricsList?: { structuredLyrics?: StructuredLyrics[] } }>(
     auth,
     'getLyricsBySongId.view',
-    { id },
+    { id, enhanced: 'true' },
   );
-  const all = res.lyricsList?.structuredLyrics ?? [];
+  // `enhanced` brings the translations and the pronunciations too, as entries
+  // of their own, and those are not the song's lyrics.
+  const all = (res.lyricsList?.structuredLyrics ?? []).filter((l) => !l.kind || l.kind === 'main');
   const pick = all.find((l) => l.synced && l.line?.length) ?? all.find((l) => l.line?.length);
   if (!pick?.line?.length) return null;
   const synced = !!pick.synced;
   const offset = pick.offset ?? 0;
+  // The first cue line of each index: the spec puts the main voice ahead of
+  // the backing ones that share its line.
+  const cues = new Map<number, CueLine>();
+  if (synced) {
+    pick.cueLine?.forEach((cl, i) => {
+      const at = cl.index ?? i;
+      if (!cues.has(at)) cues.set(at, cl);
+    });
+  }
   return {
     synced,
-    lines: pick.line.map((ln) => ({
-      value: ln.value ?? '',
-      ...(synced && ln.start !== undefined
-        ? { start: Math.max(0, ln.start - offset) }
-        : {}),
-    })),
+    lines: pick.line.map((ln, i) => {
+      const text = cues.get(i)?.value;
+      const cue = cues.get(i)?.cue;
+      const words = text && cue?.length ? wordsFromCues(text, cue, offset) : undefined;
+      return {
+        // The cue line's own text when it has words, since they are cut out of
+        // it, and `line` may carry the backing vocals alongside.
+        value: words && text ? text : (ln.value ?? ''),
+        ...(synced && ln.start !== undefined
+          ? { start: Math.max(0, ln.start - offset) }
+          : {}),
+        ...(words ? { words } : {}),
+      };
+    }),
   };
 }
 

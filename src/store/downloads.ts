@@ -35,6 +35,7 @@ import {
 } from '@/api/backend';
 import { tg } from '@/i18n';
 import {
+  forgetCover,
   hashKey,
   normKey,
   registerCover,
@@ -274,7 +275,12 @@ export async function getDownloadShelf(): Promise<Omit<DownloadsCatalog, 'songs'
   }
   // Always (not just on build): clearLocalCatalog() empties the global cover
   // index and downloaded covers need to be re-registered.
-  for (const a of cachedShelf.albums) registerCover(a.id, a.coverUri);
+  for (const a of cachedShelf.albums) {
+    registerCover(a.id, a.coverUri);
+    // Under the server's id, so a song from the mirror or the queue finds its
+    // own picture too, not only the catalog's rows (#214).
+    for (const [id, uri] of Object.entries(a.trackCovers ?? {})) registerCover(id, uri);
+  }
   for (const a of cachedShelf.artists) registerCover(a.id, a.coverUri);
   return cachedShelf;
 }
@@ -322,6 +328,112 @@ export async function noteDownloadedArtist(auth: SubsonicAuth, artist: Artist): 
     }
   } catch {
     // Best effort, like the covers: the artist screen has already been drawn.
+  }
+}
+
+/**
+ * Saves the own pictures of these downloaded songs that are not on the phone
+ * yet, and points the catalog's rows at them. Returns whether anything changed.
+ *
+ * For what was downloaded before a track's own cover came down with it (#214):
+ * those rows got the album's and the file was never fetched. `songs` carry the
+ * server's cover id, because the catalog wrote the album's over it.
+ */
+async function keepTrackCovers(
+  auth: SubsonicAuth,
+  dir: string,
+  albumId: string,
+  songs: { id: string; cover: string }[],
+): Promise<boolean> {
+  const [existing] = await Db.albumsByIds(dir, [albumId]);
+  if (!existing) return false;
+  const catalog = await Db.albumSongs(dir, albumId);
+  // Rows of a download that already fetched it: its bytes are in the total.
+  const counted = new Set(catalog.map((s) => s.coverArt));
+  const trackCovers = { ...existing.trackCovers };
+  let added = false;
+  let bytes = 0;
+  for (const cover of new Set(songs.map((s) => s.cover))) {
+    if (trackCovers[cover]) continue;
+    const art = await downloadTrackArt(auth, dir, cover);
+    if (!art) continue;
+    trackCovers[cover] = art.uri;
+    registerCover(cover, art.uri);
+    if (!counted.has(art.uri)) bytes += art.bytes;
+    added = true;
+  }
+  const coverOf = new Map(songs.map((s) => [s.id, trackCovers[s.cover]]));
+  const rows = catalog.flatMap((s) => {
+    const uri = coverOf.get(s.id);
+    return uri && s.coverArt !== uri ? [{ ...s, coverArt: uri }] : [];
+  });
+  if (!added && rows.length === 0) return false;
+  await Db.addToCatalog(dir, {
+    songs: rows,
+    albums: added ? [{ ...existing, trackCovers, dlBytes: (existing.dlBytes ?? 0) + bytes }] : [],
+  });
+  return true;
+}
+
+/**
+ * The album screen's half of `keepTrackCovers`: a downloaded album opened with
+ * a connection, which is when the server says which tracks have their own art.
+ */
+export async function noteDownloadedAlbum(
+  auth: SubsonicAuth,
+  album: Album,
+  songs: Song[],
+): Promise<void> {
+  const dir = activeServerDir();
+  if (!dir) return;
+  const files = useDownloads.getState().files;
+  const albumCover = album.coverArt ?? album.id;
+  // On an ordinary record this comes out empty: no read and no request.
+  const own = songs.flatMap((s) =>
+    files[s.id] && s.coverArt && s.coverArt !== albumCover ? [{ id: s.id, cover: s.coverArt }] : [],
+  );
+  if (own.length === 0) return;
+  try {
+    if (await keepTrackCovers(auth, dir, album.id, own)) resetCatalogCache();
+  } catch {
+    // Best effort: the album screen has already been drawn.
+  }
+}
+
+/** Written once the sweep has gone through a profile's downloads. */
+const TRACK_COVERS_MARK = 'track-covers-1';
+let sweepingTrackCovers = false;
+
+/**
+ * Once per profile, the same for everything downloaded before 0.7.7, without
+ * waiting for each album to be opened. The mirror still knows which cover id
+ * each track had, so the server is only asked for the pictures themselves.
+ */
+async function sweepTrackCovers(): Promise<void> {
+  const auth = useAuthStore.getState().auth;
+  const dir = activeServerDir();
+  if (!auth || !dir || useAuthStore.getState().offline || sweepingTrackCovers) return;
+  sweepingTrackCovers = true;
+  try {
+    const mark = `${dir}${TRACK_COVERS_MARK}`;
+    if ((await FileSystem.getInfoAsync(mark)).exists) return;
+    const byAlbum = new Map<string, { id: string; cover: string }[]>();
+    const ids = Object.keys(useDownloads.getState().files);
+    for (const s of await useLibraryMirror.getState().ownCoverSongs(ids)) {
+      byAlbum.set(s.album, [...(byAlbum.get(s.album) ?? []), s]);
+    }
+    let changed = false;
+    for (const [albumId, songs] of byAlbum) {
+      // Left for the next start rather than half done without a connection.
+      if (useAuthStore.getState().offline) return;
+      changed = (await keepTrackCovers(auth, dir, albumId, songs)) || changed;
+    }
+    if (changed) resetCatalogCache();
+    await FileSystem.writeAsStringAsync(mark, '');
+  } catch {
+    // Tried again on the next start.
+  } finally {
+    sweepingTrackCovers = false;
   }
 }
 
@@ -446,7 +558,12 @@ function toLocalSong(
   };
 }
 
-function toLocalAlbum(album: Album, coverUri?: string, dlBytes?: number): DlAlbum {
+function toLocalAlbum(
+  album: Album,
+  coverUri?: string,
+  dlBytes?: number,
+  trackCovers?: Record<string, string>,
+): DlAlbum {
   return {
     ...album,
     artistId: normKey(album.artist || UNKNOWN_ARTIST),
@@ -454,6 +571,7 @@ function toLocalAlbum(album: Album, coverUri?: string, dlBytes?: number): DlAlbu
     coverArt: album.id,
     coverUri,
     dlBytes,
+    trackCovers,
     addedAt: Date.now(),
   };
 }
@@ -508,7 +626,7 @@ async function refreshCatalogAlbum(
   await Db.addToCatalog(dir, {
     albums: [
       {
-        ...toLocalAlbum(album, existing.coverUri, existing.dlBytes),
+        ...toLocalAlbum(album, existing.coverUri, existing.dlBytes, existing.trackCovers),
         addedAt: existing.addedAt ?? Date.now(),
       },
     ],
@@ -856,12 +974,18 @@ export const useDownloads = create<DownloadsState>((set, get) => {
           if (track.albumId !== album.id) continue;
           if (track.coverArt && track.coverArt !== albumCoverId) own.add(track.coverArt);
         }
+        // Kept from an earlier download of this album, which replacing the
+        // row would otherwise forget.
+        const [existing] = own.size > 0 ? await Db.albumsByIds(dir, [album.id]) : [];
+        const trackCovers: Record<string, string> = { ...existing?.trackCovers };
         let artBytes = 0;
         for (const coverId of own) {
           if (cancelling.has(groupKey)) break;
           const art = await downloadTrackArt(auth, dir, coverId);
           if (!art) continue;
           trackArt.set(coverId, art.uri);
+          trackCovers[coverId] = art.uri;
+          registerCover(coverId, art.uri);
           artBytes += art.bytes;
         }
 
@@ -870,7 +994,14 @@ export const useDownloads = create<DownloadsState>((set, get) => {
           // a song's `dlBytes` is the size of its audio and is read back as
           // such (see the Size row of `SongInfoSheet`), so a picture cannot go
           // in there.
-          albums: [toLocalAlbum(album, cover?.uri, (cover?.bytes ?? 0) + artBytes)],
+          albums: [
+            toLocalAlbum(
+              album,
+              cover?.uri,
+              (cover?.bytes ?? 0) + artBytes,
+              Object.keys(trackCovers).length > 0 ? trackCovers : undefined,
+            ),
+          ],
         });
         await ensureArtist(album);
       };
@@ -1034,6 +1165,8 @@ export const useDownloads = create<DownloadsState>((set, get) => {
       }
       if (run !== hydrateRun) return;
       set({ files, hydrated: true });
+      // Not on the way in: it may fetch pictures, though only ever once.
+      if (active) setTimeout(() => void sweepTrackCovers(), 20_000);
       // The bitrates come after, on their own: nothing on the way in reads
       // them, and digging them out of the rows' JSON is the expensive half of
       // what this used to ask for (see `downloadedBitRates`).
@@ -1166,6 +1299,10 @@ export const useDownloads = create<DownloadsState>((set, get) => {
           // Albums left with nothing: their cover goes too.
           for (const a of gone.albums) {
             if (a.coverUri) await FileSystem.deleteAsync(a.coverUri, { idempotent: true }).catch(() => {});
+            for (const [id, uri] of Object.entries(a.trackCovers ?? {})) {
+              forgetCover(id);
+              await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+            }
           }
           // And artists left without a single record, picture and all.
           for (const a of await Db.dropEmptyArtists(dir)) {

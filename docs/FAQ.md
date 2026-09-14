@@ -30,3 +30,19 @@ The sideloading methods we suggest are:
    Official guide (requires a PC) [Windows](https://faq.altstore.io/altstore-classic/how-to-install-altstore-windows), [MacOS](https://faq.altstore.io/altstore-classic/how-to-install-altstore-macos)
 
 You can also [add Resonus repository as an altsource](https://altdirect.app/?url=https://raw.githubusercontent.com/juananzzz/resonus/main/Source.json).
+
+## How do I get lyrics that light up word by word?
+
+The lyrics have to be timed word by word, and a normal `.lrc` isn't: it only
+times the lines. What works is a `.ttml` file (the format Apple Music uses) or
+an enhanced `.lrc`, which has a `<mm:ss.xx>` in front of each word. Put it next
+to the song with the same name, like `01 - Song.flac` and `01 - Song.ttml`.
+
+- **Navidrome**: 0.63 or newer. It picks the file up on the next scan and sends
+  the words to Resonus. Older versions only send whole lines.
+- **Jellyfin**: when it has word timings for the song, Resonus uses them.
+- **Music on the phone**: the same `.ttml` or `.lrc` next to the file.
+
+Downloaded songs keep the word timings, so it works offline too. Songs you
+downloaded before this was added only have whole lines until you download them
+again.

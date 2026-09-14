@@ -40,6 +40,25 @@ function apply(state: Network.NetworkState) {
   }
 }
 
+/**
+ * Whether the phone is off any local network right now: on mobile data, or on
+ * nothing at all. Asked fresh rather than read from the store, whose
+ * `connected` is about the internet, which a speaker on the LAN never needed.
+ * A connection of another or unknown kind (a VPN over Wi-Fi) still counts as on.
+ */
+export async function offLocalNetwork(): Promise<boolean> {
+  try {
+    const s = await Network.getNetworkStateAsync();
+    return (
+      s.isConnected === false ||
+      s.type === Network.NetworkStateType.NONE ||
+      s.type === Network.NetworkStateType.CELLULAR
+    );
+  } catch {
+    return false;
+  }
+}
+
 let started = false;
 
 /** Starts the watcher (idempotent; from the root layout). */

@@ -278,6 +278,8 @@ interface MirrorState {
   /** Song ids per stored playlist, without their tracklists. */
   playlistSongIds: () => Promise<Map<string, string[]>>;
   albumDetail: (id: string) => Promise<Db.AlbumDetail | undefined>;
+  /** Of these songs, the ones whose cover is not their album's (#214). */
+  ownCoverSongs: (ids: string[]) => Promise<{ id: string; album: string; cover: string }[]>;
   artistDetail: (id: string) => Promise<Db.ArtistDetail | undefined>;
   /** Name and albums for an artist with no entry of their own. */
   artistFallback: (id: string) => Promise<{ name?: string; albums: Album[] }>;
@@ -489,4 +491,5 @@ export const useLibraryMirror = create<MirrorState>((set, get) => ({
   songs: (ids) => withMirror((d, p) => Db.getSongs(d, p, ids), new Map<string, Song>()),
   playlistVersions: () => withMirror((d, p) => Db.playlistVersions(d, p), {}),
   albumIds: () => withMirror((d, p) => Db.albumIds(d, p), new Set<string>()),
+  ownCoverSongs: (ids) => withMirror((d, p) => Db.ownCoverSongs(d, p, ids), []),
 }));

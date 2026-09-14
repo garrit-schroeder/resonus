@@ -12,6 +12,7 @@ Releases before 0.2.1 are only listed on the
 ### Added
 
 - Your library can show Favorites and your playlists again when no chip is pressed, instead of everything mixed together, with Settings > Appearance > Start on your playlists (#217).
+- Lyrics timed word by word light up each word as it is sung, from TTML or enhanced LRC files on Navidrome 0.63 or newer, on Jellyfin, or next to your own music, and downloads keep them for offline (#165).
 
 ### Changed
 
@@ -22,6 +23,10 @@ Releases before 0.2.1 are only listed on the
 - Deleting a playlist or a radio station, or taking an album out of your favourites with its heart, no longer leaves a hidden pin that still counts toward the limit (#217).
 - Previous goes to the track before in the album or playlist that is playing, and only back to what you played before it once you reach the first track (#219).
 - On a UPnP or Sonos speaker the volume starts from the speaker's own level and follows changes made on it, instead of jumping near full at the first press (#218).
+- Offline, a track with its own embedded cover shows it in the album, the queue and the player instead of the album's, also for albums downloaded before 0.7.7 (#214).
+- On Navidrome 0.64 or newer, albums, artists and playlists with no artwork show Resonus' own placeholder instead of Navidrome's, and are no longer asked for it.
+- A Sonos queue that failed to load part way is sent again in full the next time, instead of being taken as already there (#220).
+- Casting to a UPnP or Sonos speaker goes back to the phone, paused where it was, when the phone moves to mobile data or loses the network, but not when only the internet drops (#220).
 
 ## [0.7.7] - 2026-09-13
 

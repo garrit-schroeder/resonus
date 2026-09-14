@@ -934,6 +934,11 @@ export function replaceCover(id: string, uri?: string) {
   if (uri) coverIndex.set(id, uri);
 }
 
+/** Takes one out, for a picture whose file is being deleted. */
+export function forgetCover(id: string) {
+  coverIndex.delete(id);
+}
+
 export function localCoverUrl(id: string | undefined): string | undefined {
   if (!id) return undefined;
   // A playlist's own uploaded cover already arrives as a file URI.

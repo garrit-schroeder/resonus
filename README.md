@@ -56,7 +56,7 @@ playback.
 - **Local mode**: play music straight from your device or a folder, no server needed
 - **Offline mode**: your favorites, playlists and albums stay browsable with no connection; downloaded songs play, the rest show grayed out, and it switches automatically when the server is unreachable
 - **Downloads**: albums, playlists, an artist's whole discography or single songs, in original quality or transcoded
-- **Synced lyrics**: karaoke view with tap-to-seek, full-screen mode, optional LRCLIB lookup
+- **Synced lyrics**: karaoke view with tap-to-seek, word-by-word highlighting (TTML and enhanced LRC), full-screen mode, optional LRCLIB lookup
 - **Internet radio**: browse and manage your stations
 - **Cast to speakers**: UPnP/DLNA renderers and Sonos, with room grouping; local music streams to them too
 - **Playback**: gapless, crossfade, built-in equalizer, ReplayGain normalization, playback speed, sleep timer, queue with undo, shuffle, repeat, background & lock-screen controls

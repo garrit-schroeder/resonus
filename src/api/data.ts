@@ -7,6 +7,7 @@ import { profileScopeId, useAuthStore } from '@/store/auth';
 import {
   getDownloadShelf,
   getDownloadsCatalog,
+  noteDownloadedAlbum,
   noteDownloadedArtist,
   useDownloads,
 } from '@/store/downloads';
@@ -49,10 +50,8 @@ function serverOffline(): boolean {
  * `unavailable` (shown grayed out and don't play). In offline mode the
  * set of downloads doesn't change, so the mark is stable during the session.
  *
- * Album art: downloaded art re-pins `coverArt` to `albumId` (the local index
- * goes by albumId). Non-downloaded keeps the server `coverArt`, so the
- * offline URL matches the online one and expo-image serves it from its cache
- * (or downloads it if offline is manual with network); otherwise the placeholder remains.
+ * Album art: `coverArt` is re-pinned to `albumId`, which is what the local
+ * index goes by, except for a track whose own picture a download saved.
  */
 function annotate(songs: Song[]): Song[] {
   const files = useDownloads.getState().files;
@@ -64,14 +63,14 @@ function annotate(songs: Song[]): Song[] {
   const annotated = songs.map((s0) => {
     const s = ratings[s0.id] !== undefined ? { ...s0, userRating: ratings[s0.id] } : s0;
     const uri = files[s.id];
-    // Both point at the album's cover, downloaded or not. A server can give
-    // each song a cover id of its own, and offline that is a file we do not
-    // have and will not keep: one per track, for a picture that is the album's
-    // in all but the rarest case. The album's is saved once and serves the
-    // shelf, the header and every row under it.
+    // The album's cover, saved once for the shelf, the header and every row,
+    // unless the song's own is on this phone. Only a download saves one
+    // (#214): for the rest it would be a file per track that nobody kept.
+    const coverArt =
+      s.coverArt && Local.coverUrl(s.coverArt) ? s.coverArt : (s.albumId ?? s.coverArt);
     return uri
-      ? { ...s, coverArt: s.albumId ?? s.coverArt, localUri: uri, unavailable: false }
-      : { ...s, coverArt: s.albumId ?? s.coverArt, unavailable: true };
+      ? { ...s, coverArt, localUri: uri, unavailable: false }
+      : { ...s, coverArt, unavailable: true };
   });
   return hideUnavailable ? annotated.filter((s) => !s.unavailable) : annotated;
 }
@@ -173,6 +172,8 @@ export const CACHED_COVER = 'cached-cover:';
 
 
 export function coverArtUrl(id: string | undefined, _size?: number): string | undefined {
+  // Empty is an item the server says has no artwork (see `lib/absentCovers`).
+  if (!id) return undefined;
   // If the album art is downloaded (album/artist on disk), use it even
   // when in server mode: it works offline and doesn't use data, just
   // like audio plays from the downloaded file.
@@ -209,8 +210,9 @@ export function coverArtUrl(id: string | undefined, _size?: number): string | un
  * Which pulls the two cases apart, and they were one before (#214). A download
  * saves a track's own picture and files the song under it (`downloadTrackArt`),
  * so the track that has a sleeve of its own shows it with no connection. The
- * mirror never saved one and still holds the server's id, which resolves to
- * nothing here, so those keep the album's exactly as they did.
+ * file is registered under the server's id as well, so a song from the mirror
+ * or the queue finds it too; an id nobody downloaded resolves to nothing here
+ * and keeps the album's.
  *
  * The test is `Local.coverUrl`, which is a map lookup rather than a look at the
  * disk, and it is the same one `coverArtUrl` is about to make anyway.
@@ -311,6 +313,7 @@ export function getAlbum(id: string): Promise<{ album: Subsonic.Album; songs: Su
   }
   return Subsonic.getAlbum(auth(), id).then((res) => {
     useLibraryMirror.getState().saveAlbum(id, res.album, res.songs, useDownloads.getState());
+    void noteDownloadedAlbum(auth(), res.album, res.songs);
     return res;
   });
 }

@@ -75,7 +75,7 @@ import {
   jukeboxSetVolume,
 } from './jukebox';
 import { useLastPlayed } from './lastPlayed';
-import { useNetworkType } from './networkType';
+import { offLocalNetwork, useNetworkType } from './networkType';
 import { useOfflineQueue } from './offlineQueue';
 import { usePlayCounts } from './playCounts';
 import { usePlayHistory } from './playHistory';
@@ -3113,6 +3113,22 @@ export function initRemoteIntegration() {
   };
   initUpnp(events);
   initJukebox(events);
+  // The speaker is on the phone's own network, so casting goes back to the
+  // phone when the phone leaves it (#220). Only once that has lasted a moment,
+  // since hopping between access points passes through mobile data, and never
+  // for the internet dropping: the store's `connected` is about that, and a
+  // server and a speaker on the same LAN go on working without it.
+  const LEFT_LAN_GRACE_MS = 8000;
+  let leftLanTimer: ReturnType<typeof setTimeout> | undefined;
+  useNetworkType.subscribe(() => {
+    if (!isUpnpConnected()) return;
+    clearTimeout(leftLanTimer);
+    leftLanTimer = setTimeout(() => {
+      void offLocalNetwork().then((off) => {
+        if (off && isUpnpConnected()) void upnpDisconnect();
+      });
+    }, LEFT_LAN_GRACE_MS);
+  });
   // Sync crossfade toggle to Sonos whenever the setting changes.
   let lastCrossfadeSec = useSettings.getState().crossfadeSec;
   useSettings.subscribe((s) => {
