@@ -26,6 +26,7 @@ if [[ ! -f "$KEYSTORE_FILE" ]]; then
     -dname "CN=myrelease, OU=local, O=myrelease, L=local, ST=local, C=DE" >/dev/null
 fi
 
+rm -rf .expo/cache /tmp/metro-* node_modules/.cache
 pnpm expo prebuild --clean -p android
 (
   cd android
