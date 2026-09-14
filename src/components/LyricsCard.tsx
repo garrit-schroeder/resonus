@@ -25,7 +25,7 @@ import Animated, {
 import { scheduleOnRN } from 'react-native-worklets';
 
 import { COVER, songCoverUrl } from '@/api/data';
-import { type LyricLine } from '@/api/subsonic';
+import { type LyricLine, type LyricWord } from '@/api/subsonic';
 import { useDominantColor } from '@/hooks/useDominantColor';
 import { useLyrics } from '@/hooks/useLyrics';
 import { useT } from '@/i18n';
@@ -294,6 +294,7 @@ export function SyncedLyricsView({
             key={i}
             index={i}
             text={line.value.trim() || '♪'}
+            words={line.words}
             active={i === current}
             next={i === current + 1}
             large={large}
@@ -324,6 +325,7 @@ export function SyncedLyricsView({
 const LyricRow = memo(({
   index,
   text,
+  words,
   active,
   next,
   large,
@@ -331,6 +333,7 @@ const LyricRow = memo(({
 }: {
   index: number;
   text: string;
+  words?: LyricWord[];
   active: boolean;
   next: boolean;
   large?: boolean;
@@ -369,12 +372,61 @@ const LyricRow = memo(({
       onLayout={(e) => onMeasure(index, e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
     >
       <Animated.Text style={[lyricsStyles.line, large && lyricsStyles.lineLarge, styles.leftOrigin, anim]}>
-        {text}
+        {active && words ? <SungWords words={words} /> : text}
       </Animated.Text>
     </View>
   );
 });
 LyricRow.displayName = 'LyricRow';
+
+/** Ahead of the ear, like the line's own 300 ms, but less: a word is short. */
+const WORD_LEAD_MS = 100;
+
+/**
+ * The position in milliseconds, moving on between the player's own updates.
+ *
+ * Those come every half second, which is fine for a line and too coarse for a
+ * word: a quick one lit up late or not at all. So between updates this runs
+ * on by itself while playing, never more than a second past the last real one
+ * in case they stop coming.
+ */
+function useSungPositionMs(): number {
+  const [ms, setMs] = useState(() => usePlayerStore.getState().positionSec * 1000);
+  useEffect(() => {
+    let anchor = { sec: usePlayerStore.getState().positionSec, at: Date.now() };
+    const unsubscribe = usePlayerStore.subscribe((s, prev) => {
+      if (s.positionSec !== prev.positionSec) anchor = { sec: s.positionSec, at: Date.now() };
+    });
+    const timer = setInterval(() => {
+      const { isPlaying, speed } = usePlayerStore.getState();
+      const ahead = isPlaying ? Math.min((Date.now() - anchor.at) * (speed || 1), 1000) : 0;
+      setMs(anchor.sec * 1000 + ahead + WORD_LEAD_MS);
+    }, 50);
+    return () => {
+      unsubscribe();
+      clearInterval(timer);
+    };
+  }, []);
+  return ms;
+}
+
+/**
+ * The line being sung, word by word (#165): what has been sung is lit and the
+ * rest waits, dimmer. Only the active line ticks.
+ */
+function SungWords({ words }: { words: LyricWord[] }) {
+  const posMs = useSungPositionMs();
+  const waiting = { color: `${colors.text}66` };
+  return (
+    <>
+      {words.map((w, i) => (
+        <Text key={i} style={w.start <= posMs ? null : waiting}>
+          {w.value}
+        </Text>
+      ))}
+    </>
+  );
+}
 
 /** Typography shared by the card and the full screen. */
 export const lyricsStyles = themed((colors) => ({

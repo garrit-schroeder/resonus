@@ -248,6 +248,8 @@ interface NdSong {
    * so nothing downstream has to know there are two spellings.
    */
   explicitStatus?: string;
+  /** Navidrome 0.64: neither the track nor its album has artwork. */
+  imageAbsent?: boolean;
   size?: number;
   playCount?: number;
   starred?: boolean;
@@ -279,8 +281,9 @@ function toSong(m: NdSong): Song {
     artist: m.artist,
     artistId: m.artistId,
     // Ids are the same ones Subsonic uses here, so the cover, the stream and
-    // everything else keep working through the usual endpoints.
-    coverArt: m.albumId ?? m.id,
+    // everything else keep working through the usual endpoints. Empty when
+    // there is no artwork to ask for (see `lib/absentCovers`).
+    coverArt: m.imageAbsent ? '' : (m.albumId ?? m.id),
     duration: m.duration,
     track: m.trackNumber,
     discNumber: m.discNumber,
@@ -407,6 +410,8 @@ interface NdAlbum {
   genre?: string;
   /** Same shorthand as the song's; see `NdSong`. */
   explicitStatus?: string;
+  /** Navidrome 0.64: the album has no artwork. */
+  imageAbsent?: boolean;
 }
 
 function toAlbum(a: NdAlbum): Album {
@@ -419,7 +424,7 @@ function toAlbum(a: NdAlbum): Album {
     artist: a.albumArtist ?? a.artist,
     artistId: a.albumArtistId ?? a.artistId,
     // Same ids as Subsonic, so covers keep coming from the usual endpoint.
-    coverArt: a.id,
+    coverArt: a.imageAbsent ? '' : a.id,
     songCount: a.songCount,
     // The year an album is shown by is the one it finished on, which is what
     // Subsonic's `year` means here too.

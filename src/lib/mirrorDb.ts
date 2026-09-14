@@ -373,6 +373,42 @@ export async function songCoverIds(
   );
 }
 
+/**
+ * Of these songs, the ones whose cover is not their album's, and what they name
+ * instead: a track with a picture of its own, or a disc of its own (#214). The
+ * album's cover id is only on the album's entry, so a song whose album was never
+ * stored is left out.
+ */
+export async function ownCoverSongs(
+  dir: string,
+  profile: string,
+  ids: string[],
+): Promise<{ id: string; album: string; cover: string }[]> {
+  const db = await mirrorDb(dir, profile);
+  const albumCover = new Map<string, string>();
+  const albums = await db.getAllAsync<{ id: string; cover: string }>(
+    `SELECT id, COALESCE(json_extract(data, '$.album.coverArt'), id) AS cover
+       FROM entries WHERE kind = 'album'`,
+  );
+  for (const a of albums) albumCover.set(a.id, a.cover);
+  const out: { id: string; album: string; cover: string }[] = [];
+  for (let i = 0; i < ids.length; i += 500) {
+    const part = ids.slice(i, i + 500);
+    const rows = await db.getAllAsync<{ id: string; album: string | null; cover: string | null }>(
+      `SELECT id, json_extract(data, '$.albumId') AS album, json_extract(data, '$.coverArt') AS cover
+         FROM songs WHERE id IN (${part.map(() => '?').join(',')})`,
+      part,
+    );
+    for (const r of rows) {
+      const own = r.album ? albumCover.get(r.album) : undefined;
+      if (r.album && r.cover && own && r.cover !== own) {
+        out.push({ id: r.id, album: r.album, cover: r.cover });
+      }
+    }
+  }
+  return out;
+}
+
 // ── The covers kept alongside ───────────────────────────────────────────────
 
 export interface CoverRow {
