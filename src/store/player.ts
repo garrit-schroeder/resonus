@@ -25,7 +25,6 @@ import { fetch as expoFetch } from 'expo/fetch';
 import { AppState } from 'react-native';
 import { create } from 'zustand';
 
-import { CLIENT_NAME } from '@/api/subsonic';
 import {
   getAlbum,
   getArtist,
@@ -45,6 +44,7 @@ import {
   type Song,
   type SubsonicAuth,
 } from '@/api/backend';
+import { CLIENT_NAME } from '@/api/subsonic';
 // The data layer's, not the backend's: `getRandomSongs` honours the library
 // filter and asks each library for its share (the rest of the mix cannot be
 // filtered, see `radioCandidates`), and `coverArtUrl` hands back the file on
@@ -928,9 +928,9 @@ async function loadIndex(index: number, autoplay: boolean): Promise<boolean> {
 }
 
 // ── "Back" history, Spotify-style ────────────────────────────────────────────
-// Stack of already-played contexts so the previous button/gesture returns to
-// the prior song even if it comes from a different playlist or album (not the
-// previous track of the current context). Pushed on each advance/skip forward
+// Stack of already-played contexts so the previous button/gesture, once at the
+// start of the queue, returns to the song played before it even if it comes
+// from a different playlist or album. Pushed on each advance/skip forward
 // and popped in previous(). Entries share the `queue` reference within the
 // same context, so they only weigh what changes between skips.
 type HistoryEntry = {
@@ -3088,6 +3088,14 @@ export function initRemoteIntegration() {
       applyLoop(activePlayer());
       scheduleSync();
     },
+    onVolumeChanged: (volume) => {
+      const current = usePlayerStore.getState().volume;
+      const rounded = Math.round(volume * 100) / 100;
+      if (Math.abs(rounded - current) >= 0.01) {
+        usePlayerStore.setState({ volume: rounded });
+        castSetVolumeLevel(rounded);
+      }
+    },
     onFinished: () => {
       if (handleSleepAtSongEnd()) return;
       const { repeat, index } = usePlayerStore.getState();
@@ -3695,7 +3703,20 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     flushCurrentAlbumProgress(true);
     // Returns to the previous song in history, even if from another list/album.
     const playing = get().isPlaying;
-    const entry = playedHistory.pop();
+    // Step backwards within the current queue as long as we're not at the first track.
+    if (index > 0) {
+      void loadIndex(index - 1, skipAutoplay(playing));
+      return;
+    }
+    // At the start of the queue: return to the previous context from history.
+    // Entries of this same list point further into it, left there by the
+    // advances the steps above walked back over.
+    const { queue, source, sourceHref } = get();
+    const key = contextKey(source, sourceHref);
+    const sameList = (e: HistoryEntry) =>
+      e.queue === queue || (key != null && contextKey(e.source, e.sourceHref) === key);
+    let entry = playedHistory.pop();
+    while (entry && sameList(entry)) entry = playedHistory.pop();
     if (entry) {
       set({
         queue: entry.queue,
@@ -3712,8 +3733,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       void loadIndex(entry.index, skipAutoplay(playing));
       return;
     }
-    if (index > 0) void loadIndex(index - 1, skipAutoplay(playing));
-    else get().seekTo(0);
+    get().seekTo(0);
   },
 
   seekTo: (sec) => {

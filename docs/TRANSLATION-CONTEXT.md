@@ -5,7 +5,7 @@
      `src/i18n/context.jsonc`, and where a string shows up is read off the
      code, so both are fixed at the source and this page follows. -->
 
-Every string the app can show, under the screen it shows up on. 700 of them.
+Every string the app can show, under the screen it shows up on. 713 of them.
 The second column is only filled in where the English is ambiguous on its own
 If one tripped you up and the column is empty, that is worth telling us, and
 the answer goes into `src/i18n/context.jsonc` where the next translator of the
@@ -38,6 +38,7 @@ you are actually typing into, which is easier than reading it here.
 | `1 hour` | How long a shared link lasts, counted from the moment it is made. Not a time of day |
 | `1 month` | How long a shared link lasts, counted from the moment it is made |
 | `1 week` | How long a shared link lasts, counted from the moment it is made |
+| `Album` | In search results, the little word under a result saying what kind of thing it is |
 | `Allow downloads` | Whether whoever gets the link can download the music, not only listen to it |
 | `Android may stop playback in the background, interrupt downloads or delay the sleep timer. Allowing unrestricted battery use fixes it.` |  |
 | `Artist` | In search results, the little word under a result saying what kind of thing it is |
@@ -331,6 +332,7 @@ you are actually typing into, which is easier than reading it here.
 
 | String | What it is |
 | --- | --- |
+| `Album` | In search results, the little word under a result saying what kind of thing it is |
 | `Artist` | In search results, the little word under a result saying what kind of thing it is |
 | `Couldn't load artists.` | Error on the screen, with a Retry button |
 | `Couldn't load playlists.` | Error on the screen, with a Retry button |
@@ -544,6 +546,7 @@ you are actually typing into, which is easier than reading it here.
 
 | String | What it is |
 | --- | --- |
+| `Album` | In search results, the little word under a result saying what kind of thing it is |
 | `All` |  |
 | `Artist` | In search results, the little word under a result saying what kind of thing it is |
 | `Artists` | A heading over a list of them, never a count |
@@ -818,7 +821,6 @@ you are actually typing into, which is easier than reading it here.
 | `Language` |  |
 | `Navigation` | Section header: how you move around the app |
 | `Navigation bar` | Settings screen: which tabs are on the bar at the bottom, and in what order |
-| `Off` | A setting value meaning disabled (crossfade, normalization…) |
 | `Open the app on` | Which tab the app opens on, and comes back to after a while away |
 | `Quick grid` | The grid of shortcut tiles on Home |
 | `Show, hide and reorder the album rows on Home.` | The line under “Home sections”, explaining it |
@@ -871,7 +873,7 @@ you are actually typing into, which is easier than reading it here.
 | `Preload upcoming tracks` |  |
 | `Quality & playback` |  |
 | `Remembering where you left a book.` | The line under “Audiobooks”, explaining it |
-| `Request the next few tracks ahead of time so they start instantly. Helps with proxy servers like Octo-Fiesta or slow sources that fetch tracks on demand.` | The line under “Preload upcoming tracks”, explaining it |
+| `Request the next few tracks ahead of time so they start instantly. Helps with proxy servers and slow sources that fetch each track on demand.` | The line under “Preload upcoming tracks”, explaining it |
 | `Scrobbling` | Reporting a song as played, to the user's own server and from there to Last.fm or ListenBrainz. The title of its own screen and the row that opens it. The word comes from Last.fm and most languages keep it; use whatever those services call it in yours if they do |
 | `Songs blend into each other when one ends.` | The line under “Crossfade”, explaining it |
 | `Sound` | Section header: normalization and the pre-amp |
@@ -1038,7 +1040,6 @@ you are actually typing into, which is easier than reading it here.
 | `Added to “{name}”` | Toast. `{name}` is the playlist's name |
 | `Added to favorites` | Toast |
 | `Added to queue` | The toast that says it worked |
-| `Album` | In search results, the little word under a result saying what kind of thing it is |
 | `Albums` | A heading over a list of them, never a count |
 | `All {songs} are already in “{name}”.` | The same warning when every one of the several being added is already there. `{songs}` already reads as a count ("12 songs") |
 | `Alphabetical` | Sort option: the order of a list |
@@ -1082,6 +1083,7 @@ you are actually typing into, which is easier than reading it here.
 | `Not available offline` | This one is not downloaded, so it cannot play without a connection |
 | `Nothing here is downloaded` | Toast when playing something that is not downloaded, offline |
 | `Nothing to shuffle yet` | Empty state: there is nothing here to play in random order |
+| `Off` | A setting value meaning disabled (crossfade, normalization…) |
 | `Offline` | The toast shown when the app falls into offline mode by itself, and the badge that says it is in it |
 | `Pause` | Read out by the screen reader for the pause button. A verb |
 | `Play` | Read out by the screen reader for the play button. A verb |
