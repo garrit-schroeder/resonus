@@ -301,6 +301,10 @@ class UpnpCastModule : Module() {
       scope.launch { promise.resolve(transportMutex.withLock { session?.seek(positionMs.toLong()) ?: false }) }
     }
 
+    AsyncFunction("getVolume") { promise: Promise ->
+      scope.launch { promise.resolve(session?.getVolume() ?: -1) }
+    }
+
     AsyncFunction("setVolume") { volume: Int, promise: Promise ->
       scope.launch { promise.resolve(session?.setVolume(volume) ?: false) }
     }
@@ -375,6 +379,7 @@ class UpnpCastModule : Module() {
               "playMode" to (playMode ?: ""),
               "nativeQueueManaged" to (nativeQueueManaged && current?.isSonos == false),
               "queueIndex" to if (nativeQueueManaged && current?.isSonos == false) nativeQueueIndex.toDouble() else -1.0,
+              "volume" to (state.volume?.toDouble() ?: -1.0),
             ),
           )
         }

@@ -20,6 +20,8 @@ Releases before 0.2.1 are only listed on the
 ### Fixed
 
 - Deleting a playlist or a radio station, or taking an album out of your favourites with its heart, no longer leaves a hidden pin that still counts toward the limit (#217).
+- Previous goes to the track before in the album or playlist that is playing, and only back to what you played before it once you reach the first track (#219).
+- On a UPnP or Sonos speaker the volume starts from the speaker's own level and follows changes made on it, instead of jumping near full at the first press (#218).
 
 ## [0.7.7] - 2026-09-13
 

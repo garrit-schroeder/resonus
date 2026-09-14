@@ -28,6 +28,7 @@ export interface RemoteEvents {
   onProgress: (positionSec: number, durationSec: number) => void;
   onPlayingChanged: (isPlaying: boolean, isBuffering: boolean) => void;
   onRepeatChanged?: (repeat: 'off' | 'all' | 'one') => void;
+  onVolumeChanged?: (volume: number) => void;
   /** Track finished naturally on the renderer. */
   onFinished: () => void;
 }
@@ -66,6 +67,7 @@ interface NativeState {
   nativeQueueManaged?: boolean;
   /** Authoritative zero-based index for a native-managed ordinary renderer. */
   queueIndex?: number;
+  volume?: number;
 }
 
 const native = requireOptionalNativeModule('UpnpCast');
@@ -123,6 +125,9 @@ function repeatForPlayMode(playMode?: string): 'off' | 'all' | 'one' | null {
 
 function onNativeState(e: NativeState) {
   if (!isUpnpConnected()) return;
+  if (e.volume != null && e.volume >= 0) {
+    events?.onVolumeChanged?.(e.volume / 100);
+  }
   const repeat = repeatForPlayMode(e.playMode);
   if (repeat != null && repeat !== lastRemoteRepeat) {
     lastRemoteRepeat = repeat;
@@ -270,6 +275,14 @@ export async function upnpConnect(device: UpnpDevice): Promise<boolean> {
   stateSub?.remove();
   stateSub = native.addListener('state', onNativeState);
   useUpnp.setState({ connected: true, deviceId: device.id });
+  try {
+    const initialVol = (await native.getVolume()) as number;
+    if (typeof initialVol === 'number' && initialVol >= 0) {
+      events?.onVolumeChanged?.(initialVol / 100);
+    }
+  } catch {
+    // ignore
+  }
   events?.onConnected();
   return true;
 }

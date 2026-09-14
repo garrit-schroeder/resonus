@@ -33,7 +33,8 @@ class RendererSession(
   @Volatile
   private var lastQueueUpdateId: Int = 0
 
-  private val renderingControl: String? =
+  @Volatile
+  private var renderingControl: String? =
     initialDescription.controlUrl(Services.RENDERING_CONTROL)
 
   data class State(
@@ -43,6 +44,7 @@ class RendererSession(
     val trackNumber: Int?,
     val playMode: String?,
     val currentUri: String?,
+    val volume: Int?,
   )
 
   private data class TransportTarget(val controlUrl: String, val uid: String)
@@ -721,6 +723,18 @@ class RendererSession(
     ).ok
   }
 
+  suspend fun getVolume(): Int? {
+    val control = renderingControl ?: return null
+    val result = Soap.call(
+      control,
+      Services.RENDERING_CONTROL,
+      "GetVolume",
+      "<InstanceID>0</InstanceID><Channel>Master</Channel>"
+    )
+    if (!result.ok) return null
+    return Soap.argument(result.body, "CurrentVolume")?.toIntOrNull()
+  }
+
   suspend fun setVolume(volume: Int): Boolean {
     val control = renderingControl ?: return false
     return Soap.call(
@@ -739,13 +753,15 @@ class RendererSession(
     val position = Soap.call(control, Services.AV_TRANSPORT, "GetPositionInfo", INSTANCE)
     val settings = Soap.call(control, Services.AV_TRANSPORT, "GetTransportSettings", INSTANCE)
     val trackNumber = Soap.argument(position.body, "Track")?.toIntOrNull()
+    val volume = getVolume()
     return State(
       playbackState = playbackState,
       positionMs = Didl.parseDuration(Soap.argument(position.body, "RelTime")),
       durationMs = Didl.parseDuration(Soap.argument(position.body, "TrackDuration")),
       trackNumber = trackNumber,
       playMode = Soap.argument(settings.body, "PlayMode"),
-      currentUri = Soap.argument(position.body, "TrackURI")
+      currentUri = Soap.argument(position.body, "TrackURI"),
+      volume = volume
     )
   }
 
@@ -754,6 +770,7 @@ class RendererSession(
     description = fresh
     avTransport = fresh.controlUrl(Services.AV_TRANSPORT)
     queueControl = fresh.controlUrl(Services.QUEUE)
+    renderingControl = fresh.controlUrl(Services.RENDERING_CONTROL)
     lastQueueOwnerUid = null
     lastQueueId = null
     lastQueueTrackUrls = emptyList()
@@ -766,6 +783,7 @@ class RendererSession(
     description = fresh
     queueControl = fresh.controlUrl(Services.QUEUE)
     avTransport = fresh.controlUrl(Services.AV_TRANSPORT)
+    renderingControl = fresh.controlUrl(Services.RENDERING_CONTROL)
     lastQueueOwnerUid = null
     lastQueueId = null
     lastQueueTrackUrls = emptyList()
