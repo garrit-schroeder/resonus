@@ -210,6 +210,8 @@ export interface Album {
   name: string;
   artist?: string;
   artistId?: string;
+  /** Album description from the comment tag (OpenSubsonic; Navidrome sends it). */
+  comment?: string;
   /** Album artist list (OpenSubsonic extension; Navidrome sends it). */
   artists?: { id: string; name: string }[];
   coverArt?: string;

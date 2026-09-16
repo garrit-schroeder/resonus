@@ -6,58 +6,58 @@ import { useEffect, useMemo, useReducer, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  StyleSheet,
   Pressable,
   RefreshControl,
   ScrollView,
+  StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import {
+  COVER,
   coverArtUrl,
   getAlbumList,
   getArtists,
-  getSongList,
   getPlaylists,
+  getSongList,
   type Album,
   type Artist,
   type Playlist,
   type Song,
-  COVER,
 } from '@/api/data';
 import { AlbumCard } from '@/components/AlbumCard';
-import { PlaylistCard } from '@/components/PlaylistCard';
 import { AlbumCardsSkeleton } from '@/components/AlbumCardsSkeleton';
 import { ArtistCard } from '@/components/ArtistCard';
 import { Cover } from '@/components/Cover';
 import { FavoritesArt } from '@/components/FavoritesArt';
 import { Message } from '@/components/Message';
 import { OfflineIndicator } from '@/components/OfflineIndicator';
+import { PlaylistCard } from '@/components/PlaylistCard';
 import { SongCard } from '@/components/SongCard';
+import { useScreenBottomPadding } from '@/hooks/useScreenBottomPadding';
+import { columnsFor, useScreenSize } from '@/hooks/useScreenSize';
 import { songsLabel, useT } from '@/i18n';
 import { greetingHours } from '@/i18n/languages';
+import { haptic } from '@/lib/haptics';
+import { listPerf } from '@/lib/listPerf';
+import { bump } from '@/lib/perfLog';
+import { playShuffle } from '@/lib/playShuffle';
+import { requestSearchFocus } from '@/lib/tabOrigin';
 import { useAuthStore } from '@/store/auth';
 import { checkAutoUrlNow } from '@/store/autoUrl';
 import { useLastPlayed } from '@/store/lastPlayed';
 import { usePlayerStore } from '@/store/player';
-import { requestSearchFocus } from '@/lib/tabOrigin';
 import { useScanProgress } from '@/store/scanProgress';
 import {
   useSettings,
-  type HomeChipKey,
   type HomeButtonKey,
+  type HomeChipKey,
   type HomeSectionKey,
 } from '@/store/settings';
 import { useSongMenu } from '@/store/songMenu';
 import { colors, fontSize, radius, spacing, themed, useTheme } from '@/theme';
-import { useScreenBottomPadding } from '@/hooks/useScreenBottomPadding';
-import { columnsFor, useScreenSize } from '@/hooks/useScreenSize';
-import { listPerf } from '@/lib/listPerf';
-import { haptic } from '@/lib/haptics';
-import { bump } from '@/lib/perfLog';
-import { playShuffle } from '@/lib/playShuffle';
 
 /**
  * How wide a quick tile wants to be, in dp.
@@ -147,9 +147,9 @@ function QuickGrid() {
 
   // Spotify-style dynamic grid: mixes playlists and recent albums sorted by
   // last play (same store as "Recents" in the Library). What you just listened
-  // to rises; the rest is filled with recent albums (server order) and fresh
-  // playlists (by modification date). Favorites is always pinned first, outside
-  // this sorting.
+  // to rises; the rest is filled with recent albums (server order) and then
+  // playlists. A playlist you never played doesn't rise for having been edited
+  // on the server. Favorites is always pinned first, outside this sorting.
   // Favorites, if pinned, takes one slot from the total; the rest is
   // distributed among active sources sorted by last play.
   const dynamicCount = Math.max(0, size - (withFavorites ? 1 : 0));
@@ -163,7 +163,7 @@ function QuickGrid() {
             href,
             name: p.name,
             cover: coverArtUrl(p.coverArt ?? p.id, COVER.thumb),
-            ts: times[href] ?? (Date.parse(p.changed ?? p.created ?? '') || 0),
+            ts: times[href] ?? 0,
           };
         })
       : [];

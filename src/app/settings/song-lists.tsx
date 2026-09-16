@@ -66,8 +66,8 @@ export default function SongListsSettings() {
               onChange: setShowExplicitTag,
             },
             {
-              label: t('Show playlist description'),
-              description: t('Show the playlist description under its name.'),
+              label: t('Show description'),
+              description: t('Show playlist and album descriptions under their names.'),
               value: showPlaylistDescription,
               onChange: setShowPlaylistDescription,
             },

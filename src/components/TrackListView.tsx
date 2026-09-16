@@ -33,6 +33,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { type Song, type StarType } from '@/api/subsonic';
 import { useDominantColor } from '@/hooks/useDominantColor';
 import { useScreenBottomPadding } from '@/hooks/useScreenBottomPadding';
+import { centredPadding, useScreenSize } from '@/hooks/useScreenSize';
 import { useSelectionMenu } from '@/hooks/useSelectionMenu';
 import { useT } from '@/i18n';
 import { artistTargets } from '@/lib/artistNav';
@@ -46,7 +47,6 @@ import { BackChevron } from './BackChevron';
 import { Cover } from './Cover';
 import { ExplicitBadge, useExplicitBadge } from './ExplicitBadge';
 import { FavoriteButton } from './FavoriteButton';
-import { centredPadding, useScreenSize } from '@/hooks/useScreenSize';
 import { SelectionBar, type SelectionAction } from './SelectionBar';
 import { TrackRow } from './TrackRow';
 
@@ -66,6 +66,8 @@ const TOPBAR_H = 48;
 /** Height of the hidden search bar ("Find in playlist" Spotify style),
  * including the separation gap from the cover. */
 const SEARCH_H = 72;
+/** Lines of the description shown before "Show more". */
+const DESCRIPTION_LINES = 2;
 
 /**
  * The list, with its scroll wired straight to what the scroll animates.
@@ -99,11 +101,10 @@ interface Props {
   /** Circular artist photo next to the subtitle (Spotify style). */
   artistImageUri?: string;
   /**
-   * What the list says about itself (a playlist's description), whole, above
-   * the metadata. Not cut down to a line with the rest a tap away: nothing
-   * would say the tap is there, and a description nobody can finish reading is
-   * barely better than one that isn't shown. Whoever wants the header quiet
-   * turns it off in Settings › Appearance.
+   * What the list says about itself (a playlist's or an album's description),
+   * above the metadata. Two lines, with "Show more" under them when there is
+   * more: the words say the tap is there, which is what a bare cut text never
+   * did. Whoever wants the header quiet turns it off in Settings › Appearance.
    */
   description?: string;
   /** Metadata line (e.g. "Album · 2021 · 12 songs · 48 min"). */
@@ -280,6 +281,8 @@ export function TrackListView({
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
   const [revealed, setRevealed] = useState(false);
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
+  const [descriptionHasMore, setDescriptionHasMore] = useState(false);
   /** Last real scroll offset (the gesture only reveals at the top). */
   const lastOffsetY = useRef(0);
   const searchH = useRef(new Animated.Value(0)).current;
@@ -625,7 +628,37 @@ export function TrackListView({
               )
             ) : null}
             {description?.trim() ? (
-              <Text style={styles.description}>{description.trim()}</Text>
+              <View>
+                {/* The whole text, drawn invisibly: with `numberOfLines` set,
+                    onTextLayout only reports the lines that survived, so the
+                    copy below can't tell whether anything was cut. */}
+                <Text
+                  style={styles.descriptionMeasure}
+                  onTextLayout={(e) =>
+                    setDescriptionHasMore(e.nativeEvent.lines.length > DESCRIPTION_LINES)
+                  }
+                >
+                  {description.trim()}
+                </Text>
+                <Text
+                  style={styles.description}
+                  numberOfLines={descriptionExpanded ? undefined : DESCRIPTION_LINES}
+                >
+                  {description.trim()}
+                </Text>
+                {descriptionHasMore ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => setDescriptionExpanded((v) => !v)}
+                    style={styles.descriptionMore}
+                    hitSlop={spacing.sm}
+                  >
+                    <Text style={styles.descriptionMoreText}>
+                      {descriptionExpanded ? t('Show less') : t('Show more')}
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </View>
             ) : null}
             {showExplicit || meta ? (
               <View style={styles.metaRow}>
@@ -1060,6 +1093,28 @@ const styles = themed((colors) => ({
     color: colors.textSecondary,
     fontSize: fontSize.sm,
     marginTop: spacing.xs,
+    lineHeight: 20,
+  },
+  // Same text, same width, no paint: only here to count the lines.
+  descriptionMeasure: {
+    position: 'absolute',
+    opacity: 0,
+    pointerEvents: 'none',
+    width: '100%',
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    lineHeight: 20,
+  },
+  // Under the text, never over it: the header sits on the dominant color
+  // gradient, so a patch of the plain background would show as a rectangle.
+  descriptionMore: {
+    alignSelf: 'flex-start',
+    marginTop: spacing.xs,
+  },
+  descriptionMoreText: {
+    color: colors.text,
+    fontSize: fontSize.sm,
+    fontWeight: '600',
   },
   // The row keeps the gap the line used to keep for itself, so a header with
   // no badge sits exactly where it always did.

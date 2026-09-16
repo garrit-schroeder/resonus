@@ -698,8 +698,8 @@
     "Your most played songs will show up here.": "Empty state, before anything has been played",
 
     // ── Other ────────────────────────────────────────────────────────────────
-    "Show playlist description": "A setting: whether a playlist's own description is drawn under its name on its screen. The description is text whoever made the playlist wrote about it",
-    "Show the playlist description under its name.": "The line under `Show playlist description`. The description is the text whoever made the playlist wrote about it",
+    "Show description": "A setting: whether playlist and album descriptions are drawn under their names on their screens",
+    "Show playlist and album descriptions under their names.": "The line under `Show description`, covering descriptions written for playlists and albums",
     "Playlist covers": "One line of the storage breakdown in Settings › Downloads: how much room the playlist cover images take. It is a size, not a setting",
     "Free": "Free disk space in the storage bar (Other / Downloads / Free). Not \"free of charge\"",
     "Other": "Two places, and the same word does for both: in that storage bar, the space used by things other than downloads; and on an artist's page, the last shelf of the discography, holding the records that fit none of the kinds above it",

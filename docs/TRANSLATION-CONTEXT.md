@@ -138,8 +138,6 @@ you are actually typing into, which is easier than reading it here.
 | `Popular` | The artist's popular / top tracks |
 | `Rate` | Verb: give it stars. Used for a song and for an artist. Not "bitrate" |
 | `Remixes` | Shelf heading: records that are mostly remixed material. `Remixes` is widely used as-is in several languages; keep it if that is true of yours |
-| `Show less` | Folds it back |
-| `Show more` | Unfolds the rest of a text that was cut short |
 | `Similar artists` | Related artists |
 | `Singles` | Shelf heading: records built around one song |
 | `Soundtracks` | Shelf heading: the music of a film, a series, a play or a game |
@@ -436,8 +434,6 @@ you are actually typing into, which is easier than reading it here.
 | `Searching for devices…` | In the output sheet: looking for speakers and TVs to cast to |
 | `Server speakers (Jukebox)` | Playing out of the speakers attached to the server itself, rather than the phone. Subsonic calls this jukebox mode |
 | `Show cover` | Lyrics screen: the button that goes back to the cover art |
-| `Show less` | Folds it back |
-| `Show more` | Unfolds the rest of a text that was cut short |
 | `This phone` | The on-device profile, with no server account |
 | `View queue` | Read out by the screen reader for the button that opens the queue |
 
@@ -991,16 +987,16 @@ you are actually typing into, which is easier than reading it here.
 | `Show a round artist photo next to the name on album screens.` | The line under “Show artist photo”, explaining it |
 | `Show artist photo` | Whether the artist's photo shows at the top of their screen |
 | `Show artwork` | Whether song rows carry the album's little picture |
+| `Show description` | A setting: whether playlist and album descriptions are drawn under their names on their screens |
 | `Show disc titles` | On an album in several discs, whether each disc's own name shows |
 | `Show each song's star rating in lists.` | The line under “Show rating”, explaining it |
 | `Show explicit tag` | A switch: whether to draw the E on anything carrying a parental advisory. "Explicit" here is the music-industry label for strong language, not "clear" or "stated outright" |
 | `Show genres` | Whether a song row says its genre |
-| `Show playlist description` | A setting: whether a playlist's own description is drawn under its name on its screen. The description is text whoever made the playlist wrote about it |
+| `Show playlist and album descriptions under their names.` | The line under `Show description`, covering descriptions written for playlists and albums |
 | `Show rating` |  |
 | `Show song duration` | Whether a song row says how long the song is |
 | `Show the album artwork next to each song in playlists and favorites.` | The line under “Show artwork”, explaining it |
 | `Show the album's genres as chips; tap one to browse it.` | The line under “Show genres”, explaining it |
-| `Show the playlist description under its name.` | The line under `Show playlist description`. The description is the text whoever made the playlist wrote about it |
 | `Song lists` | The setting for how song lists look |
 
 ## Settings › Theme
@@ -1104,6 +1100,8 @@ you are actually typing into, which is easier than reading it here.
 | `Select all` | Tick every song in the list at once |
 | `Server default` | Codec option meaning "let the server decide" what to transcode to |
 | `Show all` | Opens the full list of what the row is showing a few of |
+| `Show less` | Folds it back |
+| `Show more` | Unfolds the rest of a text that was cut short |
 | `Shuffle` | Play in random order |
 | `Song downloaded` | Toast: one song finished |
 | `Songs` | Always a heading, never a count, so it wants the plain plural your language uses for a list of them ("Songs", not "of songs"). Counting songs is a different thing and goes through the plural forms |

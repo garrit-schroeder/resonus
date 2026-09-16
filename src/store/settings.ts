@@ -758,7 +758,7 @@ interface SettingsState {
   showPlayedInQueue: boolean;
   /** Show mini album cover in lists (playlists/favorites). */
   showListArtwork: boolean;
-  /** Show a playlist's description under its name. */
+  /** Show a playlist's or an album's description under its name. */
   showPlaylistDescription: boolean;
   /** Keep the navigation bar on every screen, not only on the tabs. */
   alwaysShowTabs: boolean;

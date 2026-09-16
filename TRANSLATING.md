@@ -203,7 +203,7 @@ don't speak every language we ship. They aren't counted as missing.
 Say so. You are reading these sentences more carefully than anyone else does,
 and an awkward one in the source becomes an awkward one in six languages. It has
 happened: "Show what a playlist says about itself, under its name" was flagged
-by a translator and is now "Show the playlist description under its name".
+by a translator and is now "Show playlist and album descriptions under their names".
 
 Open an issue or say it in your pull request. You don't have to change it
 yourself. When one is reworded its translations are dropped and turn up as

@@ -15,6 +15,7 @@
 import Constants from 'expo-constants';
 import * as Crypto from 'expo-crypto';
 
+import { wordsAt } from '@/lib/lyricWords';
 import {
   CLIENT_NAME,
   normalizeUrl,
@@ -40,7 +41,6 @@ import {
   type StarType,
   type SubsonicAuth,
 } from './subsonic';
-import { wordsAt } from '@/lib/lyricWords';
 // Not the global `fetch`: it never resolves in the background. See the note
 // in `src/api/subsonic.ts`.
 import { fetch } from 'expo/fetch';
@@ -357,6 +357,9 @@ function toAlbum(it: JfItem): Album {
     artist: it.AlbumArtist ?? it.Artists?.join(', '),
     artistId: it.AlbumArtists?.[0]?.Id,
     artists: it.AlbumArtists?.map((a) => ({ id: a.Id, name: a.Name ?? '' })),
+    // Jellyfin stores album descriptions in Overview, which may contain
+    // markup. Album headers display plain text, like playlist descriptions.
+    comment: it.Overview?.replace(/<[^>]+>/g, '').trim() || undefined,
     coverArt: it.ImageTags?.Primary ? it.Id : undefined,
     songCount: it.ChildCount,
     year: it.ProductionYear,

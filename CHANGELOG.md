@@ -13,10 +13,12 @@ Releases before 0.2.1 are only listed on the
 
 - Your library can show Favorites and your playlists again when no chip is pressed, instead of everything mixed together, with Settings > Appearance > Start on your playlists (#217).
 - Lyrics timed word by word light up each word as it is sung, from TTML or enhanced LRC files on Navidrome 0.63 or newer, on Jellyfin, or next to your own music, and downloads keep them for offline (#165).
+- An album shows its description under its name, as a playlist already did, taken from the overview on Jellyfin or from the comment tag the album's files share, and the switch for it is now Settings > Appearance > Song lists > Show description (#223).
 
 ### Changed
 
 - You can pin up to 50 items instead of 25 (#217).
+- A long playlist or album description is cut to two lines with a Show more under it, instead of filling the whole header (#223).
 
 ### Fixed
 
@@ -27,6 +29,7 @@ Releases before 0.2.1 are only listed on the
 - On Navidrome 0.64 or newer, albums, artists and playlists with no artwork show Resonus' own placeholder instead of Navidrome's, and are no longer asked for it.
 - A Sonos queue that failed to load part way is sent again in full the next time, instead of being taken as already there (#220).
 - Casting to a UPnP or Sonos speaker goes back to the phone, paused where it was, when the phone moves to mobile data or loses the network, but not when only the internet drops (#220).
+- A playlist you have never played no longer rises to the top of the home grid for having been created or edited recently on the server (#222).
 
 ## [0.7.7] - 2026-09-13
 

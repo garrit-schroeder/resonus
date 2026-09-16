@@ -140,6 +140,7 @@ export default function AlbumScreen() {
   const showArtistPhoto = useSettings((s) => s.showArtistPhoto);
   const showDiscHeaders = useSettings((s) => s.showDiscHeaders);
   const showGenreChips = useSettings((s) => s.showGenreChips);
+  const showDescription = useSettings((s) => s.showPlaylistDescription);
   const saveAudiobookProgress = useSettings((s) => s.saveAudiobookProgress);
   const audiobookContinueRewindSec = useSettings((s) => s.audiobookContinueRewindSec);
   const playing = usePlayerStore(currentSong);
@@ -225,6 +226,17 @@ export default function AlbumScreen() {
   const labelText = labels.length
     ? `℗ ${data.album.year ? `${data.album.year} ` : ''}${labels.join(' · ')}`
     : null;
+  // Subsonic has no album description: `comment` is not part of OpenSubsonic's
+  // album, only Jellyfin's Overview lands there. What is left is the comment
+  // tag of the files, and one track carrying one is a note about that file
+  // ("ripped from the CD"), not about the record; a comment every track repeats
+  // is what a tagger writes when the text is about the album.
+  const firstComment = data.songs[0]?.comment?.trim();
+  const sharedComment =
+    firstComment && data.songs.every((s) => s.comment?.trim() === firstComment)
+      ? firstComment
+      : undefined;
+  const description = data.album.comment?.trim() || sharedComment;
 
   // The album's own release type decides, and its songs only get a say where
   // nobody tagged the record, where they have to agree unanimously: one track
@@ -326,6 +338,7 @@ export default function AlbumScreen() {
       <TrackListView
         title={data.album.name}
         subtitle={data.album.artist}
+        description={showDescription ? description : undefined}
         artistId={data.album.artistId}
         artists={data.album.artists}
         artistImageUri={
