@@ -499,6 +499,17 @@ export function TrackListView({
     setSelectedIds(null);
     setDraggedRows((cur) => (cur === null ? cur : null));
     setDragChanged((cur) => (cur ? false : cur));
+    // The list the rows came from is gone and a new one starts at the top of
+    // its content, but the header's cover and tint follow `scrollY`, which only
+    // the list below answers for — the drag surface owns its scroll and leaves
+    // that value where the old list had scrolled. Reset in step with the new
+    // list, or the cover sits as if the page were halfway through and paints
+    // nowhere until the next scroll puts the two back in step. Only where the
+    // drag surface actually replaced the list: searching keeps the same one,
+    // at its own place, and its value is already true.
+    if (selection?.reorder && !searching) {
+      void scrollY.setValue(0);
+    }
   }
 
   function toggleSelect(key: string) {
