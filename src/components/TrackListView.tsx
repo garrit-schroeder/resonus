@@ -10,6 +10,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import {
   ActivityIndicator,
   Animated,
+  type FlatList,
   Keyboard,
   Platform,
   Pressable,
@@ -469,6 +470,16 @@ export function TrackListView({
    * pair on screen instead of sending the whole list back above the bar.
    */
   const enteredAt = useRef(0);
+  /**
+   * The drag surface's own scroll view, for the one thing `initialScrollIndex`
+   * has to do about a row it has never rendered: reach a place further down
+   * than the measured cells. The virtualized list cannot know where it is
+   * without a layout, and there is no layout to give here — a row's height
+   * follows the reader's font and the notes under a podcast title — so the
+   * failure the list reports is answered the way it asks: with the average
+   * height of the rows it *has* seen, times the place to reach.
+   */
+  const dragListRef = useRef<FlatList<{ song: Song; index: number }>>(null);
   /**
    * What the drag surface is showing once a row has moved: each row carries its
    * place in the screen's own list, so remove and add still find the song's
@@ -1265,12 +1276,31 @@ export function TrackListView({
       {dragging ? (
         <ReorderableList
           {...dragPerf}
+          ref={dragListRef}
           // A list of its own mounts when the selection comes in; the row the
           // finger was holding is what the eye is looking for, so the drag
           // surface opens around it instead of at the top of the playlist.
+          // The place it opens at is not one the list can see: the row is
+          // usually far enough down that nothing has been rendered or measured
+          // out there, and a layout to hand over is not a thing this list has
+          // (a row's height follows the reader's font, and a podcast's notes
+          // run under its title), so the failure the list answers for is
+          // handled below, at `onScrollToIndexFailed`.
           initialScrollIndex={Math.max(0, enteredAt.current - 1)}
           data={draggedRows ?? dragRows}
           keyExtractor={(row, index) => rowKeys[row.index]}
+          // Where `initialScrollIndex` asked to stop, the list could not see:
+          // its own report carries the average height of the rows it did
+          // render, and that times the place is as close as anything can get
+          // without a layout — and a hand that has just come down on a row is
+          // about to move it anyway, so the row under the finger is the one
+          // that travels. One attempt per list, never on a scroll.
+          onScrollToIndexFailed={({ averageItemLength, index }) =>
+            void dragListRef.current?.scrollToOffset({
+              offset: averageItemLength * index,
+              animated: false,
+            })
+          }
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={[
             styles.list,
