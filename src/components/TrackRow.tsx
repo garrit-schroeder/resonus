@@ -8,6 +8,7 @@ import ReanimatedSwipeable, {
   type SwipeableMethods,
 } from 'react-native-gesture-handler/ReanimatedSwipeable';
 import Reanimated, { useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
+import { useReorderableDrag } from 'react-native-reorderable-list';
 
 import { COVER, songCoverUrl, star } from '@/api/data';
 import { episodeHeart, heartedSong, NO_FAVORITES, togglePodcastHeart } from '@/api/podcasts';
@@ -545,6 +546,22 @@ function propsEqual(a: Props, b: Props): boolean {
 }
 
 export const TrackRow = memo(TrackRowBase, propsEqual);
+
+/**
+ * The same row, for a list whose rows can be dragged to new places: a hold on
+ * it lets the row go to the list's own pan instead of leaving the finger where
+ * it came down. It has to be a component of its own because the library's drag
+ * handle comes from the cell's context, which only a component's render can
+ * see — the same reason `PlaylistReorder` draws its rows through `ReorderRow`.
+ * Not `memo`ized like the plain row: the handle belongs to the cell the row
+ * sits in *now*, and a row that has travelled to another place must answer with
+ * the new one, not with the render the previous place cached. The row inside it
+ * still memoizes itself, so what a repaint costs is this wrapper.
+ */
+export function DragTrackRow(props: Props) {
+  const drag = useReorderableDrag();
+  return <TrackRow {...props} onLongPress={() => { haptic('medium'); drag(); }} />;
+}
 
 /** Its own component so only the playing row reads the cover corner. */
 function ArtworkPlaying() {

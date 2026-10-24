@@ -13,6 +13,7 @@ Releases before 0.2.1 are only listed on the
 
 - Playback speed: a slider and −/+ buttons in steps of 0.01, a Preserve pitch switch that, turned off, lets the pitch follow the speed like a record, and the resulting BPM when the song has one (#277).
 - Podcasts: download episodes to play offline, favorite them, queue them, and find them in Library, search and Home. Thanks to Garrit Schröder.
+- Playlists: while songs are selected, a row answers a hold by moving to another place in the list, and the selection bar's Save order button writes the new order back to the server. The playlist's own ⋯ → Reorder mode is unchanged (#279).
 
 ### Changed
 

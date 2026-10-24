@@ -385,6 +385,11 @@ export default function PlaylistScreen() {
                 toast(t('Downloading…'));
               }
             : undefined,
+          // A playlist's order is the app's to rewrite, so its rows answer a
+          // hold by travelling while you select: the drag surface the ⋯ menu
+          // used to open is there under the finger instead, and the bar's
+          // fourth button keeps whatever order the hand ended with (#279).
+          reorder: canReorder ? { onSave: (ids) => void onReorderSave(ids) } : undefined,
         }}
         footer={
           !offline && data.songs.length > 0 ? (

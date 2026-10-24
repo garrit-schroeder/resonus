@@ -8,7 +8,10 @@
  * actions worth a single tap on that screen and the sheet behind ⋯ holds the
  * rest, so a new action no longer has to win its slot off another. Nothing is
  * in both places: a row repeating a button right above it is a row to read and
- * discard.
+ * discard. The one exception is a list whose rows were dragged (see the `reorder`
+ * prop below): keeping the new order is something the hand did to the rows
+ * themselves, not to what is marked, so it gets its own button in front of ⋯
+ * and never competes for a slot.
  *
  * How high is not a number of its own but `useFloatingBottom`, which is what
  * "clear of the mini player while there is one, and of the navigation bar
@@ -41,12 +44,22 @@ export function SelectionBar({
   actions,
   menu,
   count,
+  reorder,
 }: {
   /** Buttons on the bar, at most two: the rest of the room goes to ⋯. */
   actions: SelectionAction[];
   /** What goes behind ⋯, `actions` aside. Without any there is no ⋯ button. */
   menu?: SelectionAction[];
   count: number;
+  /**
+   * A list's rows may answer a hold by travelling; then the bar also carries
+   *  the button that keeps what the hand has just arranged. It is not one of
+   *  the two slots and not behind ⋯: it is the action the drag itself made,
+   *  and the only one that ignores what is marked — an order belongs to the
+   *  whole list. It stays visible and dimmed until a row actually moved, so
+   *  the bar says what a drag is for, like an empty selection does.
+   */
+  reorder?: { action: SelectionAction; ready: boolean };
 }) {
   const bottom = useFloatingBottom();
   const t = useT();
@@ -65,6 +78,13 @@ export function SelectionBar({
         {shown.map((a) => (
           <BarButton key={a.label} action={a} disabled={count === 0} onPress={a.onPress} />
         ))}
+        {reorder ? (
+          <BarButton
+            action={reorder.action}
+            disabled={!reorder.ready}
+            onPress={reorder.action.onPress}
+          />
+        ) : null}
         {hasMenu ? (
           <BarButton
             action={{ icon: 'ellipsis-horizontal', label: t('More') }}
