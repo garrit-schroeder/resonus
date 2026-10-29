@@ -62,6 +62,7 @@ import {
 } from '@/lib/animatedArtwork';
 import { tg } from '@/i18n';
 import { transcodeTarget } from '@/lib/audioQuality';
+import { speculativeSlots } from '@/lib/netBudget';
 import { favoriteLabel, favoriteState, onFavoritesChange, toggleFavorite } from '@/lib/remoteFavorite';
 import type { Remap } from '@/lib/navidromeRemap';
 import { remapSong } from '@/lib/navidromeRemap';
@@ -1522,13 +1523,38 @@ const PRELOAD_AHEAD = 5;
  *  (~1 request per advance), not all five each time. Cleared on queue change
  *  (playQueue). */
 const warmedIds = new Set<string>();
+/**
+ * Which walk the warming below belongs to, raised every time a queue replaces
+ * another (`resetWarmed`, so by `playQueue` and by starting a mix). A warm that
+ * had not got its turn yet is still sitting in `warmChain`, and on a proxy that
+ * walk's songs are now a request each holding a connection until their answer
+ * or their two-minute timeout (#137): warming them asks the server for a walk
+ * that has gone away, and those are the connections the next walk's first song
+ * needs to start at all.
+ */
+let warmWalk = 0;
 
 function resetWarmed() {
   warmedIds.clear();
+  warmWalk++;
 }
+
+/**
+ * The warming window, held shut until the track the person tapped has a source.
+ *
+ * `playQueue` writes the new queue down before anything is loaded, which is
+ * what makes a tap feel immediate, and the store subscription at the bottom of
+ * this file reacts to exactly that moment - so five warm requests left the
+ * phone before the tapped song had made its own. On a server that has to fetch
+ * each track from somewhere else first, those are the connections the stream
+ * needs, and playback began only once that batch had gone through; the wait is
+ * also long enough to be read as a source that cannot play (#269).
+ */
+let warmingHeld = false;
 
 function warmUpcoming() {
   if (bootQuiet) return; // see the boot window: nothing speculative on the way in
+  if (warmingHeld) return; // see the note above: what was tapped goes first
   if (!useSettings.getState().preloadUpcoming) return;
   const auth = useAuthStore.getState().auth;
   if (!auth || useAuthStore.getState().offline) return;
@@ -1583,13 +1609,24 @@ const WARM_TIMEOUT_MS = 120_000;
 let warmChain: Promise<void> = Promise.resolve();
 
 function warmStream(id: string, url: string) {
-  warmChain = warmChain.then(() => warmRequest(id, url));
+  // Read here, not when the turn arrives: whose walk this request belongs to.
+  const walk = warmWalk;
+  warmChain = warmChain.then(() => warmRequest(id, url, walk));
 }
 
-async function warmRequest(id: string, url: string) {
+async function warmRequest(id: string, url: string, walk: number) {
+  // A walk replaced while this waited its turn in the chain: these songs are
+  // nobody's to warm any more, and waiting for the answer only costs a
+  // connection - which is what the next walk's first song is waiting for.
+  if (walk !== warmWalk) return;
   // Nothing is warmed offline: there is no stream to fetch, and the request
   // would be one more thing reaching the network behind someone's back.
   if (useAuthStore.getState().offline) return;
+  // A slot of the app's own four speculative requests (see `netBudget`): the
+  // covers the mirror is saving and this window together used to take all five
+  // connections Android lets one host have, and the fifth is the only one the
+  // stream of a song somebody just tapped can use.
+  await speculativeSlots.take();
   bump('preload · asked the server');
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), WARM_TIMEOUT_MS);
@@ -1612,6 +1649,7 @@ async function warmRequest(id: string, url: string) {
     warmedIds.delete(id);
   } finally {
     clearTimeout(timer);
+    speculativeSlots.release();
   }
 }
 
@@ -4218,6 +4256,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       radioSeed: get().radioSeed,
     };
     queueOrigin = null;
+    // The list goes up before it is loaded on purpose (that is what makes a tap
+    // feel immediate), and the store subscription at the bottom of this file
+    // warms what follows that list at that same moment: hold that window until
+    // this song's own request has left the phone.
+    warmingHeld = true;
     set({
       queue: queued,
       index: at,
@@ -4237,8 +4280,19 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     // Only when there was something to go back to: with nothing playing before,
     // an empty queue says less than the one that failed, and the toast has
     // already said what happened.
-    const ok = await loadIndex(at, true);
+    let ok = false;
+    try {
+      ok = await loadIndex(at, true);
+    } finally {
+      // Handed back even when the load threw: a window left shut here is one
+      // nothing ever warms again for the rest of the session.
+      warmingHeld = false;
+    }
     if (!ok && before.queue.length > 0) set(before);
+    // The song the person asked for has had its request made by now, or the
+    // load failed and nothing is waiting either way, so the songs behind it can
+    // be warmed again: this is the window the `set` above held shut.
+    warmUpcoming();
     return ok;
   },
 

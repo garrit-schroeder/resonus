@@ -37,6 +37,7 @@ Releases before 0.2.1 are only listed on the
 - "Download over Wi-Fi only" now stops a download that is running when the Wi-Fi drops, instead of carrying on over mobile data.
 - Cover art no longer passes your server login to other apps that read what is playing (lock screen widgets, watches, the car). On Android Automotive the covers in the browse lists show up again.
 - The screen shown when something crashes is now in your language instead of always in Spanish.
+- Tapping a song on a server that fetches each track from somewhere else no longer waits for the songs behind it to be fetched first. Warming and the covers saved for the offline copy now share four of the five connections Android allows one host, so the song you asked for always has one of its own.
 
 ## [0.8.4] - 2026-10-20
 

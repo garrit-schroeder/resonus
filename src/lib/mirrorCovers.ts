@@ -25,6 +25,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { COVER, coverArtUrl, type SubsonicAuth } from '@/api/backend';
 import { isOfflineMode } from '@/api/netGate';
 import { whenIdle } from '@/lib/idle';
+import { speculativeSlots } from '@/lib/netBudget';
 import { bump, netTally } from '@/lib/perfLog';
 import { hashKey, localCoverUrl, registerCover } from '@/lib/localLibrary';
 import * as Db from './mirrorDb';
@@ -321,14 +322,22 @@ function runCovers(
           if (!url) return;
           const file = fileFor(profile, id);
           await FileSystem.makeDirectoryAsync(DIR, { intermediates: true }).catch(() => {});
-          netTally('coverArt.view (mirror)');
-          const res = await FileSystem.downloadAsync(url, file);
-          // A server that answers an error writes that error to the file, and a
-          // broken file on disk would pass for a cover for good.
-          if (res.status !== 200) {
-            await FileSystem.deleteAsync(file, { idempotent: true }).catch(() => {});
-            bump('cover refused by server');
-            return;
+          // A slot of the app's four speculative requests (see `netBudget`): a
+          // cover holds a connection to the same host the song somebody tapped
+          // needs, and the mirror's batch alone used to take all five.
+          await speculativeSlots.take();
+          try {
+            netTally('coverArt.view (mirror)');
+            const res = await FileSystem.downloadAsync(url, file);
+            // A server that answers an error writes that error to the file, and a
+            // broken file on disk would pass for a cover for good.
+            if (res.status !== 200) {
+              await FileSystem.deleteAsync(file, { idempotent: true }).catch(() => {});
+              bump('cover refused by server');
+              return;
+            }
+          } finally {
+            speculativeSlots.release();
           }
           known.add(id);
           registerCover(id, file);
