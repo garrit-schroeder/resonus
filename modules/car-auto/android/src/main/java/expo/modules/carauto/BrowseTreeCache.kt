@@ -28,6 +28,9 @@ object BrowseTreeCache {
   /** Which account the tree in hand belongs to, so another one's albums are
    *  never merged into it. Null for a tree pushed before this was written. */
   @Volatile private var profile: String? = null
+  /** Albums explicitly opened by the driver must survive a capped rebuild. */
+  private const val MAX_DEMAND_ALBUMS = 40
+  private val demandedAlbums = LinkedHashSet<String>()
   // The last browsable parent opened in Android Auto. It travels with a play
   // event so JS can queue the whole collection (the album, the playlist, the
   // section of Home) rather than only the track that was tapped.
@@ -49,15 +52,23 @@ object BrowseTreeCache {
    * a partial tree too, and merging that would leave the car browsing the
    * albums of an account that is no longer open.
    */
-  fun setFromJson(context: Context, json: String) {
-    val incoming = parse(json) ?: return
+  @Synchronized fun setFromJson(context: Context, json: String): Map<String, Int> {
+    val incoming = parse(json) ?: return emptyMap()
     // What is on disk is the last tree that had songs in it. Read it before
     // deciding what to keep, or a partial push on a cold start has nothing to
     // be laid over and the albums come back empty anyway.
     loadFromDiskIfNeeded(context)
+    val before = nodes
+    // An empty offline album may gain tracks when the user goes online.
+    // Revalidate negative entries on a list/mode refresh, not on every page.
+    demandedAlbums.removeAll { nodes[it].isNullOrEmpty() }
     val sameAccount = profile == null || incoming.profile == null || profile == incoming.profile
     val keepWhatWeHave = incoming.partial && sameAccount
-    nodes = if (keepWhatWeHave) nodes + incoming.nodes else incoming.nodes
+    if (!sameAccount) demandedAlbums.clear()
+    val retained = if (sameAccount) nodes.filterKeys {
+      it in demandedAlbums && incoming.nodes[it].isNullOrEmpty()
+    } else emptyMap()
+    nodes = if (keepWhatWeHave) nodes + incoming.nodes else incoming.nodes + retained
     profile = incoming.profile ?: profile.takeIf { sameAccount }
     loaded = true
     runCatching {
@@ -65,15 +76,18 @@ object BrowseTreeCache {
       // Only a whole tree is worth keeping for the next time the car starts
       // the service on its own. A partial one holds no songs, and the point of
       // the snapshot is precisely the songs.
-      if (!incoming.partial) file.writeText(json)
+      if (!incoming.partial) writeSnapshot(context)
       // Nothing to lay this over, so what is on disk is another account's.
       else if (!sameAccount) file.delete()
     }
+    return (before.keys + nodes.keys)
+      .filter { parentId -> before[parentId] != nodes[parentId] }
+      .associateWith { parentId -> nodes[parentId]?.size ?: 0 }
   }
 
   // For when JS has not pushed a tree into this process yet, which is what
   // happens when Android Auto starts the service on its own.
-  fun loadFromDiskIfNeeded(context: Context) {
+  @Synchronized fun loadFromDiskIfNeeded(context: Context) {
     if (loaded) return
     loaded = true
     runCatching {
@@ -82,9 +96,52 @@ object BrowseTreeCache {
         parse(file.readText())?.let {
           nodes = it.nodes
           profile = it.profile
+          demandedAlbums.addAll(it.demandedAlbums)
         }
       }
     }
+  }
+
+  fun profileId(): String? = profile
+
+  @Synchronized fun hasAlbumChildren(parentId: String): Boolean =
+    !nodes[parentId].isNullOrEmpty() || parentId in demandedAlbums
+
+  /** Strictly scoped response to a pending request; never switches accounts. */
+  @Synchronized fun mergeAlbum(context: Context, json: String, expectedProfile: String, parentId: String): Boolean {
+    val incoming = parse(json) ?: return false
+    if (profile != expectedProfile || incoming.profile != expectedProfile ||
+        incoming.nodes.keys != setOf(parentId) || !parentId.startsWith("album:")) return false
+    val children = incoming.nodes.getValue(parentId)
+    if (children.any { !it.playable || !it.id.startsWith("track|$parentId|") }) return false
+    nodes = nodes + incoming.nodes
+    demandedAlbums.remove(parentId)
+    demandedAlbums.add(parentId)
+    if (demandedAlbums.size > MAX_DEMAND_ALBUMS) {
+      val oldest = demandedAlbums.first()
+      demandedAlbums.remove(oldest)
+      nodes = nodes - oldest
+    }
+    runCatching { writeSnapshot(context) }
+    return true
+  }
+
+  private fun writeSnapshot(context: Context) {
+    val parents = JSONObject()
+    for ((id, children) in nodes) {
+      parents.put(id, JSONArray().apply {
+        children.forEach { node -> put(JSONObject().apply {
+          put("id", node.id); put("title", node.title); put("playable", node.playable)
+          put("subtitle", node.subtitle); put("artworkUrl", node.artworkUrl)
+          put("contentStyle", node.contentStyle); put("mediaType", node.mediaType); put("group", node.group)
+        }) }
+      })
+    }
+    val json = JSONObject().put("nodes", parents).put("profile", profile)
+      .put("demandedAlbums", JSONArray(demandedAlbums.toList())).toString()
+    val temp = File(context.filesDir, "$SNAPSHOT_FILE.tmp")
+    temp.writeText(json)
+    if (!temp.renameTo(File(context.filesDir, SNAPSHOT_FILE))) temp.delete()
   }
 
   fun getChildren(parentId: String): List<BrowseNode> {
@@ -252,6 +309,7 @@ object BrowseTreeCache {
     val nodes: Map<String, List<BrowseNode>>,
     val partial: Boolean,
     val profile: String?,
+    val demandedAlbums: Set<String>,
   )
 
   private fun parse(json: String): Snapshot? = try {
@@ -268,6 +326,9 @@ object BrowseTreeCache {
       nodes = map,
       partial = root.optBoolean("partial", false),
       profile = root.optString("profile").takeIf { it.isNotEmpty() },
+      demandedAlbums = root.optJSONArray("demandedAlbums")?.let { arr ->
+        (0 until arr.length()).map { arr.optString(it) }.filter { it.startsWith("album:") }.toSet()
+      } ?: emptySet(),
     )
   } catch (_: Throwable) {
     null

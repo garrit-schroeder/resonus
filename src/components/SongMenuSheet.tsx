@@ -1,10 +1,9 @@
 /** Bottom sheet with actions for a song (⋯ menu). */
 import Icon from '@/components/Icon';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { useRouter, useSegments } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
   Modal,
   Platform,
   Pressable,
@@ -21,13 +20,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useBottomSheetAnim } from '@/hooks/useBottomSheetAnim';
 import { useScreenSize } from '@/hooks/useScreenSize';
 import { usePodcastFavoriteIds } from '@/lib/podcastFavorites';
+import { usePodcastPlayedIds } from '@/lib/podcastPlayed';
 import {
-  addToPlaylist,
-  coverArtUrl,
+  canGoIntoPlaylist,
   songCoverUrl,
-  createPlaylist,
-  getPlaylist,
-  getPlaylists,
   removeFromPlaylist,
   reorderPlaylist,
   star,
@@ -38,7 +34,7 @@ import {
 import { useCanShare } from '@/hooks/useCanShare';
 import { useFavoriteIds } from '@/hooks/useFavoriteIds';
 import { applyStarChange, resyncFavorites } from '@/lib/favoritesCache';
-import { heartedSong, togglePodcastHeart } from '@/api/podcasts';
+import { heartedSong, setEpisodePlayed, togglePodcastHeart } from '@/api/podcasts';
 import { isManualOffline } from '@/api/netGate';
 import { artistTargets } from '@/lib/artistNav';
 import { pushOrReplace } from '@/lib/pushOrReplace';
@@ -48,8 +44,8 @@ import { normKey, pickFolder } from '@/lib/localLibrary';
 import { useArtistPicker } from '@/store/artistPicker';
 import { useAuthStore } from '@/store/auth';
 import { useSettings } from '@/store/settings';
-import { useAutoDownloads } from '@/store/autoDownloads';
 import { useDownloads } from '@/store/downloads';
+import { usePlaylistPicker } from '@/store/playlistPicker';
 import { usePlayerStore } from '@/store/player';
 import { useSongInfo } from '@/store/songInfo';
 import { useSongMenu } from '@/store/songMenu';
@@ -60,14 +56,6 @@ import { Cover } from './Cover';
 import { Dialog } from './Dialog';
 import { ExplicitBadge, useExplicitBadge } from './ExplicitBadge';
 import { StarRating } from './StarRating';
-
-/** Maximum height of the playlist list: proportional to the screen so it
- *  doesn't look cramped on large phones (previously a fixed 360). Measured
- *  while rendering, or a phone turned on its side gets a menu taller than the
- *  screen it is on (#131). */
-function playlistsMaxH(height: number): number {
-  return Math.round(height * 0.6);
-}
 
 /** Height of one action row: its vertical padding plus the icon, the tallest
  *  thing in it (`styles.action`). */
@@ -178,16 +166,14 @@ export function SongMenuSheet() {
   // A podcast episode's heart is the device's own, filed in SQLite.
   const podcastFav = usePodcastFavoriteIds(!!song?.podcastChannelId);
   const favorited = song ? heartedSong(song, podcastFav, favIds) : false;
+  const played = usePodcastPlayedIds(song?.podcastChannelId).has(song?.id ?? '');
 
-  const [mode, setMode] = useState<'actions' | 'playlists' | 'sleep' | 'rating' | 'export'>(
+  const [mode, setMode] = useState<'actions' | 'sleep' | 'rating' | 'export'>(
     'actions',
   );
-  const [creating, setCreating] = useState(false);
   // The action list is scrolled to the top: only then does a downward drag
   // belong to the sheet (see the `pan` below).
   const [atTop, setAtTop] = useState(true);
-  // "Already in the playlist" prompt pending confirmation (Spotify style).
-  const [dupPrompt, setDupPrompt] = useState<{ playlistId: string; name: string } | null>(null);
   // Removing a download asks first, like albums and playlists do.
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -202,12 +188,6 @@ export function SongMenuSheet() {
   useEffect(() => {
     setAtTop(true);
   }, [song, mode]);
-
-  const { data: playlists, isLoading: loadingPlaylists } = useQuery({
-    queryKey: ['playlists'],
-    queryFn: () => getPlaylists(),
-    enabled: (!!auth || offline) && mode === 'playlists',
-  });
 
   // Before the early return, the way every hook here has to be: the sheet
   // stays mounted with no song between openings.
@@ -268,51 +248,6 @@ export function SongMenuSheet() {
       }
     } catch {
       toast(t("Couldn't send the file"));
-    }
-  }
-
-  /** Actually adds (without checking duplicates) and closes with a toast. */
-  async function doAdd(playlistId: string, playlistName: string) {
-    if (!song) return;
-    close();
-    try {
-      await addToPlaylist(playlistId, song.id);
-      queryClient.invalidateQueries({ queryKey: ['playlist', playlistId] });
-      // If the list has auto-download, fetch the newly added song now.
-      void useAutoDownloads.getState().reconcile(playlistId, true);
-      toast(t('Added to “{name}”', { name: playlistName }));
-    } catch {
-      toast(t("Couldn't add to the playlist"));
-    }
-  }
-
-  async function addTo(playlistId: string, playlistName: string) {
-    if ((!auth && !offline) || !song) return;
-    // Spotify-style duplicate warning: if already present, ask first. If the
-    // check fails (network), add without warning: better than blocking.
-    try {
-      const { songs } = await getPlaylist(playlistId);
-      if (songs.some((s) => s.id === song.id)) {
-        setDupPrompt({ playlistId, name: playlistName });
-        return;
-      }
-    } catch {
-      // ignore
-    }
-    await doAdd(playlistId, playlistName);
-  }
-
-  async function createAndAdd(name: string) {
-    setCreating(false);
-    if ((!auth && !offline) || !song || !name.trim()) return;
-    close();
-    try {
-      const id = await createPlaylist(name.trim());
-      await addToPlaylist(id, song.id);
-      queryClient.invalidateQueries({ queryKey: ['playlists'] });
-      toast(t('Added to “{name}”', { name: name.trim() }));
-    } catch {
-      toast(t("Couldn't create the playlist"));
     }
   }
 
@@ -407,46 +342,9 @@ export function SongMenuSheet() {
             </View>
           </GestureDetector>
 
-          <GestureDetector gesture={pan.enabled(mode !== 'playlists' && atTop)}>
+          <GestureDetector gesture={pan.enabled(atTop)}>
             <View>
-              {mode === 'playlists' ? (
-                <View style={{ maxHeight: playlistsMaxH(screenH) }}>
-                  <Pressable
-                    style={styles.action}
-                    onPress={() => setMode('actions')}
-                  >
-                    <Icon name="chevron-back" size={24} color={colors.text} />
-                    <Text style={styles.actionText}>{t('Add to a playlist')}</Text>
-                  </Pressable>
-                  <Pressable
-                    style={({ pressed }) => [styles.action, pressed && { opacity: 0.6 }]}
-                    onPress={() => setCreating(true)}
-                  >
-                    <View style={styles.newPlaylistIcon}>
-                      <Icon name="add" size={24} color={colors.text} />
-                    </View>
-                    <Text style={styles.actionText}>{t('New playlist')}</Text>
-                  </Pressable>
-                  {loadingPlaylists ? (
-                    <ActivityIndicator style={{ marginVertical: spacing.lg }} color={colors.accent} />
-                  ) : (
-                    <ScrollView>
-                      {(playlists ?? []).map((p) => (
-                        <Pressable
-                          key={p.id}
-                          style={({ pressed }) => [styles.action, pressed && { opacity: 0.6 }]}
-                          onPress={() => addTo(p.id, p.name)}
-                        >
-                          <Cover uri={coverArtUrl( p.coverArt ?? p.id, COVER.thumb)} size={40} />
-                          <Text style={styles.actionText} numberOfLines={1}>
-                            {p.name}
-                          </Text>
-                        </Pressable>
-                      ))}
-                    </ScrollView>
-                  )}
-                </View>
-              ) : mode === 'sleep' ? (
+              {mode === 'sleep' ? (
                 <View>
                   <Pressable style={styles.action} onPress={() => setMode('actions')}>
                     <Icon name="chevron-back" size={24} color={colors.text} />
@@ -550,15 +448,22 @@ export function SongMenuSheet() {
                   scrollEventThrottle={16}
                   onScroll={(e) => setAtTop(e.nativeEvent.contentOffset.y <= 0)}
                 >
-                  {/* A podcast episode belongs to no playlist: its id means
-                      nothing to the server, so the playlist actions are not
-                      offered at all — an episode has no server behind it. */}
-                  {!song.podcastChannelId ? (
+                  {/* Only a track a playlist can name gets the playlist
+                      actions: a podcast episode's id means nothing to the
+                      server, and so does a radio station's: its id belongs to
+                      the station list (`canGoIntoPlaylist` says it once, and
+                      the heart's hold reads the same rule). */}
+                  {canGoIntoPlaylist(song) ? (
                     <>
                       <Action
                         icon="add-circle-outline"
                         label={t('Add to a playlist')}
-                        onPress={() => setMode('playlists')}
+                        onPress={() =>
+                          dismiss(() => {
+                            closeNow();
+                            usePlaylistPicker.getState().open([song]);
+                          })
+                        }
                       />
                       {context ? (
                         <Action
@@ -608,6 +513,18 @@ export function SongMenuSheet() {
                   />
                   {/* A podcast episode has no album or artist of its own — the
                       show is both — so the two collapse into one "Go to Podcast". */}
+                  {song.podcastChannelId ? (
+                    <Action
+                      icon={played ? 'ellipse-outline' : 'checkmark-circle-outline'}
+                      label={played ? t('Mark as unplayed') : t('Mark as played')}
+                      onPress={() => {
+                        void setEpisodePlayed(song, !played).catch(() =>
+                          toast(t("Couldn't complete the action")),
+                        );
+                        close();
+                      }}
+                    />
+                  ) : null}
                   {song.podcastChannelId ? (
                     <Action
                       icon="headset-outline"
@@ -794,7 +711,7 @@ export function SongMenuSheet() {
                   />
                   <Action
                     icon="information-circle-outline"
-                    label={t('Song information')}
+                    label={song.podcastChannelId ? t('Episode information') : t('Song information')}
                     onPress={() => {
                       dismiss(() => {
                         useSongInfo.getState().open(song);
@@ -852,27 +769,6 @@ export function SongMenuSheet() {
         }}
       />
 
-      <Dialog
-        visible={creating}
-        title={t('New playlist')}
-        input={{ placeholder: t('Playlist name') }}
-        confirmLabel={t('Create')}
-        onCancel={() => setCreating(false)}
-        onConfirm={createAndAdd}
-      />
-
-      <Dialog
-        visible={!!dupPrompt}
-        title={t('Already added')}
-        message={dupPrompt ? t('This song is already in “{name}”.', { name: dupPrompt.name }) : undefined}
-        confirmLabel={t('Add anyway')}
-        onCancel={() => setDupPrompt(null)}
-        onConfirm={() => {
-          const d = dupPrompt;
-          setDupPrompt(null);
-          if (d) void doAdd(d.playlistId, d.name);
-        }}
-      />
     </Modal>
   );
 }
@@ -930,13 +826,5 @@ const styles = themed((colors) => ({
     fontSize: fontSize.sm,
     paddingBottom: spacing.sm,
     paddingLeft: 24 + spacing.lg,
-  },
-  newPlaylistIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: radius.md,
-    backgroundColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
 }));

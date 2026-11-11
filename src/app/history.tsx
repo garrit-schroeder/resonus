@@ -40,7 +40,7 @@ function dayLabel(playedAt: number, t: (k: string) => string, lang: string): str
   const diffDays = Math.round((startOfDay(now) - startOfDay(d)) / 86_400_000);
   if (diffDays === 0) return t('Today');
   if (diffDays === 1) return t('Yesterday');
-  const label = d.toLocaleDateString(lang === 'es' ? 'es-ES' : 'en-US', {
+  const label = d.toLocaleDateString(lang, {
     day: 'numeric',
     month: 'long',
     ...(d.getFullYear() !== now.getFullYear() ? { year: 'numeric' as const } : {}),

@@ -1,20 +1,21 @@
-/** Settings › Library: scanning, server libraries and cache clearing. */
+/** Settings › Library: scanning and server libraries, or the local profile's music. */
 import Icon from '@/components/Icon';
 import { useQuery } from '@tanstack/react-query';
-import { Image } from 'expo-image';
 import { useEffect, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { rescanLocal } from '@/api/data';
+import { localInfo, rescanLocal } from '@/api/data';
 import { getScanStatus, startScan } from '@/api/backend';
-import { Field, SettingRow, SettingsPage, SwitchList, settingsStyles } from '@/components/SettingsUI';
+import { SettingsScroll, Field, SettingRow, SettingsPage, SwitchList, settingsStyles } from '@/components/SettingsUI';
 import { useT } from '@/i18n';
-import { clearExportCache } from '@/lib/exportSong';
+import { clearTemporaryData } from '@/lib/clearCache';
+import { formatCount, formatDateTime } from '@/lib/format';
 import { ensureAudioPermission, folderNameFromUri, pickFolder } from '@/lib/localLibrary';
 import { queryClient } from '@/lib/query';
 import { useAuthStore } from '@/store/auth';
 import { profileKeyOf, useLibraries } from '@/store/libraries';
+import { useSettings } from '@/store/settings';
 import { useToast } from '@/store/toast';
 import { colors, fontSize, radius, SHEET_MAX_WIDTH, spacing, themed, useTheme, tracking } from '@/theme';
 
@@ -23,6 +24,7 @@ export default function LibrarySettings() {
   // mounted while you are on another one, out of reach of anything else.
   useTheme();
   const t = useT();
+  const lang = useSettings((s) => s.language);
   const auth = useAuthStore((s) => s.auth);
   const offline = useAuthStore((s) => s.offline);
   const source = useAuthStore((s) => s.offlineSource);
@@ -115,6 +117,12 @@ export default function LibrarySettings() {
     }
   }
 
+  const { data: info } = useQuery({
+    queryKey: ['localInfo'],
+    queryFn: () => localInfo(),
+    enabled: offline && !auth,
+  });
+
   const { data: scan, refetch: refetchScan } = useQuery({
     queryKey: ['scanStatus'],
     queryFn: () => getScanStatus(auth!),
@@ -135,23 +143,27 @@ export default function LibrarySettings() {
   }
 
   async function clearCache() {
-    queryClient.clear();
-    // The copy left behind by the last "send to another app" counts as cache
-    // too, and it is the biggest thing in it: a whole song.
-    clearExportCache();
-    await Promise.all([Image.clearMemoryCache(), Image.clearDiskCache()]).catch(() => {});
-    toast(t('Cache cleared'));
+    await clearTemporaryData();
+    toast(t('Temporary data cleared'));
   }
 
   return (
     <SettingsPage title={offline ? t('Local music') : t('Library')}>
-      <ScrollView contentContainerStyle={settingsStyles.content}>
+      <SettingsScroll>
         {offline ? (
           <>
             <Field
               label={t('Source')}
               value={source?.mode === 'folder' ? t('Folder') : t('Device')}
             />
+            {info ? (
+              <>
+                <Field label={t('Songs')} value={formatCount(info.songs, lang)} />
+                {info.checkedAt ? (
+                  <Field label={t('Last scan')} value={formatDateTime(info.checkedAt, lang)} />
+                ) : null}
+              </>
+            ) : null}
             {source?.mode === 'folder' ? (
               <>
                 <Text style={settingsStyles.sectionTitle}>{t('Music folders')}</Text>
@@ -182,6 +194,10 @@ export default function LibrarySettings() {
               onPress={rescanNow}
             />
             <SettingRow icon="swap-horizontal" label={t('Change source')} onPress={() => setChanging(true)} />
+            {/* A server account has this in Downloads & offline, which the local
+                profile does not get. */}
+            <Text style={settingsStyles.sectionTitle}>{t('Storage')}</Text>
+            <SettingRow icon="trash-outline" label={t('Clear temporary data')} onPress={clearCache} />
           </>
         ) : (
           <>
@@ -189,7 +205,7 @@ export default function LibrarySettings() {
             <Text style={[settingsStyles.sectionTitle, { marginTop: 0 }]}>{t('Scan')}</Text>
             <Field
               label={t('Scan status')}
-              value={scan?.scanning ? t('Scanning…') : t('{n} items', { n: scan?.count ?? 0 })}
+              value={scan?.scanning ? t('Scanning…') : t('{n} items', { n: formatCount(scan?.count ?? 0, lang) })}
             />
             <SettingRow icon="refresh" label={t('Scan now')} onPress={scanNow} />
 
@@ -210,11 +226,7 @@ export default function LibrarySettings() {
             ) : null}
           </>
         )}
-
-        {/* Separated from scanning/source: it's maintenance, not configuration. */}
-        <Text style={settingsStyles.sectionTitle}>{t('Storage')}</Text>
-        <SettingRow icon="trash-outline" label={t('Clear cache')} onPress={clearCache} />
-      </ScrollView>
+      </SettingsScroll>
 
       <Modal
         transparent

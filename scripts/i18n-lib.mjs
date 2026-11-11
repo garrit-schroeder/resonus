@@ -335,3 +335,16 @@ export function describe(key, sites) {
   if (where && note) return `${where} · ${note}`;
   return note || where;
 }
+
+/** Strings that are meant to stay in English are nobody's work. */
+export const todoKeys = enKeys.filter((k) => !keepEnglish.has(k));
+
+export function analyze(code) {
+  const dict = loadLocale(code);
+  const keys = new Set(Object.keys(dict));
+  const missing = todoKeys.filter((k) => !keys.has(k));
+  const same = todoKeys.filter((k) => keys.has(k) && dict[k] === en[k]);
+  const stale = Object.keys(dict).filter((k) => !(baseKey(k) in en));
+  const translated = todoKeys.length - missing.length - same.length;
+  return { code, dict, missing, same, stale, translated };
+}

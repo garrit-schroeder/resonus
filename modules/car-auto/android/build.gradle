@@ -17,6 +17,9 @@ android {
   buildFeatures {
     buildConfig true
   }
+  testOptions {
+    unitTests.includeAndroidResources = true
+  }
 }
 
 dependencies {
@@ -27,4 +30,7 @@ dependencies {
   implementation "androidx.media3:media3-session:$androidxMedia3Version"
   implementation "androidx.media3:media3-common:$androidxMedia3Version"
   implementation "androidx.media3:media3-exoplayer:$androidxMedia3Version"
+
+  testImplementation 'junit:junit:4.13.2'
+  testImplementation 'org.robolectric:robolectric:4.16.1'
 }

@@ -12,7 +12,7 @@ import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-ha
 import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { COVER, coverArtUrl, getAlbum, getPlaylist, star, unstar, type Song } from '@/api/data';
+import { COVER, coverArtUrl, getAlbum, getPlaylist, exportPlaylistFile, star, unstar, type Song } from '@/api/data';
 import { useAlbumDownloads } from '@/hooks/useAlbumDownloads';
 import { useBottomSheetAnim } from '@/hooks/useBottomSheetAnim';
 import { useCanShare } from '@/hooks/useCanShare';
@@ -81,6 +81,7 @@ export function MediaMenuSheet() {
   const lang = useSettings((s) => s.language);
   const toast = useToast((s) => s.show);
   const offline = useAuthStore((s) => s.offline);
+  const local = useAuthStore((s) => s.offline && !s.auth);
   const item = useMediaMenu((s) => s.item);
   const closeNow = useMediaMenu((s) => s.close);
   const { dismiss, pan, backdropStyle, sheetStyle, onSheetLayout } = useBottomSheetAnim(
@@ -125,8 +126,10 @@ export function MediaMenuSheet() {
   const albumHasDownloads = useAlbumDownloads(
     item?.kind === 'album' ? item.album.id : undefined,
   );
+  // Not on the local profile: its songs are files it points at, and the
+  // downloads it does have are podcast episodes.
   const hasDownloads =
-    item?.kind === 'album' ? albumHasDownloads : anyDownloads({ files });
+    !local && (item?.kind === 'album' ? albumHasDownloads : anyDownloads({ files }));
 
   if (!item) return null;
 
@@ -187,6 +190,19 @@ export function MediaMenuSheet() {
         ? t('{n} of {m} songs exported', { n: saved, m: songs.length })
         : t('{n} songs exported', { n: saved }),
     );
+  }
+
+  /** The playlist as a file other players read (#335). */
+  async function exportM3u() {
+    closeNow();
+    const folder = await pickFolder();
+    if (!folder) return;
+    try {
+      await exportPlaylistFile(playlist!.id, folder);
+      toast(t('Playlist exported'));
+    } catch {
+      toast(t("Couldn't complete the action"));
+    }
   }
 
   /** Closes, fetches the songs, and runs the action (with toast on failure). */
@@ -355,6 +371,9 @@ export function MediaMenuSheet() {
             {hasDownloads ? (
               <Action icon="save-outline" label={t('Export')} onPress={() => void askExport()} />
             ) : null}
+            {playlist && local ? (
+              <Action icon="document-text-outline" label={t('Export as M3U')} onPress={() => void exportM3u()} />
+            ) : null}
             {/* Moved here from the header row, which had grown to four icons for
                 something used now and then. Covers the long press on a card too,
                 which never had it. */}
@@ -375,7 +394,7 @@ export function MediaMenuSheet() {
             {album ? (
               <Action
                 icon="film-outline"
-                label={t('Animated artwork')}
+                label={t('Animated cover')}
                 onPress={() => {
                   dismiss(() => {
                     closeNow();

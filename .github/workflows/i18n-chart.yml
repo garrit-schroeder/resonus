@@ -1,0 +1,42 @@
+name: Translation chart
+
+# Publishes the README's chart to a branch of its own, replaced on every run, so
+# main gets no bot commits.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/i18n/locales/**'
+      - 'src/i18n/context.jsonc'
+      - 'scripts/i18n-chart.mjs'
+      - 'scripts/i18n-lib.mjs'
+      - '.github/workflows/i18n-chart.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: i18n-chart
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: node scripts/i18n-chart.mjs "$RUNNER_TEMP/translations.svg"
+      - name: Replace the i18n-status branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan i18n-status
+          git rm -rfq .
+          cp "$RUNNER_TEMP/translations.svg" .
+          git add translations.svg
+          git commit -qm "Translation chart for ${GITHUB_SHA::7}"
+          git push --force origin i18n-status

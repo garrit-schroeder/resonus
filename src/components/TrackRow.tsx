@@ -8,6 +8,7 @@ import ReanimatedSwipeable, {
   type SwipeableMethods,
 } from 'react-native-gesture-handler/ReanimatedSwipeable';
 import Reanimated, { useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
+import { useReorderableDrag } from 'react-native-reorderable-list';
 
 import { COVER, songCoverUrl, star } from '@/api/data';
 import { episodeHeart, heartedSong, NO_FAVORITES, togglePodcastHeart } from '@/api/podcasts';
@@ -63,7 +64,7 @@ interface Props {
    *  one of the new arrivals: the words a listener needs to pick an episode out
    *  of a feed. Absent for albums, playlists and search.
    */
-  episode?: { description?: string; publishedAt?: number; fresh?: boolean };
+  episode?: { description?: string; publishedAt?: number; fresh?: boolean; played?: boolean };
   /** Shows the ⋯ menu button (default true; works offline too). */
   showMenu?: boolean;
   /** Shows the mini album cover on the left (Spotify style). */
@@ -82,6 +83,23 @@ interface Props {
   /** Press start (before onPress/onLongPress); used by the list to discard the
    *  onPress that follows the long-press to enter selection. */
   onPressIn?: () => void;
+  /**
+   * The grip a row shows at its right edge, on a list whose rows answer a hold
+   *  by travelling: it is what says the row can travel, where the ⋯ used to be
+   *  — selection takes that away, so nothing on the row shifts when the grip
+   *  takes its place. Coming down on it arms the drag right away, without the
+   *  wait a hold on the row itself has to earn before it counts as one, and the
+   *  row keeps answering a hold for the same drag: the grip is the shorter way
+   *  into one gesture, and the wider row is what a hand aims at.
+   */
+  grip?: boolean;
+  /**
+   * The arm itself, made where the row is mounted: the library's drag handler
+   *  belongs to the cell the row sits in, which only the cell's own render can
+   *  read (see `DragTrackRow`). Used for the grip's touchdown and, while `grip`
+   *  is set, for a hold on the row.
+   */
+  dragHold?: () => void;
 }
 
 /** Swipe strip icon according to the configured action. */
@@ -145,6 +163,8 @@ function TrackRowBase({
   onPressIn,
   podcastFavIds,
   episode,
+  grip,
+  dragHold,
 }: Props) {
   bump('render · TrackRow');
   const openMenu = useSongMenu((s) => s.open);
@@ -210,6 +230,7 @@ function TrackRowBase({
     [
       song.duration ? formatDuration(song.duration) : null,
       episode.publishedAt ? formatEpisodeDate(episode.publishedAt, lang) : null,
+      episode.played ? t('Played') : null,
     ].filter(Boolean).join(' · ');
 
   // Swipe right = configurable action (Spotify-style gesture). The row returns
@@ -284,7 +305,9 @@ function TrackRowBase({
       }}
       onPressOut={press.onPressOut}
       onPress={unavailable && !selecting ? () => toast(t('Not available offline')) : onPress}
-      onLongPress={onLongPress}
+      // A row that carries the grip answers a hold by arming the drag; the rest
+      // answer the caller's hold (`onLongPress`: entering selection).
+      onLongPress={grip ? dragHold : onLongPress}
     >
       {selecting ? (
         <Icon
@@ -463,6 +486,25 @@ function TrackRowBase({
           <Icon name="ellipsis-horizontal" size={18} color={colors.textSecondary} />
         </Pressable>
       ) : null}
+      {/* The grip a row answers a hold with, on a list whose rows travel: it
+          sits where the ⋯ used to be, which selection already took away, so the
+          row's furniture stays put. Coming down on it arms the drag at once;
+          the whole row keeps answering a hold for the same drag, which is what
+          the handle is drawn for — a row that can travel says so instead of
+          being a row to read and guess. */}
+      {grip ? (
+        <Pressable
+          hitSlop={8}
+          // Every other grip in the app says what it is to a screen reader, and
+          //  the row itself is not announced as a button: an unlabelled extra
+          //  hit target beside the row is a thing an AT user finds by accident.
+          accessibilityRole="button"
+          accessibilityLabel={t('Reorder')}
+          onPressIn={dragHold}
+        >
+          <Icon name="reorder-two" size={22} color={colors.textSecondary} />
+        </Pressable>
+      ) : null}
     </AnimatedPressable>
   );
 
@@ -540,11 +582,41 @@ function propsEqual(a: Props, b: Props): boolean {
     a.podcastFavIds === b.podcastFavIds &&
     a.episode === b.episode &&
     !!a.onLongPress === !!b.onLongPress &&
+    a.grip === b.grip &&
+    !!a.dragHold === !!b.dragHold &&
     sameMenuContext(a.menuContext, b.menuContext)
   );
 }
 
 export const TrackRow = memo(TrackRowBase, propsEqual);
+
+/**
+ * The same row, for a list whose rows can be dragged to new places: a hold on
+ * it arms the list's own pan instead of leaving the finger where it came down,
+ * and the row keeps answering a tap with its mark. It has to be a component of
+ * its own because the library's drag handle comes from the cell's context, which
+ * only a component's render can see. Not `memo`ized like the plain row: the
+ * handle belongs to the cell the row sits in *now*, and a row that has travelled
+ * to another place must answer with the new one, not with the render the
+ * previous place cached. The row inside it still memoizes itself, so what a
+ * repaint costs is this wrapper.
+ */
+export function DragTrackRow(props: Props) {
+  const drag = useReorderableDrag();
+  const arm = () => {
+    haptic('medium');
+    drag();
+  };
+  // The row hands over the arm; which press answers with it is the row's own
+  //  call - `TrackRowBase` arms with it for the grip's touchdown and for a hold
+  //  only while the row carries the grip, and otherwise answers the caller's
+  //  `onLongPress` (entering selection). One engine is on screen either way, so
+  //  the two decisions belong to the row and not to the list under the finger.
+  //  What the arm did to the list is not the row's to report: the engine says
+  //  when a drag really started (see `dragStarted`), which is also the moment
+  //  the app had to leave before an arm it refused.
+  return <TrackRow {...props} dragHold={arm} />;
+}
 
 /** Its own component so only the playing row reads the cover corner. */
 function ArtworkPlaying() {

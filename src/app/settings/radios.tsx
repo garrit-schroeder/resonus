@@ -1,5 +1,5 @@
 /**
- * Settings › Appearance › Home › Radios: the artist radios as a whole.
+ * Settings › Navigation › Radios: the artist radios as a whole.
  *
  * Off at the top means off everywhere: no shelf, no radio in the menus, and
  * nothing built or asked for in the background. Below it, how many radios
@@ -7,13 +7,12 @@
  * radios come with pulling Home to refresh, so there is no button for it.
  */
 import { useQueryClient } from '@tanstack/react-query';
-import { ScrollView } from 'react-native';
 
 import {
   SelectList,
   SettingsGroup,
   SettingsPage,
-  settingsStyles,
+  SettingsScroll,
   SwitchList,
 } from '@/components/SettingsUI';
 import { useT } from '@/i18n';
@@ -31,12 +30,10 @@ export default function RadiosSettings() {
   const setEnabled = useSettings((s) => s.setRadiosEnabled);
   const count = useSettings((s) => s.radioCount);
   const setCount = useSettings((s) => s.setRadioCount);
-  const endless = useSettings((s) => s.radioEndless);
-  const setEndless = useSettings((s) => s.setRadioEndless);
 
   return (
     <SettingsPage title={t('Radios')}>
-      <ScrollView contentContainerStyle={settingsStyles.content}>
+      <SettingsScroll>
         <SettingsGroup>
           <SwitchList
             options={[
@@ -67,19 +64,9 @@ export default function RadiosSettings() {
                   .catch(() => {});
               }}
             />
-            <SwitchList
-              options={[
-                {
-                  label: t('Keep playing when a radio ends'),
-                  description: t('When its songs run out, another round from the same artists.'),
-                  value: endless,
-                  onChange: setEndless,
-                },
-              ]}
-            />
           </SettingsGroup>
         ) : null}
-      </ScrollView>
+      </SettingsScroll>
     </SettingsPage>
   );
 }

@@ -39,6 +39,8 @@ class JsProxyPlayer : SimpleBasePlayer(Looper.getMainLooper()) {
   // collection. nowPlaying is still the authority on the metadata: it can carry
   // a more refined version of queue[index].
   @Volatile private var queue: List<NowPlaying> = emptyList()
+  private data class QueueItemUid(val mediaId: String, val occurrence: Int)
+  private var queueUids: List<QueueItemUid> = emptyList()
   @Volatile private var currentIndex: Int = 0
   @Volatile private var playing: Boolean = false
   @Volatile private var positionMs: Long = 0L
@@ -103,6 +105,15 @@ class JsProxyPlayer : SimpleBasePlayer(Looper.getMainLooper()) {
   }
 
   fun applyQueue(items: List<NowPlaying>, index: Int) = runOnMain {
+    // Count across the whole queue, before taking the car's moving window.
+    // A song may legitimately appear twice. A typed key avoids collisions
+    // between a repeated ID and a real ID containing a suffix such as "#1".
+    val occurrences = HashMap<String, Int>()
+    queueUids = items.map { item ->
+      val occurrence = occurrences[item.id] ?: 0
+      occurrences[item.id] = occurrence + 1
+      QueueItemUid(item.id, occurrence)
+    }
     queue = items
     currentIndex = index.coerceIn(0, (items.size - 1).coerceAtLeast(0))
     if (items.isNotEmpty()) {
@@ -168,7 +179,8 @@ class JsProxyPlayer : SimpleBasePlayer(Looper.getMainLooper()) {
     for ((i, item) in source.withIndex()) {
       val isCurrent = i == activeIndex
       val embed = isCurrent || artBudget > 0
-      val used = item.toMediaItemDataInto(builder, embed)
+      val uid = if (full) queueUids[start + i] else QueueItemUid(item.id, 0)
+      val used = item.toMediaItemDataInto(builder, uid, embed)
       if (!isCurrent) artBudget -= used
     }
     val items = builder.build()
@@ -214,6 +226,7 @@ class JsProxyPlayer : SimpleBasePlayer(Looper.getMainLooper()) {
   // transaction; with [embed] false the cover falls back to its uri.
   private fun NowPlaying.toMediaItemDataInto(
     out: ImmutableList.Builder<MediaItemData>,
+    uid: QueueItemUid,
     embed: Boolean,
   ): Int {
     val metadata = MediaMetadata.Builder()
@@ -229,7 +242,7 @@ class JsProxyPlayer : SimpleBasePlayer(Looper.getMainLooper()) {
       .setMediaMetadata(metadata.build())
       .build()
     out.add(
-      MediaItemData.Builder(id)
+      MediaItemData.Builder(uid)
         .setMediaItem(mi)
         .setDurationUs(if (durationMs > 0) durationMs * 1000 else C.TIME_UNSET)
         .build()

@@ -20,36 +20,24 @@
  * existed was reading TRANSLATING.md and hoping it was up to date.
  */
 import {
+  analyze,
   baseKey,
   describe,
   en,
   enKeys,
   keepEnglish,
-  loadLocale,
   meaning,
   locales,
   notes,
   callSites,
+  todoKeys,
 } from './i18n-lib.mjs';
 
 const sites = callSites();
-/** Strings that are meant to stay in English are nobody's work. */
-const todoKeys = enKeys.filter((k) => !keepEnglish.has(k));
-
 /** Every `t('Base::context')` used in the source, so the report can offer them. */
 const contextKeys = [...sites.keys()]
   .filter((k) => k.includes('::') && baseKey(k) in en)
   .sort();
-
-function analyze(code) {
-  const dict = loadLocale(code);
-  const keys = new Set(Object.keys(dict));
-  const missing = todoKeys.filter((k) => !keys.has(k));
-  const same = todoKeys.filter((k) => keys.has(k) && dict[k] === en[k]);
-  const stale = Object.keys(dict).filter((k) => !(baseKey(k) in en));
-  const translated = todoKeys.length - missing.length - same.length;
-  return { code, dict, missing, same, stale, translated };
-}
 
 // Parse args: optional `--todo` flag and an optional locale code.
 const args = process.argv.slice(2);

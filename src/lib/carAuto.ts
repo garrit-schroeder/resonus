@@ -79,6 +79,25 @@ export interface PlayEvent {
   parentId?: string;
 }
 
+export interface BrowseEvent {
+  requestId: string;
+  parentId: string;
+  profile: string;
+}
+
+export function onBrowse(cb: (e: BrowseEvent) => void): { remove: () => void } | undefined {
+  return native?.addListener('browse', cb);
+}
+
+/** Subscribe before enabling delivery, so a car request during startup is not lost. */
+export function setBrowseReady(ready: boolean): void {
+  native?.setBrowseReady(ready);
+}
+
+export function completeBrowse(requestId: string, tree: CarTree | null): void {
+  native?.completeBrowse(requestId, tree ? JSON.stringify(tree) : null);
+}
+
 export function setNodes(tree: CarTree): void {
   native?.setNodes(JSON.stringify(tree));
 }

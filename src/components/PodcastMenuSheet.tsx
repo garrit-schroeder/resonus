@@ -19,13 +19,16 @@ import { router, usePathname } from 'expo-router';
 import Icon from '@/components/Icon';
 import { Cover } from '@/components/Cover';
 import { Dialog } from './Dialog';
+import { PodcastDownloadDialog } from './PodcastDownloadDialog';
 import { SheetModal } from './SheetModal';
 import { COVER, coverArtUrl, type Song } from '@/api/data';
 import {
   episodeToSong,
   feedErrorMessage,
   refreshChannel,
+  addChannel,
   removeChannel,
+  setChannelAutoDownload,
   listAllEpisodes,
   downloadedForChannel,
   podcastCover,
@@ -37,7 +40,11 @@ import { isManualOffline } from '@/api/netGate';
 import { useT } from '@/i18n';
 import { formatAge } from '@/lib/format';
 import { invalidatePodcastCaches, invalidatePodcastFavorites } from '@/lib/query';
-import { usePodcastFavoriteIds } from '@/lib/podcastFavorites';
+import {
+  usePodcastAddedIds,
+  usePodcastAutoDownloadIds,
+  usePodcastFavoriteIds,
+} from '@/lib/podcastFavorites';
 import { useDownloads } from '@/store/downloads';
 import { usePlayerStore } from '@/store/player';
 import { useToast } from '@/store/toast';
@@ -55,11 +62,12 @@ export function PodcastMenuSheet() {
   const toast = useToast((s) => s.show);
   // The show's heart, read from the same SQLite set every surface asks for.
   const favIds = usePodcastFavoriteIds();
+  const addedIds = usePodcastAddedIds();
+  const autoDownloadIds = usePodcastAutoDownloadIds();
   // Playback too: a show in the Library has no play button, and this sheet is
   // the way into one (as the album's has Play for the same reason).
   const playQueue = usePlayerStore((s) => s.playQueue);
   const queueMany = usePlayerStore((s) => s.queueMany);
-  const downloadPodcast = useDownloads((s) => s.downloadPodcast);
   const deletePodcastChannelDownloads = useDownloads(
     (s) => s.deletePodcastChannelDownloads,
   );
@@ -67,6 +75,7 @@ export function PodcastMenuSheet() {
   const openRef = useRef<() => void>(() => {});
   const [target, setTarget] = useState<PodcastChannel | null>(null);
   const [removing, setRemoving] = useState<PodcastChannel | null>(null);
+  const [confirming, setConfirming] = useState<PodcastChannel | null>(null);
   const pathname = usePathname();
 
   useEffect(() => {
@@ -188,13 +197,7 @@ export function PodcastMenuSheet() {
                 toast(t("You're offline"));
                 return;
               }
-              void (async () => {
-                try {
-                  await downloadPodcast(ch.id);
-                } catch {
-                  toast(t("Couldn't complete the action"));
-                }
-              })();
+              setConfirming(ch);
             })}
 
             {row(
@@ -223,6 +226,13 @@ export function PodcastMenuSheet() {
                 })
               : null}
 
+            {!addedIds.has(ch.id)
+              ? row('add', t('Add podcast'), () => {
+                  close();
+                  addChannel(ch.id).catch(() => toast(t("Couldn't complete the action")));
+                })
+              : null}
+
             {/* Where the show lives: its heart, filed in SQLite — the same heart
                 the show's screen lights, so a show can be kept from wherever it
                 was opened, as the album's sheet does with «Add to favorites». It
@@ -240,6 +250,19 @@ export function PodcastMenuSheet() {
                     toast(t("Couldn't complete the action"));
                   }
                 })();
+              },
+            )}
+
+            {/* The latest 3 of each new batch, over Wi-Fi only. */}
+            {row(
+              autoDownloadIds.has(ch.id) ? 'cloud-done' : 'cloud-download-outline',
+              t('Download new episodes'),
+              () => {
+                const on = !autoDownloadIds.has(ch.id);
+                close();
+                setChannelAutoDownload(ch.id, on)
+                  .then(() => toast(on ? t('Auto-download on') : t('Auto-download off')))
+                  .catch(() => toast(t("Couldn't complete the action")));
               },
             )}
 
@@ -277,6 +300,7 @@ export function PodcastMenuSheet() {
         );
       }}
       </SheetModal>
+      <PodcastDownloadDialog channel={confirming} onClose={() => setConfirming(null)} />
       <Dialog
         visible={!!removing}
         title={t('Remove from this device')}

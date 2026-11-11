@@ -1,19 +1,17 @@
-/** Settings › Appearance: language, theme, song lists and interface. */
+/** Settings › Appearance: language, theme, font, corners, and what lists and album pages show. */
 import { useRouter } from 'expo-router';
-import { ScrollView, Text } from 'react-native';
+import { Text } from 'react-native';
 
 import {
   SelectList,
   SettingRow,
   SettingsGroup,
   SettingsPage,
+  SettingsScroll,
   settingsStyles,
   SwitchList,
 } from '@/components/SettingsUI';
-import { canBlurBars } from '@/components/BarBlur';
-import { useLocalProfile } from '@/hooks/useLocalProfile';
 import { useT } from '@/i18n';
-import { haptic } from '@/lib/haptics';
 import { useAuthStore } from '@/store/auth';
 import { useTheme, type BorderStyle } from '@/theme';
 import {
@@ -21,7 +19,6 @@ import {
   LANGUAGE_NAMES,
   useSettings,
   type CoverCorners,
-  type DefaultTab,
   type SwipeAction,
 } from '@/store/settings';
 
@@ -31,19 +28,6 @@ export default function AppearanceSettings() {
   useTheme();
   const router = useRouter();
   const t = useT();
-  // The folders tab only exists with a Subsonic server (see library).
-  const offline = useAuthStore((s) => s.offline);
-  const local = useLocalProfile();
-  const serverType = useAuthStore((s) => s.auth?.serverType);
-  // Jellyfin has no folder tree to browse, so for that server the setting does
-  // not exist at all. Offline it exists and is simply out of reach, which is a
-  // different thing and reads as one: greyed out, where it always was (#114).
-  // The local profile is the first case, not the second: the tab reads folders
-  // off a Subsonic server and there is none, so the switch would be promising a
-  // tab that cannot appear. (The phone's music does live in folders, and
-  // browsing them is a thing worth having — but it is a thing to build, not a
-  // switch to un-grey: `getMusicDirectory` has no local side.)
-  const canBrowseFolders = !local && (offline || serverType !== 'jellyfin');
   const language = useSettings((s) => s.language);
   const themeMode = useSettings((s) => s.themeMode);
   const themeModeLabel = {
@@ -52,37 +36,47 @@ export default function AppearanceSettings() {
     light: t('Light'),
     schedule: t('Scheduled'),
   }[themeMode];
-  const alwaysShowTabs = useSettings((s) => s.alwaysShowTabs);
-  const setAlwaysShowTabs = useSettings((s) => s.setAlwaysShowTabs);
-  const showTabLabels = useSettings((s) => s.showTabLabels);
-  const setShowTabLabels = useSettings((s) => s.setShowTabLabels);
-  const showPlayingElsewhere = useSettings((s) => s.showPlayingElsewhere);
-  const setShowPlayingElsewhere = useSettings((s) => s.setShowPlayingElsewhere);
-  const blurBars = useSettings((s) => s.blurBars);
-  const setBlurBars = useSettings((s) => s.setBlurBars);
-  const navBarStyle = useSettings((s) => s.navBarStyle);
-  const setNavBarStyle = useSettings((s) => s.setNavBarStyle);
-  const defaultTab = useSettings((s) => s.defaultTab);
-  const setDefaultTab = useSettings((s) => s.setDefaultTab);
-  const libraryShowsPlaylists = useSettings((s) => s.libraryShowsPlaylists);
-  const setLibraryShowsPlaylists = useSettings((s) => s.setLibraryShowsPlaylists);
-  const swipeAction = useSettings((s) => s.swipeAction);
-  const setSwipeAction = useSettings((s) => s.setSwipeAction);
-  const swipeLeftAction = useSettings((s) => s.swipeLeftAction);
-  const setSwipeLeftAction = useSettings((s) => s.setSwipeLeftAction);
-  const showFolderBrowser = useSettings((s) => s.showFolderBrowser);
-  const setShowFolderBrowser = useSettings((s) => s.setShowFolderBrowser);
-  const hapticsEnabled = useSettings((s) => s.hapticsEnabled);
-  const setHapticsEnabled = useSettings((s) => s.setHapticsEnabled);
   const appFont = useSettings((s) => s.appFont);
   const coverCorners = useSettings((s) => s.coverCorners);
   const setCoverCorners = useSettings((s) => s.setCoverCorners);
   const borderStyle = useSettings((s) => s.borderStyle);
   const setBorderStyle = useSettings((s) => s.setBorderStyle);
+  // Same rule as the player's rating row: no ratings on Jellyfin or locally.
+  const canRate = useAuthStore((s) => !!s.auth && s.auth.serverType !== 'jellyfin');
+  const showListArtwork = useSettings((s) => s.showListArtwork);
+  const setShowListArtwork = useSettings((s) => s.setShowListArtwork);
+  const showSongDuration = useSettings((s) => s.showSongDuration);
+  const setShowSongDuration = useSettings((s) => s.setShowSongDuration);
+  const showListRating = useSettings((s) => s.showListRating);
+  const setShowListRating = useSettings((s) => s.setShowListRating);
+  const showExplicitTag = useSettings((s) => s.showExplicitTag);
+  const setShowExplicitTag = useSettings((s) => s.setShowExplicitTag);
+  const showPlaylistDescription = useSettings((s) => s.showPlaylistDescription);
+  const setShowPlaylistDescription = useSettings((s) => s.setShowPlaylistDescription);
+  const showArtistPhoto = useSettings((s) => s.showArtistPhoto);
+  const setShowArtistPhoto = useSettings((s) => s.setShowArtistPhoto);
+  const showDiscHeaders = useSettings((s) => s.showDiscHeaders);
+  const setShowDiscHeaders = useSettings((s) => s.setShowDiscHeaders);
+  const showGenreChips = useSettings((s) => s.showGenreChips);
+  const setShowGenreChips = useSettings((s) => s.setShowGenreChips);
+  const albumFullBleed = useSettings((s) => s.albumFullBleed);
+  const setAlbumFullBleed = useSettings((s) => s.setAlbumFullBleed);
+  const swipeAction = useSettings((s) => s.swipeAction);
+  const setSwipeAction = useSettings((s) => s.setSwipeAction);
+  const swipeLeftAction = useSettings((s) => s.swipeLeftAction);
+  const setSwipeLeftAction = useSettings((s) => s.setSwipeLeftAction);
+
+  const swipeOptions: { value: SwipeAction; label: string }[] = [
+    { value: 'off', label: t('Off') },
+    { value: 'queue', label: t('Add to queue') },
+    { value: 'next', label: t('Play next') },
+    { value: 'favorite', label: t('Add to favorites') },
+    { value: 'menu', label: t('More options') },
+  ];
 
   return (
     <SettingsPage title={t('Appearance')}>
-      <ScrollView contentContainerStyle={settingsStyles.content}>
+      <SettingsScroll>
         <SettingsGroup>
           <SettingRow
             label={t('Language')}
@@ -113,7 +107,7 @@ export default function AppearanceSettings() {
             onChange={setCoverCorners}
           />
           <SelectList<BorderStyle>
-            label={t('Border radius')}
+            label={t('Corners')}
             description={t('Round corners everywhere, or flatter ones')}
             options={[
               { value: 'round', label: t('Round') },
@@ -124,201 +118,84 @@ export default function AppearanceSettings() {
           />
         </SettingsGroup>
 
-        {/* Under its own heading, where the seven switches used to be, and not
-            up with the language and the theme: it is its own thing and reads
-            like one. */}
-        <Text style={settingsStyles.sectionTitle}>{t('Song lists')}</Text>
-        <SettingRow
-          label={t('Song lists')}
-          chevron
-          onPress={() => router.push('/settings/song-lists')}
+        <Text style={settingsStyles.sectionTitle}>{t('Lists')}</Text>
+        <SwitchList
+          options={[
+            {
+              label: t('Show artwork'),
+              value: showListArtwork,
+              onChange: setShowListArtwork,
+            },
+            {
+              label: t('Show song duration'),
+              value: showSongDuration,
+              onChange: setShowSongDuration,
+            },
+            ...(canRate
+              ? [
+                  {
+                    label: t('Show rating'),
+                    value: showListRating,
+                    onChange: setShowListRating,
+                  },
+                ]
+              : []),
+            {
+              label: t('Show explicit tag'),
+              value: showExplicitTag,
+              onChange: setShowExplicitTag,
+            },
+            {
+              label: t('Show description'),
+              value: showPlaylistDescription,
+              onChange: setShowPlaylistDescription,
+            },
+          ]}
         />
 
-        <Text style={settingsStyles.sectionTitle}>{t('Navigation')}</Text>
-        <SettingsGroup>
-          <SwitchList
-            options={[
-              {
-                label: t('Always show the navigation bar'),
-                value: alwaysShowTabs,
-                onChange: setAlwaysShowTabs,
-              },
-              {
-                label: t('Show tab names'),
-                value: showTabLabels,
-                onChange: setShowTabLabels,
-              },
-            ]}
-          />
-          <SettingRow
-            label={t('Navigation bar')}
-            chevron
-            onPress={() => router.push('/settings/navigation-bar')}
-          />
-          {/* One choice for what fills the bar. Underneath it is still the
-              blur switch and the style, so what anyone had saved holds. Blur
-              is offered where the system draws it: Android 12 on, since
-              before that there is only a tint, which was tried and dropped
-              (b8bb8b1). */}
-          <SelectList<'solid' | 'blur' | 'gradient'>
-            label={t('Navigation bar style')}
-            options={[
-              { value: 'solid', label: t('Solid') },
-              ...(canBlurBars ? [{ value: 'blur' as const, label: t('Blur') }] : []),
-              { value: 'gradient', label: t('Gradient') },
-            ]}
-            value={
-              navBarStyle === 'gradient' ? 'gradient' : blurBars && canBlurBars ? 'blur' : 'solid'
-            }
-            onChange={(v) => {
-              setNavBarStyle(v === 'gradient' ? 'gradient' : 'solid');
-              if (v !== 'gradient') setBlurBars(v === 'blur');
-            }}
-          />
-        </SettingsGroup>
+        <Text style={settingsStyles.sectionTitle}>{t('Album pages')}</Text>
+        <SwitchList
+          options={[
+            {
+              label: t('Show artist photo'),
+              value: showArtistPhoto,
+              onChange: setShowArtistPhoto,
+            },
+            {
+              label: t('Show disc titles'),
+              value: showDiscHeaders,
+              onChange: setShowDiscHeaders,
+            },
+            {
+              label: t('Show genres'),
+              value: showGenreChips,
+              onChange: setShowGenreChips,
+            },
+            {
+              label: t('Full-bleed album artwork'),
+              description: t('The cover takes the full width and fades into the page.'),
+              value: albumFullBleed,
+              onChange: setAlbumFullBleed,
+            },
+          ]}
+        />
 
-        <Text style={settingsStyles.sectionTitle}>{t('Explore')}</Text>
-        <SettingsGroup>
-          <SettingRow
-            label={t('Explore sections')}
-            chevron
-            onPress={() => router.push('/settings/explore-sections')}
-          />
-          {/* Guarded as a whole, not with a spread inside the list: SwitchList
-              always draws its card, so an empty array left a blank box. */}
-          {canBrowseFolders ? (
-            <SwitchList
-              options={[
-                {
-                  label: t('Folder browsing'),
-                  value: showFolderBrowser,
-                  onChange: setShowFolderBrowser,
-                  disabled: offline,
-                },
-              ]}
-            />
-          ) : null}
-        </SettingsGroup>
-
-        <Text style={settingsStyles.sectionTitle}>{t('Home')}</Text>
-        <SettingsGroup>
-          <SwitchList
-            options={[
-              {
-                label: t('Playing on other devices'),
-                description: t(
-                  'At the top of Home, what is playing in your other apps and devices, ready to carry on here.',
-                ),
-                value: showPlayingElsewhere,
-                onChange: setShowPlayingElsewhere,
-              },
-            ]}
-          />
-          <SettingRow
-            label={t('Home buttons')}
-            chevron
-            onPress={() => router.push('/settings/home-buttons')}
-          />
-
-          <SettingRow
-            label={t('Quick grid')}
-            chevron
-            onPress={() => router.push('/settings/quick-grid')}
-          />
-
-          <SettingRow
-            label={t('Home chips')}
-            chevron
-            onPress={() => router.push('/settings/home-chips')}
-          />
-
-          <SettingRow
-            label={t('Home sections')}
-            chevron
-            onPress={() => router.push('/settings/home-sections')}
-          />
-
-          <SettingRow
-            label={t('Radios')}
-            chevron
-            onPress={() => router.push('/settings/radios')}
-          />
-
-          <SettingRow
-            label={t('Greeting')}
-            chevron
-            onPress={() => router.push('/settings/greeting')}
-          />
-        </SettingsGroup>
-
-        <Text style={settingsStyles.sectionTitle}>{t('Interface')}</Text>
-        <SettingsGroup>
-          <SelectList<DefaultTab>
-            label={t('Open the app on')}
-            options={[
-              { value: 'index', label: t('Home') },
-              { value: 'search', label: t('Search') },
-              { value: 'explore', label: t('Explore') },
-              { value: 'library', label: t('Your library') },
-            ]}
-            value={defaultTab}
-            onChange={setDefaultTab}
-          />
-          <SwitchList
-            options={[
-              {
-                label: t('Start on your playlists'),
-                description: t(
-                  'With no chip pressed, Your library shows Favorites and your playlists instead of everything mixed together.',
-                ),
-                value: libraryShowsPlaylists,
-                onChange: setLibraryShowsPlaylists,
-              },
-            ]}
-          />
-        </SettingsGroup>
-
-        <Text style={settingsStyles.sectionTitle}>{t('Interaction')}</Text>
+        <Text style={settingsStyles.sectionTitle}>{t('Gestures')}</Text>
         <SettingsGroup>
           <SelectList<SwipeAction>
             label={t('Swipe right')}
-            options={[
-              { value: 'off', label: t('Off') },
-              { value: 'queue', label: t('Add to queue') },
-              { value: 'next', label: t('Play next') },
-              { value: 'favorite', label: t('Add to favorites') },
-              { value: 'menu', label: t('More options') },
-            ]}
+            options={swipeOptions}
             value={swipeAction}
             onChange={setSwipeAction}
           />
           <SelectList<SwipeAction>
             label={t('Swipe left')}
-            options={[
-              { value: 'off', label: t('Off') },
-              { value: 'queue', label: t('Add to queue') },
-              { value: 'next', label: t('Play next') },
-              { value: 'favorite', label: t('Add to favorites') },
-              { value: 'menu', label: t('More options') },
-            ]}
+            options={swipeOptions}
             value={swipeLeftAction}
             onChange={setSwipeLeftAction}
           />
-          <SwitchList
-            options={[
-              {
-                label: t('Haptic feedback'),
-                value: hapticsEnabled,
-                onChange: (v: boolean) => {
-                  setHapticsEnabled(v);
-                  // Vibrates on enable: immediate confirmation that it works.
-                  if (v) haptic('medium');
-                },
-              },
-            ]}
-          />
         </SettingsGroup>
-      </ScrollView>
+      </SettingsScroll>
     </SettingsPage>
   );
 }

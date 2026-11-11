@@ -13,19 +13,21 @@
  * Settings › Player.
  */
 import { useRouter } from 'expo-router';
-import { Platform, ScrollView, Text } from 'react-native';
+import { Platform, Text } from 'react-native';
 
 import {
   SelectList,
   SettingRow,
   SettingsGroup,
   SettingsPage,
+  SettingsScroll,
   settingsStyles,
   SliderRow,
   SwitchList,
 } from '@/components/SettingsUI';
 import { useLocalProfile } from '@/hooks/useLocalProfile';
 import { useT } from '@/i18n';
+import { discordPresenceSupported } from '@/lib/discordPresence';
 import { useAuthStore } from '@/store/auth';
 import { useTheme } from '@/theme';
 import {
@@ -43,6 +45,7 @@ export default function PlaybackSettings() {
   const t = useT();
   const router = useRouter();
   const offline = useAuthStore((s) => s.offline);
+  const serverType = useAuthStore((s) => s.auth?.serverType);
   const local = useLocalProfile();
   const maxBitRate = useSettings((s) => s.maxBitRate);
   const setMaxBitRate = useSettings((s) => s.setMaxBitRate);
@@ -54,6 +57,9 @@ export default function PlaybackSettings() {
   const setStreamFormatCellular = useSettings((s) => s.setStreamFormatCellular);
   const streamLosslessOnly = useSettings((s) => s.streamLosslessOnly);
   const setStreamLosslessOnly = useSettings((s) => s.setStreamLosslessOnly);
+  const radiosEnabled = useSettings((s) => s.radiosEnabled);
+  const radioEndless = useSettings((s) => s.radioEndless);
+  const setRadioEndless = useSettings((s) => s.setRadioEndless);
   const autoplaySimilar = useSettings((s) => s.autoplaySimilar);
   const syncQueueFromServer = useSettings((s) => s.syncQueueFromServer);
   const setSyncQueueFromServer = useSettings((s) => s.setSyncQueueFromServer);
@@ -74,6 +80,8 @@ export default function PlaybackSettings() {
   const batteryWarning = useSettings((s) => s.batteryWarning);
   const setBatteryWarning = useSettings((s) => s.setBatteryWarning);
   const setKeepScreenAwake = useSettings((s) => s.setKeepScreenAwake);
+  const discordPresence = useSettings((s) => s.discordPresence);
+  const setDiscordPresence = useSettings((s) => s.setDiscordPresence);
 
   // Only "Original" is a word; the rest are a number and a unit that read the
   // same in every language.
@@ -88,7 +96,7 @@ export default function PlaybackSettings() {
 
   return (
     <SettingsPage title={t('Quality & playback')}>
-      <ScrollView contentContainerStyle={settingsStyles.content}>
+      <SettingsScroll>
         {/* Nothing here exists without a server to stream from, so the local
             profile does not get the section at all: it is the one profile where
             these will never do anything (see `useLocalProfile`). Everything
@@ -128,6 +136,9 @@ export default function PlaybackSettings() {
                 options={[
                   {
                     label: t('Preload upcoming tracks'),
+                    description: t(
+                      'Asks the server for the next songs ahead of time, for slow servers and proxies. Nothing is kept on the phone.',
+                    ),
                     value: preloadUpcoming,
                     onChange: setPreloadUpcoming,
                     disabled: offline,
@@ -223,6 +234,11 @@ export default function PlaybackSettings() {
             heading that sticks to the header wants no margin above it. */}
         <Text style={[settingsStyles.sectionTitle, local && { marginTop: 0 }]}>{t('Sound')}</Text>
         <SettingsGroup>
+          <SettingRow
+            label={t('Equalizer')}
+            chevron
+            onPress={() => router.push('/settings/equalizer')}
+          />
           <SliderRow
             label={t('Crossfade')}
             value={crossfadeSec}
@@ -260,11 +276,6 @@ export default function PlaybackSettings() {
               onChange={setReplayGainPreampDb}
             />
           )}
-          <SettingRow
-            label={t('Equalizer')}
-            chevron
-            onPress={() => router.push('/settings/equalizer')}
-          />
         </SettingsGroup>
 
         <Text style={settingsStyles.sectionTitle}>{t('Playback')}</Text>
@@ -282,18 +293,35 @@ export default function PlaybackSettings() {
                   onChange: setAutoplaySimilar,
                   disabled: offline,
                 },
-                {
-                  label: t('Pick up the queue from other players'),
-                  description: t(
-                    'On opening with nothing playing, take the newer queue another player left on the server.',
-                  ),
-                  value: syncQueueFromServer,
-                  onChange: setSyncQueueFromServer,
-                  disabled: offline,
-                },
+                // Jellyfin keeps no queue on the server.
+                ...(serverType === 'jellyfin'
+                  ? []
+                  : [
+                      {
+                        label: t('Pick up the queue from other players'),
+                        description: t(
+                          'On opening with nothing playing, take the newer queue another player left on the server.',
+                        ),
+                        value: syncQueueFromServer,
+                        onChange: setSyncQueueFromServer,
+                        disabled: offline,
+                      },
+                    ]),
               ]}
             />
           )}
+          {radiosEnabled ? (
+            <SwitchList
+              options={[
+                {
+                  label: t('Keep playing when a radio ends'),
+                  description: t('When its songs run out, another round from the same artists.'),
+                  value: radioEndless,
+                  onChange: setRadioEndless,
+                },
+              ]}
+            />
+          ) : null}
           {/* Its own screen: two sliders and a line of explanation is more than
               fits under a heading here, and it is a thing somebody sets once. */}
           <SettingRow
@@ -301,6 +329,18 @@ export default function PlaybackSettings() {
             chevron
             onPress={() => router.push('/settings/scrobbling')}
           />
+          {discordPresenceSupported() ? (
+            <SwitchList
+              options={[
+                {
+                  label: t('Show on Discord'),
+                  description: t('What you play appears on your Discord profile. Needs the Discord app on this phone.'),
+                  value: discordPresence,
+                  onChange: setDiscordPresence,
+                },
+              ]}
+            />
+          ) : null}
         </SettingsGroup>
 
         <Text style={settingsStyles.sectionTitle}>{t('System::section')}</Text>
@@ -318,7 +358,7 @@ export default function PlaybackSettings() {
             },
           ]}
         />
-      </ScrollView>
+      </SettingsScroll>
     </SettingsPage>
   );
 }

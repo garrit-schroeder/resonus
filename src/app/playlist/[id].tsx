@@ -24,7 +24,6 @@ import { BackButton } from '@/components/BackButton';
 import { Message } from '@/components/Message';
 import { PlaylistEditSheet, type PlaylistEdit } from '@/components/PlaylistEditSheet';
 import { PlaylistPickerSheet } from '@/components/PlaylistPickerSheet';
-import { PlaylistReorder } from '@/components/PlaylistReorder';
 import { SheetModal } from '@/components/SheetModal';
 import { SuggestedTracks } from '@/components/SuggestedTracks';
 import { TrackListSkeleton } from '@/components/TrackListSkeleton';
@@ -36,6 +35,7 @@ import { useServerCover } from '@/hooks/useServerCover';
 import { useSongSort } from '@/hooks/useSongSort';
 import { songsLabel, useT } from '@/i18n';
 import { formatTotalDuration } from '@/lib/format';
+import { isEditable } from '@/lib/playlistEdits';
 import { useSharePicker } from '@/store/sharePicker';
 import { useAuthStore } from '@/store/auth';
 import { useAutoDownloads } from '@/store/autoDownloads';
@@ -79,7 +79,6 @@ export default function PlaylistScreen() {
   const [confirmRemoveDl, setConfirmRemoveDl] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
   const [coverOpen, setCoverOpen] = useState(false);
-  const [reordering, setReordering] = useState(false);
   // Songs selected in selection mode pending "add to another".
   const [addingSongs, setAddingSongs] = useState<Song[] | null>(null);
 
@@ -155,6 +154,7 @@ export default function PlaylistScreen() {
     indices: playlistIndices,
     openSort,
     sortSheet,
+    sort,
     setSort,
   } = useSongSort(data?.songs ?? [], `playlist:${id}`, {
     fields: ['recent', 'added', 'alpha', 'artist', 'album', 'downloaded'],
@@ -207,23 +207,38 @@ export default function PlaylistScreen() {
     });
   }
 
-  /** Saves the new order (optimistic) and rewrites it on the server. */
+  /** The latest order waiting to be written while another write is in flight. */
+  const pendingOrder = useRef<string[] | null>(null);
+  const writingOrder = useRef(false);
+
+  /**
+   * Shows the new order now and writes it. Drops can come faster than the server
+   *  answers, so writes go one at a time and only the latest waiting one is sent;
+   *  the list is re-read only after the last, or it would snap back mid-drag.
+   */
   async function onReorderSave(songIds: string[]) {
-    setReordering(false);
-    // The view goes back to manual order so the just-made change is visible.
-    setSort({ field: 'recent', dir: 'asc' });
     const key = ['playlist', id];
+    void queryClient.cancelQueries({ queryKey: key });
     const prev = queryClient.getQueryData<{ playlist: unknown; songs: Song[] }>(key);
     if (prev) {
       const byId = new Map(prev.songs.map((s) => [s.id, s]));
       const songs = songIds.map((sid) => byId.get(sid)).filter(Boolean) as Song[];
       queryClient.setQueryData(key, { ...prev, songs });
     }
+    pendingOrder.current = songIds;
+    if (writingOrder.current) return;
+    writingOrder.current = true;
     try {
-      await reorderPlaylist(id, songIds);
+      while (pendingOrder.current) {
+        const next = pendingOrder.current;
+        pendingOrder.current = null;
+        await reorderPlaylist(id, next);
+      }
     } catch {
+      pendingOrder.current = null;
       toast(t("Couldn't complete the action"));
     } finally {
+      writingOrder.current = false;
       queryClient.invalidateQueries({ queryKey: key });
       queryClient.invalidateQueries({ queryKey: ['playlists'] });
     }
@@ -241,7 +256,38 @@ export default function PlaylistScreen() {
     toast(res.isError ? t("Couldn't complete the action") : t('Updated'));
   }
 
-  const canReorder = (data?.songs.length ?? 0) > 1 && (offline || !!auth);
+  /**
+   * Whether the list is one whose order a hand may rewrite: the write is possible
+   *  (offline counts as ours), and the list is one a hand may write to. A playlist
+   *  somebody else owns, or one the server says cannot be edited - which is how a
+   *  server's smart playlists come down, their order being the result of the rules
+   *  they were built with - has no order of yours in it: a row that travelled there
+   *  would not move one song but rewrite a list the hand does not own, or ask the
+   *  server to forget the rules it built the list from.
+   *
+   *  This decides the engine the screen runs, and the engine is a lifetime
+   *  decision: it follows the list, not what is on screen. The view is a preference
+   *  a hand changes by tapping the header's ⇅, and the songs change under a hand as
+   *  well - removing one of two, or adding one back, happens with the screen open
+   *  and halfway down - so neither of them may flip it. An engine that followed
+   *  either would swap the list under a page that is halfway down, and everything
+   *  the page paints around the rows would keep painting the scroll the list no
+   *  longer up had made. How many rows there are belongs to the other question,
+   *  where a row may answer a hold, over the rows on screen (see `dragging`).
+   */
+  const hasOrder = (offline || !!auth) && isEditable(data?.playlist, auth?.username);
+
+  /**
+   * Whether the view on screen is the order the server keeps. Dragging in an
+   *  A-Z or Recently-added view would not move one song inside the order the
+   *  server keeps - it would rewrite that order to whatever the view happens to
+   *  show, which is a sort the hand never asked for and cannot undo - so over
+   *  another view the grip is not offered. The
+   *  drag is entered with a hold on a row, or from Reorder in the ⋯ menu, which
+   *  goes back to this view first.
+   */
+  const serverOrder = sort.field === 'recent' && sort.dir === 'asc';
+  const openReorder = useRef<() => void>(() => {});
 
   /** Removes several songs (real indices) with deferred delete and undo. */
   function removeMany(indices: number[]) {
@@ -320,19 +366,6 @@ export default function PlaylistScreen() {
     );
   }
 
-  // Reordering always works on the manual order (raw server), not on the
-  // A-Z/date sorted view.
-  if (reordering) {
-    return (
-      <PlaylistReorder
-        songs={data.songs}
-        title={data.playlist.name}
-        onCancel={() => setReordering(false)}
-        onSave={(ids) => void onReorderSave(ids)}
-      />
-    );
-  }
-
   const totalSec = data.songs.reduce((acc, s) => acc + (s.duration ?? 0), 0);
   const metaParts = [t('Playlist'), songsLabel(data.songs.length, lang)];
   if (totalSec > 0) metaParts.push(formatTotalDuration(totalSec));
@@ -385,6 +418,14 @@ export default function PlaylistScreen() {
                 toast(t('Downloading…'));
               }
             : undefined,
+          // A playlist's order is the app's to rewrite, so its rows live under
+          //  the engine whose rows answer a hold by travelling: the drag surface
+          //  the ⋯ menu used to open is there under the finger instead, over the
+          //  view that is the server's order, and each drop is written (#279).
+          reorder:
+            hasOrder
+              ? { onSave: (ids) => void onReorderSave(ids), serverOrder, openRef: openReorder }
+              : undefined,
         }}
         footer={
           !offline && data.songs.length > 0 ? (
@@ -501,18 +542,6 @@ export default function PlaylistScreen() {
               <Icon name="add" size={24} color={colors.text} />
               <Text style={styles.actionText}>{t('Add to a playlist')}</Text>
             </Pressable>
-            {canReorder ? (
-              <Pressable
-                style={({ pressed }) => [styles.action, pressed && { opacity: 0.6 }]}
-                onPress={() => {
-                  close();
-                  setReordering(true);
-                }}
-              >
-                <Icon name="swap-vertical" size={24} color={colors.text} />
-                <Text style={styles.actionText}>{t('Reorder')}</Text>
-              </Pressable>
-            ) : null}
             <Pressable
               style={({ pressed }) => [styles.action, pressed && { opacity: 0.6 }]}
               onPress={() => {
@@ -523,6 +552,19 @@ export default function PlaylistScreen() {
               <Icon name="create-outline" size={24} color={colors.text} />
               <Text style={styles.actionText}>{t('Edit playlist')}</Text>
             </Pressable>
+            {hasOrder && data.songs.length > 1 ? (
+              <Pressable
+                style={({ pressed }) => [styles.action, pressed && { opacity: 0.6 }]}
+                onPress={() => {
+                  close();
+                  if (!serverOrder) setSort({ field: 'recent', dir: 'asc' });
+                  openReorder.current();
+                }}
+              >
+                <Icon name="reorder-two" size={24} color={colors.text} />
+                <Text style={styles.actionText}>{t('Reorder')}</Text>
+              </Pressable>
+            ) : null}
             {canAutoDownload ? (
               <Pressable
                 style={({ pressed }) => [styles.action, pressed && { opacity: 0.6 }]}

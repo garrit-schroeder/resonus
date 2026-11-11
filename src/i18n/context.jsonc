@@ -55,7 +55,6 @@
     // ── Settings section headers (short titles grouping toggles) ─────────────
     "Elements": "Which player elements to show",
     "Buttons": "Which player buttons to show",
-    "Interaction": "Section header grouping toggles",
     "Interface": "Section header grouping toggles",
     "Size": "The size of the quick grid tiles",
     "Sources": "Which shortcuts the quick grid shows",
@@ -121,7 +120,6 @@
     "Quick grid": "The grid of shortcut tiles on Home",
     "Home chips": "The row of tappable category chips",
     "Show chips": "A switch over the Home chips list: turns every chip on or off at once",
-    "Song lists": "The setting for how song lists look",
     "Show explicit tag": "A switch: whether to draw the E on anything carrying a parental advisory. \"Explicit\" here is the music-industry label for strong language, not \"clear\" or \"stated outright\"",
     "Home sections": "Reorder which sections appear on Home",
     "On cover double tap": "Settings > Player: what tapping the album artwork twice does",
@@ -138,7 +136,7 @@
     // ── Actions & verbs (easy to translate as the wrong part of speech) ──────
     "Rate": "Verb: give it stars. Used for a song and for an artist. Not \"bitrate\"",
     "Restore": "Restore settings to their defaults",
-    "Reorder": "Enter drag-to-reorder mode",
+    "Reorder": "Verb. In a playlist's menu, it opens the mode to drag songs to another place; also the grip icon on a row whose hold moves it",
     "Turn off": "Turn off the sleep timer",
     "Start mix": "Start an auto-generated radio mix from this song",
     "More options": "Read out by the screen reader for the three-dot button, which is ⋮ on a song row and in the player and ⋯ in a screen's header",
@@ -160,8 +158,8 @@
     "This playlist is empty": "Empty state heading",
     "The queue is empty.": "Empty state on the queue screen",
     "Your library looks empty.": "Empty state: the server answered, and had nothing",
-    "Star albums to see them here.": "The line under an empty state, saying how to fill it",
-    "Star artists to see them here.": "The line under an empty state, saying how to fill it",
+    "Favorite albums to see them here.": "The line under an empty state, saying how to fill it",
+    "Favorite artists to see them here.": "The line under an empty state, saying how to fill it",
     "Tap the heart on songs to see them here.": "The line under an empty state, saying how to fill it",
     "Songs you play will show up here.": "The line under an empty state, saying how to fill it",
     "Create your first playlist to get started.": "The line under an empty state",
@@ -223,7 +221,7 @@
     "Playlist deleted": "Toast, with an undo button",
     "Playlist updated": "Toast after saving a change",
     "Save": "The confirm button of an edit sheet. A verb",
-    "Done": "The button that leaves drag-to-reorder, or accepts a fine-tuned number",
+    "Done": "The button that accepts a fine-tuned number",
     "Remove cover": "Screen reader label for the small x on a chosen picture",
     "Visible to other users on the server": "The line under `Public playlist`",
     "Your password is needed to upload images and will be stored securely.": "The line explaining why the password is asked for again",
@@ -260,7 +258,7 @@
     "Report a bug": "Opens a new issue on GitHub",
     "Share diagnostic report": "Settings › About, under “Report a bug”: hands over a plain-text report (setup and recent playback errors) through the share sheet",
     "FAQ": "Opens the page of frequently asked questions on GitHub. Spell it out if that reads better in your language than the initials",
-    "Cache cleared": "Toast: what was remembered from the server was thrown away. Downloads are untouched",
+    "Temporary data cleared": "Toast: what was remembered from the server was thrown away. Downloads are untouched",
     "Couldn't rescan": "Toast: going through the phone's own files failed",
     "Couldn't start the scan": "Toast: the server refused to start a scan",
     "Scan started": "Toast: the server is now looking for new music",
@@ -280,14 +278,6 @@
     // ── Adding songs to a playlist ───────────────────────────────────────────
     "Add to a playlist": "Menu action: put this song, album or selection into a playlist",
     "New playlist": "Row at the top of the playlist picker, and the button on an empty library: make one",
-    "Added to “{name}”": "Toast. `{name}` is the playlist's name",
-    "{n} added to “{name}”": "Toast when several songs went in at once. `{n}` is a count of songs",
-    "Already added": "Title of the dialog that warns the song is in that playlist already",
-    "This song is already in “{name}”.": "The line under that title. `{name}` is the playlist",
-    "{n} of {songs} are already in “{name}”.": "The same warning when adding several at once and only some of them are already there. `{n}` is how many of them are, and `{songs}` already reads as a count (\"12 songs\"), so the sentence is like \"3 of 12 songs are already in “Rock”.\"",
-    "All {songs} are already in “{name}”.": "The same warning when every one of the several being added is already there. `{songs}` already reads as a count (\"12 songs\")",
-    "Add anyway": "The confirm button of that warning: put it in a second time",
-    "Add only the new ones": "The other button of that warning, when some are already in the playlist and some are not: leave the ones that are and add the rest",
     "Couldn't add to the playlist": "Toast: the server refused",
     "Couldn't create the playlist": "Toast: the server refused",
 
@@ -605,6 +595,7 @@
     "Always previous track": "A value of `Previous button`: never restarts, always goes back a song",
     "No": "A setting value meaning none or zero, not the answer to a question: no crossfade, no seek buttons",
     "Fit cover art": "Show the whole cover even if it is not square, instead of cropping it to fill",
+    "No animated covers on mobile data": "On, animated covers stay still on mobile data. Other connections are not affected, and neither is the music",
     "Animated covers": "Section header of the player settings: covers that move, video clips from a server or animated GIF and WebP files",
     "Show animated covers": "The switch for all of them: off, no cover moves anywhere in the app",
     "In the cover": "A value of `Animated artwork`: the animated cover plays inside the square where the cover is",
@@ -665,6 +656,8 @@
     "Wrong password": "The password typed to confirm a cover change was not right",
     "Refresh": "Ask the server for this playlist again, in case it changed elsewhere. Also the button under suggested tracks to regenerate them, and on a podcast show the action that reads its feed again from the publisher",
     "Refresh ({when} ago)": "The podcast show's ⋯ sheet, the same action as `Refresh`, wearing the moment of the last feed read in parentheses. `{when}` arrives already coarse — `2 h`, `5 d`, `< 1 min` — so your language only has to put it in brackets and say the equivalent of `ago` the way it does: the words are the whole question, the number and its unit are already settled. The moment is when the show's episodes were written to the device, which is what tells the eye whether pressing is worth it at all. Languages whose word for that goes before the time can move `{when}` to the end.",
+    "{n} of {songs}": "Beside a playlist in the add to playlist sheet, when it holds only some of the songs being added. `{songs}` already reads as a count, so it is like \"3 of 12 songs\"",
+    "Added to “{name}”": "Toast. `{name}` is the playlist's name",
     "Suggested tracks": "Section heading at the bottom of a playlist: songs the server recommends based on what is already in the playlist",
     "Based on the tracks in this playlist": "Subtitle under the suggested tracks heading",
     "Delete": "The confirm button of a delete dialog, for a playlist or a radio station",
@@ -682,7 +675,7 @@
     "Library updated": "Toast after the phone finished going through its own files",
     "Source updated": "Toast after changing where music is read from",
     "{n} items": "How many things the server's scan has found so far",
-    "Clear cache": "Throw away what was remembered from the server. Downloads are not touched",
+    "Clear temporary data": "Throw away what was remembered from the server. Downloads are not touched",
 
     // ── Diagnostics (Settings › About, tapping the version five times) ───────
     "Measure performance": "Timing, not analytics: how long the app takes to do things on this phone, kept on the phone. Nothing is sent anywhere. It is turned on when somebody is being walked through a slowdown",
@@ -795,9 +788,12 @@
     "Favorite a show to keep it here.": "The line under the Library's Podcasts shelf: hearts are how a show is kept. 'Here' means this phone",
     "You're offline": "Said when a manual 'use no network' refused an action that needs the network",
     "Remove from this device": "A show's ⋯ menu and the dialog it opens: takes the show, its episodes and its downloads off this phone. Nothing on any server",
+    "Download new episodes": "A show's menu: when on, the latest episodes it publishes from now on download by themselves. Never its back catalog",
     "Add podcast": "The Explore chip, the add-a-show sheet's title and the button that opens it: keeps a show on this phone from its feed. Not adding a song to a list",
     "Find a podcast": "The placeholder in the search box on the shows you keep: searches the iTunes directory, which answers with a show's feed address",
     "Recent episodes": "A section of Home, and its switch in settings: the newest episodes of the shows you keep, by the date the publisher gave them. Not episodes you listened to",
+    "Couldn't refresh your library.": "Toast after a failed pull to refresh; the list on screen stays",
+    "Couldn't load all of your library.": "Toast: playlists or favorites failed to load, the rest is shown",
     "No podcasts": "Nothing kept on this phone yet: no show subscribed",
     "Couldn't load your podcasts.": "The list of kept shows would not read — the phone's own index, not a server. The Retry button reads it again",
     "Couldn't reach any of your podcast feeds.": "Said after asking every kept show for new episodes: none of the feeds answered, so nothing new could be read",
@@ -805,7 +801,11 @@
     "Couldn't load this podcast.": "One show's own screen: its episodes would not read. The Retry button reads its feed again",
     "Couldn't read this feed": "Filed under a show whose feed would not load, so the reason is still there offline. One show, not the whole list",
     "No episodes": "A show whose feed lists no items at all: the publisher has nothing published",
-    "No episodes yet": "Where a show's episode count would be on the list of shows: nothing published yet"
+    "No episodes yet": "Where a show's episode count would be on the list of shows: nothing published yet",
+    "Full-bleed album artwork": "Album detail layout: cover spans the screen width and fades into the background; not an audio effect.",
+    "Full-bleed artwork": "Now Playing layout: the complete artwork sits below the header and fades into colours from its edges.",
+    "Full bleed": "Third animated-artwork layout: fitted edge-to-edge artwork, independent of static full bleed.",
+    "Static covers in portrait. Replaces the background below; animated covers are set further down.": "Description of the static full-bleed switch; animated artwork has a separate three-way selector."
   },
 
   // Strings that are meant to stay in English, and are not counted as missing.
@@ -813,5 +813,6 @@
   // Empty for now. The Diagnostics measurements used to be listed here, and
   // translators translated them anyway, so they no longer go through `t()` at
   // all: see `src/app/settings/diagnostics.tsx`.
+
   "keepEnglish": []
 }

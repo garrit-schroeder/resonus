@@ -11,10 +11,11 @@
  */
 import { useSegments } from 'expo-router';
 import { useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { currentSong, usePlayerStore } from '@/store/player';
 import { useSettings } from '@/store/settings';
-import { TAB_BAR_HEIGHT, TAB_BAR_HEIGHT_COMPACT } from '@/theme';
+import { PILL_MARGIN, TAB_BAR_HEIGHT, TAB_BAR_HEIGHT_COMPACT } from '@/theme';
 
 /** Screens that never take the bar, whatever the setting says. */
 const NO_BAR = ['player', 'queue', 'lyrics', 'favorites-add', 'login'];
@@ -61,4 +62,11 @@ export function useCompactTabBar(): boolean {
 /** The navigation bar's height, not counting the bottom safe area. */
 export function useTabBarHeight(): number {
   return useCompactTabBar() ? TAB_BAR_HEIGHT_COMPACT : TAB_BAR_HEIGHT;
+}
+
+/** What is below the bar: the safe area, and at least the margin of a pill. */
+export function useTabBarBottom(): number {
+  const insets = useSafeAreaInsets();
+  const pills = useSettings((s) => s.navbarPills);
+  return pills ? Math.max(insets.bottom, PILL_MARGIN) : insets.bottom;
 }

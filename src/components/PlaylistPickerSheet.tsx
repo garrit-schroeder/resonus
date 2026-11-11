@@ -1,7 +1,8 @@
 /**
- * Bottom sheet to pick a target playlist and add songs in bulk (multi-select).
- * Allows creating a new playlist. Handles the addition and toasts itself, so
- * it can be reused from any screen.
+ * Bottom sheet that shows which playlists hold a batch of songs. A tap adds or
+ * removes straight away and the sheet stays open for the next one. A playlist
+ * holding only some of them is completed by the tap, never emptied. Lists this
+ * user can't change aren't offered. Reusable from any screen.
  *
  * Favorites is not a row here any more: it is a property of the song rather
  * than a list it belongs to, and this sheet could never take one off. It is in
@@ -9,14 +10,30 @@
  */
 import Icon from '@/components/Icon';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 
-import Animated from 'react-native-reanimated';
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { addToPlaylist, COVER, coverArtUrl, createPlaylist, getPlaylist, getPlaylists } from '@/api/data';
+import {
+  addSongsToPlaylist,
+  canEditPlaylist,
+  COVER,
+  coverArtUrl,
+  createPlaylist,
+  getPlaylists,
+  playlistMembership,
+  removeSongsFromPlaylist,
+} from '@/api/data';
+import { haptic } from '@/lib/haptics';
+import { membershipOf, type Membership } from '@/lib/playlistMembership';
 import { useScreenSize } from '@/hooks/useScreenSize';
 import { type Song } from '@/api/subsonic';
 import { useBottomSheetAnim } from '@/hooks/useBottomSheetAnim';
@@ -26,6 +43,7 @@ import { usePlaylistPicker } from '@/store/playlistPicker';
 import { useSettings } from '@/store/settings';
 import { useToast } from '@/store/toast';
 import { colors, fontSize, radius, SHEET_MAX_WIDTH, spacing, themed } from '@/theme';
+import { motion } from '@/theme/motion';
 import { Cover } from './Cover';
 import { Dialog } from './Dialog';
 
@@ -34,6 +52,45 @@ import { Dialog } from './Dialog';
  *  while rendering so a turn does not leave it taller than the screen (#131). */
 function playlistsMaxH(height: number): number {
   return Math.round(height * 0.6);
+}
+
+/** Passes its size a little and settles. */
+const CHECK_IN = Easing.out(Easing.back(2));
+
+/** The circle of a row. The check grows out of it when a tap sets it, not when a fetch corrects it. */
+function Mark({ state, tapped }: { state: Membership; tapped: boolean }) {
+  const checked = state === 'all';
+  const scale = useSharedValue(checked ? 1 : 0);
+  const style = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+
+  // Only a change of mark moves it: `tapped` ending early must not cut the animation.
+  const shown = useRef(checked);
+
+  useEffect(() => {
+    if (shown.current === checked) return;
+    shown.current = checked;
+    const to = checked ? 1 : 0;
+    const { decorative: reduceMotion } = motion.reduceMotion;
+    if (!tapped) scale.value = to;
+    else if (checked) {
+      scale.value = withTiming(1, { duration: motion.duration.enter, easing: CHECK_IN, reduceMotion });
+    } else {
+      scale.value = withTiming(0, { duration: motion.duration.exit, easing: motion.easing.exit, reduceMotion });
+    }
+  }, [checked, tapped, scale]);
+
+  return (
+    <View>
+      {state === 'some' ? (
+        <Icon name="remove-circle-outline" size={24} color={colors.accent} />
+      ) : (
+        <Icon name="ellipse-outline" size={24} color={colors.textMuted} />
+      )}
+      <Animated.View style={[StyleSheet.absoluteFill, style]}>
+        <Icon name="checkmark-circle" size={24} color={colors.accent} />
+      </Animated.View>
+    </View>
+  );
 }
 
 /** Global instance (mounted once in the root layout): any place can open it
@@ -50,7 +107,7 @@ export function PlaylistPickerSheet({
   excludeId,
   onClose,
 }: {
-  /** Songs to add; null = sheet hidden. */
+  /** Songs to add or remove; null = sheet hidden. */
   songs: Song[] | null;
   /** Playlist to hide from the list (the source one). */
   excludeId?: string;
@@ -74,13 +131,13 @@ export function PlaylistPickerSheet({
   const [atTop, setAtTop] = useState(true);
   const close = () => dismiss(onClose);
   const [creating, setCreating] = useState(false);
-  // "Already in the playlist" prompt pending confirmation (Spotify style).
-  const [dupPrompt, setDupPrompt] = useState<{
-    playlistId: string;
-    name: string;
-    /** The ones not in that playlist yet. Empty when every one of them is. */
-    fresh: Song[];
-  } | null>(null);
+  /** Playlist id → the songs of this batch it holds; absent until known. */
+  const [present, setPresent] = useState<Record<string, string[]>>({});
+  const [busy, setBusy] = useState<Record<string, boolean>>({});
+  const asked = useRef(new Set<string>());
+  // A row the user has tapped knows better than a fetch still on its way.
+  const tapped = useRef(new Set<string>());
+  const opening = useRef(0);
 
   const { data: playlists, isLoading } = useQuery({
     queryKey: ['playlists'],
@@ -88,68 +145,105 @@ export function PlaylistPickerSheet({
     enabled: visible,
   });
 
+  const targets = useMemo(
+    () => (playlists ?? []).filter((p) => p.id !== excludeId && canEditPlaylist(p)),
+    [playlists, excludeId],
+  );
+  const wanted = useMemo(() => [...new Set((songs ?? []).map((s) => s.id))], [songs]);
+
+  useEffect(() => {
+    setPresent({});
+    setBusy({});
+    asked.current = new Set();
+    tapped.current = new Set();
+    return () => {
+      opening.current++;
+    };
+  }, [songs]);
+
+  useEffect(() => {
+    if (!visible) return;
+    const lists = targets.filter((p) => !asked.current.has(p.id));
+    if (lists.length === 0) return;
+    for (const p of lists) asked.current.add(p.id);
+    const mine = opening.current;
+    const stop = () => opening.current !== mine;
+    void playlistMembership(
+      lists,
+      wanted,
+      (id, ids) => {
+        if (stop() || tapped.current.has(id)) return;
+        setPresent((prev) => ({ ...prev, [id]: ids }));
+      },
+      stop,
+    ).catch(() => {
+      if (stop()) return;
+      // Adding reads the playlist first, so an empty mark can't duplicate.
+      setPresent((prev) => {
+        const next = { ...prev };
+        for (const p of lists) next[p.id] ??= [];
+        return next;
+      });
+    });
+  }, [visible, targets, wanted]);
+
   if (!songs || songs.length === 0) return null;
 
-  /** Actually adds (without checking duplicates) and closes with a toast.
-   *  `which` is what to add, for when the answer to the warning was to leave
-   *  the ones that are already there alone. */
-  async function doAdd(playlistId: string, name: string, which?: Song[]) {
-    const adding = which ?? songs;
-    if (!adding || adding.length === 0) return;
-    close();
-    try {
-      for (const s of adding) await addToPlaylist(playlistId, s.id);
-      // Optimistic count in the Library (`songsLabel`): without this the
-      // subtitle doesn't update until that screen is reloaded.
-      queryClient.setQueryData<{ id: string; songCount?: number }[]>(['playlists'], (list) =>
-        list?.map((p) =>
-          p.id === playlistId ? { ...p, songCount: (p.songCount ?? 0) + adding.length } : p,
-        ),
-      );
-      queryClient.invalidateQueries({ queryKey: ['playlist', playlistId] });
-      queryClient.invalidateQueries({ queryKey: ['playlists'] });
-      // If the list has auto-download, fetch the newly added songs now.
-      void useAutoDownloads.getState().reconcile(playlistId, true);
-      toast(
-        adding.length === 1
-          ? t('Added to “{name}”', { name })
-          : t('{n} added to “{name}”', { n: adding.length, name }),
-      );
-    } catch {
-      toast(t("Couldn't add to the playlist"));
-    }
+  function refreshAfter(playlistId: string) {
+    queryClient.invalidateQueries({ queryKey: ['playlist', playlistId] });
+    queryClient.invalidateQueries({ queryKey: ['playlists'] });
   }
 
-  async function addAllTo(playlistId: string, name: string) {
-    if (!songs) return;
-    // Spotify-style duplicate warning: if any already present, ask first. If
-    // the check fails (network), add without warning: better than blocking.
+  async function add(playlistId: string, adding: Song[]) {
+    await addSongsToPlaylist(playlistId, adding);
+    refreshAfter(playlistId);
+    // If the list has auto-download, fetch the newly added songs now.
+    void useAutoDownloads.getState().reconcile(playlistId, true);
+  }
+
+  /** Applied on the tap and put back if the server refuses. */
+  async function toggle(playlistId: string) {
+    if (!songs || busy[playlistId]) return;
+    const before = present[playlistId] ?? [];
+    const removing = membershipOf(before, wanted) === 'all';
+    tapped.current.add(playlistId);
+    haptic('light');
+    setBusy((prev) => ({ ...prev, [playlistId]: true }));
+    setPresent((prev) => ({ ...prev, [playlistId]: removing ? [] : wanted }));
     try {
-      const { songs: existing } = await getPlaylist(playlistId);
-      const have = new Set(existing.map((s) => s.id));
-      const fresh = songs.filter((s) => !have.has(s.id));
-      if (fresh.length < songs.length) {
-        setDupPrompt({ playlistId, name, fresh });
-        return;
+      if (removing) {
+        await removeSongsFromPlaylist(playlistId, wanted);
+        refreshAfter(playlistId);
+      } else {
+        await add(playlistId, songs);
       }
     } catch {
-      // ignore
+      setPresent((prev) => ({ ...prev, [playlistId]: before }));
+      toast(removing ? t("Couldn't complete the action") : t("Couldn't add to the playlist"));
+    } finally {
+      setBusy((prev) => ({ ...prev, [playlistId]: false }));
     }
-    await doAdd(playlistId, name);
   }
-
-  /** The warning has something to offer besides adding them all again. */
-  const hasFresh = !!dupPrompt && dupPrompt.fresh.length > 0;
 
   async function createAndAdd(name: string) {
     setCreating(false);
-    if (!name.trim()) return;
+    if (!songs || !name.trim()) return;
+    let id: string;
     try {
-      const id = await createPlaylist(name.trim());
-      await addAllTo(id, name.trim());
+      id = await createPlaylist(name.trim());
     } catch {
-      close();
       toast(t("Couldn't create the playlist"));
+      return;
+    }
+    asked.current.add(id);
+    tapped.current.add(id);
+    setPresent((prev) => ({ ...prev, [id]: wanted }));
+    try {
+      await add(id, songs);
+    } catch {
+      setPresent((prev) => ({ ...prev, [id]: [] }));
+      toast(t("Couldn't add to the playlist"));
+      refreshAfter(id);
     }
   }
 
@@ -196,20 +290,43 @@ export function PlaylistPickerSheet({
                   scrollEventThrottle={16}
                   onScroll={(e) => setAtTop(e.nativeEvent.contentOffset.y <= 0)}
                 >
-                  {(playlists ?? [])
-                    .filter((p) => p.id !== excludeId)
-                    .map((p) => (
+                  {targets.map((p) => {
+                    const ids = present[p.id];
+                    const state = ids ? membershipOf(ids, wanted) : null;
+                    return (
                       <Pressable
                         key={p.id}
                         style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
-                        onPress={() => addAllTo(p.id, p.name)}
+                        disabled={!ids}
+                        accessibilityRole="checkbox"
+                        accessibilityState={{
+                          checked: state === 'some' ? 'mixed' : state === 'all',
+                          disabled: !ids,
+                        }}
+                        onPress={() => toggle(p.id)}
                       >
                         <Cover uri={coverArtUrl(p.coverArt ?? p.id, COVER.thumb)} size={40} />
-                        <Text style={styles.rowText} numberOfLines={1}>
-                          {p.name}
-                        </Text>
+                        <View style={styles.rowBody}>
+                          <Text style={styles.rowName} numberOfLines={1}>
+                            {p.name}
+                          </Text>
+                          {state === 'some' ? (
+                            <Text style={styles.rowCount} numberOfLines={1}>
+                              {t('{n} of {songs}', {
+                                n: ids!.length,
+                                songs: songsLabel(wanted.length, lang),
+                              })}
+                            </Text>
+                          ) : null}
+                        </View>
+                        {!ids ? (
+                          <ActivityIndicator size="small" color={colors.textMuted} />
+                        ) : (
+                          <Mark state={state ?? 'none'} tapped={!!busy[p.id]} />
+                        )}
                       </Pressable>
-                    ))}
+                    );
+                  })}
                 </ScrollView>
               )}
             </View>
@@ -226,63 +343,6 @@ export function PlaylistPickerSheet({
         onConfirm={createAndAdd}
       />
 
-      {/* Three ways out rather than a switch inside the dialog (#132). A switch
-          would be state to read and understand before pressing a button that no
-          longer does what it says; each of these says what it does. With none
-          of them new there is nothing to skip, so the pair collapses back into
-          the single button it always was. */}
-      <Dialog
-        visible={!!dupPrompt}
-        title={t('Already added')}
-        // The counts are in the sentence because the two cases used to be one
-        // word apart ("some of these" against "these"), and the one where none
-        // of them are new drops the second button as well, so it came out
-        // looking like the old warning that could only be answered by putting
-        // every song in again (#132). "All" rather than "12 of 12": nothing to
-        // skip should read as its own sentence, not as arithmetic.
-        message={
-          dupPrompt
-            ? songs.length === 1
-              ? t('This song is already in “{name}”.', { name: dupPrompt.name })
-              : hasFresh
-                ? t('{n} of {songs} are already in “{name}”.', {
-                    n: songs.length - dupPrompt.fresh.length,
-                    songs: songsLabel(songs.length, lang),
-                    name: dupPrompt.name,
-                  })
-                : t('All {songs} are already in “{name}”.', {
-                    songs: songsLabel(songs.length, lang),
-                    name: dupPrompt.name,
-                  })
-            : undefined
-        }
-        // Adding only the new ones is the confirm, in the corner and in the
-        // accent: it is the one nearly everybody wants and the only one that
-        // cannot go wrong. Adding them all again sits right on top of it, not
-        // off in the left corner where "Don't remind me" goes: these two are
-        // both answers to the same question and get read one against the
-        // other, so they belong in the same column.
-        neutral={
-          hasFresh
-            ? {
-                label: t('Add anyway'),
-                align: 'end',
-                onPress: () => {
-                  const d = dupPrompt;
-                  setDupPrompt(null);
-                  if (d) void doAdd(d.playlistId, d.name);
-                },
-              }
-            : undefined
-        }
-        confirmLabel={hasFresh ? t('Add only the new ones') : t('Add anyway')}
-        onCancel={() => setDupPrompt(null)}
-        onConfirm={() => {
-          const d = dupPrompt;
-          setDupPrompt(null);
-          if (d) void doAdd(d.playlistId, d.name, hasFresh ? d.fresh : undefined);
-        }}
-      />
     </Modal>
   );
 }
@@ -324,6 +384,9 @@ const styles = themed((colors) => ({
     paddingVertical: spacing.md,
   },
   rowText: { color: colors.text, fontSize: fontSize.md, flex: 1 },
+  rowBody: { flex: 1 },
+  rowName: { color: colors.text, fontSize: fontSize.md },
+  rowCount: { color: colors.textMuted, fontSize: fontSize.sm },
   newPlaylistIcon: {
     width: 40,
     height: 40,

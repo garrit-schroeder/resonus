@@ -1,6 +1,6 @@
 /**
  * The blur behind the navigation bar and the mini player (a switch each, in
- * Settings › Appearance and Settings › Player).
+ * Settings › Navigation and Settings › Player).
  *
  * On Android a BlurView can only blur what sits inside a `BlurTargetView`, and
  * never itself: the root layout wraps the Stack in one (`BarBlurTarget`) and
@@ -90,6 +90,25 @@ export function TopBarBackground({
     <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity }]}>
       <View style={[StyleSheet.absoluteFill, { backgroundColor: color }]} />
     </Animated.View>
+  );
+}
+
+/**
+ * The bar's colour, laid flat: nothing about it animates, so it keeps the
+ * header's colour over whatever scrolls under it at every scroll. A screen
+ * whose bar answers something other than its title — a selection, where the
+ * bar says how many songs the hand marked — wants this one: the header's own
+ * title scrolls behind the bar and is hidden, and the bar's words stay whole,
+ * so a bar that thinned in as the header fell away would read as the bar
+ * changing rather than as what it says changing.
+ *
+ * Not the one above with its opacity pinned to 1: `Animated.View` gives a
+ * style nothing to hold when the number it is handed never moves, and the
+ * flat colour never comes down at all.
+ */
+export function TopBarPaint({ color }: { color: string }) {
+  return (
+    <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: color }]} />
   );
 }
 

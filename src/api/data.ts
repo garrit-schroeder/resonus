@@ -19,6 +19,7 @@ import {
 } from '@/store/libraries';
 import { byArtistSortName } from '@/lib/librarySort';
 import { hashKey } from '@/lib/localLibrary';
+import { canEditTracks, indicesToRemove, missingFrom, needsFetch, presentIn } from '@/lib/playlistMembership';
 import { bump } from '@/lib/perfLog';
 import { queryClient } from '@/lib/query';
 import { getItem, setItem } from '@/lib/storage';
@@ -33,7 +34,7 @@ import { cachedUri } from '@/store/songCache';
 import * as Navidrome from './navidrome';
 import * as Subsonic from './backend';
 import * as Local from '@/lib/localQueries';
-import { streamReachable } from './subsonic';
+import { ERR_NOT_FOUND, streamReachable } from './subsonic';
 import type { Song } from './subsonic';
 
 function isOffline() { return useAuthStore.getState().offline; }
@@ -395,6 +396,21 @@ export function getAllAlbums(): Promise<Subsonic.Album[]> {
 /** Re-scan the local catalog (offline mode). */
 export function rescanLocal(): Promise<void> {
   return Local.rescan();
+}
+
+/** Writes a local playlist into a folder as an `.m3u8` (#335). */
+export function exportPlaylistFile(id: string, folderUri: string): Promise<void> {
+  return Local.exportPlaylistFile(id, folderUri);
+}
+
+/** How much music the local profile has, and when it was last looked at. */
+export function localInfo(): Promise<{ songs: number; checkedAt: number } | null> {
+  return Local.localInfo();
+}
+
+/** Looks for music added or removed on the phone since the last scan. */
+export function refreshLocal(force = false): Promise<boolean> {
+  return Local.refreshLocal(force);
 }
 
 /** Server genres (global; the API doesn't filter genres by library). */
@@ -821,6 +837,8 @@ function subsonicGenreSongs(
 // ── Folder navigation (Subsonic servers only; the UI hides it on
 // Jellyfin and offline) ───────────────────────────────────────────────────
 export function getMusicFolders(): Promise<Subsonic.MusicFolder[]> {
+  // The local profile's folders are the real ones the files are in.
+  if (isOffline() && !serverOffline()) return Local.getMusicFolders();
   return Subsonic.getMusicFolders(auth());
 }
 
@@ -831,6 +849,7 @@ export function getFolderIndexes(musicFolderId?: string): Promise<Subsonic.Folde
 
 /** Contents of a directory: subfolders + songs. */
 export function getMusicDirectory(id: string): Promise<Subsonic.FolderContents> {
+  if (isOffline() && !serverOffline()) return Local.getMusicDirectory(id);
   return Subsonic.getMusicDirectory(auth(), id);
 }
 
@@ -1133,6 +1152,7 @@ async function mirrorPlaylists(): Promise<Subsonic.Playlist[]> {
   // The ids are resolved in one go rather than one at a time inside the loop.
   const firstDownloaded = (songIds: string[]) => songIds.find((sid) => files[sid]);
   const firstShowable = (songIds: string[]) => firstDownloaded(songIds) ?? songIds[0];
+  const playable = (songIds: string[]) => songIds.some((sid) => files[sid] ?? cachedUri(sid));
   const wanted: string[] = [];
   for (const edit of Object.values(qpls)) {
     if (!edit.created || edit.deleted) continue;
@@ -1187,7 +1207,23 @@ async function mirrorPlaylists(): Promise<Subsonic.Playlist[]> {
       // downloaded album art is only a fallback for playlists without one,
       // where it's better than nothing.
       coverArt: p.coverArt ?? (firstDl ? covers.get(firstDl)?.albumId : undefined),
+      availableOffline: playable(songIds),
     });
+  }
+  return out;
+}
+
+/** The playlists with every song on disk. One whose tracklist isn't stored yet isn't among them. */
+export async function downloadedPlaylistIds(): Promise<Set<string>> {
+  await loadMirror();
+  const tracklists = new Map(await useLibraryMirror.getState().playlistSongIds());
+  for (const [id, edit] of Object.entries(useOfflineQueue.getState().data.playlists ?? {})) {
+    if (edit.songIds) tracklists.set(id, edit.songIds);
+  }
+  const files = useDownloads.getState().files;
+  const out = new Set<string>();
+  for (const [id, songIds] of tracklists) {
+    if (songIds.length > 0 && songIds.every((sid) => files[sid])) out.add(id);
   }
   return out;
 }
@@ -1352,6 +1388,11 @@ export function flushOfflineQueue(auth: Subsonic.SubsonicAuth): Promise<void> {
   return run;
 }
 
+/** The server no longer has what this was about: trying again changes nothing. */
+function goneFromServer(e: unknown): boolean {
+  return e instanceof Subsonic.SubsonicRequestError && e.code === ERR_NOT_FOUND;
+}
+
 async function flushOutbox(auth: Subsonic.SubsonicAuth, file: string): Promise<void> {
   const q = useOfflineQueue.getState();
   await q.load();
@@ -1395,8 +1436,8 @@ async function flushOutbox(auth: Subsonic.SubsonicAuth, file: string): Promise<v
     try {
       if (op.starred) await Subsonic.star(auth, id, op.type);
       else await Subsonic.unstar(auth, id, op.type);
-    } catch {
-      favFailed.push([id, op]);
+    } catch (e) {
+      if (!goneFromServer(e)) favFailed.push([id, op]);
     }
   }
   if (!ours()) return;
@@ -1411,8 +1452,8 @@ async function flushOutbox(auth: Subsonic.SubsonicAuth, file: string): Promise<v
   for (const [id, rating] of Object.entries(ratings)) {
     try {
       await Subsonic.setRating(auth, id, rating);
-    } catch {
-      ratingFailed.push([id, rating]);
+    } catch (e) {
+      if (!goneFromServer(e)) ratingFailed.push([id, rating]);
     }
   }
   if (!ours()) return;
@@ -1459,10 +1500,14 @@ async function flushOutbox(auth: Subsonic.SubsonicAuth, file: string): Promise<v
   const playlists = data().playlists ?? {};
   const plFailed: [string, QueuePlaylist][] = [];
   for (const [id, edit] of Object.entries(playlists)) {
+    // What to try again: once created, the rest under its real id, or the next
+    // flush would create it a second time.
+    let retry: [string, QueuePlaylist] = [id, edit];
     try {
       if (edit.created) {
         if (edit.deleted) continue; // created and deleted offline: nothing to upload
         const realId = await Subsonic.createPlaylist(auth, edit.name ?? '');
+        retry = [realId, { ...edit, created: false }];
         if (edit.songIds?.length) await Subsonic.reorderPlaylist(auth, realId, edit.songIds);
         if (edit.comment !== undefined || edit.public !== undefined) {
           await Subsonic.updatePlaylist(auth, realId, {
@@ -1483,7 +1528,7 @@ async function flushOutbox(auth: Subsonic.SubsonicAuth, file: string): Promise<v
         if (edit.songIds) await Subsonic.reorderPlaylist(auth, id, edit.songIds);
       }
     } catch {
-      plFailed.push([id, edit]);
+      plFailed.push(retry);
     }
   }
   if (!ours()) return;
@@ -1653,6 +1698,20 @@ export function scrobble(id: string): Promise<void> {
   return Subsonic.scrobble(auth(), id).catch(() => {});
 }
 
+/**
+ * Whether a song is the kind a playlist can name: a track the server has an
+ *  id for. A radio station and a podcast episode carry a `url` of their own
+ *  instead (`playRadio`, `episodeToSong`): the station's id belongs to the
+ *  station list and an episode belongs to its show, so `updatePlaylist` would
+ *  be asked of an id it knows nothing about. Library tracks, downloads and
+ *  the phone's own files carry no address and do go in. The song menu and the
+ *  queue spelled the episode half of this out; as one rule it also answers for
+ *  the heart, which offers its hold only where this says yes (#286).
+ */
+export function canGoIntoPlaylist(song: Song): boolean {
+  return !song.url;
+}
+
 export async function addToPlaylist(playlistId: string, songId: string): Promise<void> {
   if (isOffline()) {
     if (!serverOffline()) return Local.addToPlaylist(playlistId, songId);
@@ -1801,6 +1860,117 @@ export async function reorderPlaylist(id: string, songIds: string[]): Promise<vo
     return;
   }
   return Subsonic.reorderPlaylist(auth(), id, songIds);
+}
+
+/** Whether the active profile can change this playlist's tracks. */
+export function canEditPlaylist(playlist: Subsonic.Playlist): boolean {
+  return canEditTracks(playlist, useAuthStore.getState().auth?.username);
+}
+
+/**
+ * Reports which of these songs each playlist holds. Subsonic can't ask this
+ * of a song, so it reads the stored tracklists first and fetches only the ones
+ * absent or changed, which the mirror then keeps. A failed fetch reports what
+ * was stored: adding checks again anyway. `stop` ends it when the sheet closes.
+ */
+export async function playlistMembership(
+  lists: Subsonic.Playlist[],
+  songIds: string[],
+  report: (playlistId: string, present: string[]) => void,
+  stop: () => boolean,
+): Promise<void> {
+  if (isOffline() && !serverOffline()) {
+    const stored = await Local.playlistTracklists();
+    for (const p of lists) report(p.id, presentIn(stored.get(p.id) ?? [], songIds));
+    return;
+  }
+  await loadMirror();
+  const mirror = useLibraryMirror.getState();
+  const stored = await mirror.playlistSongIds();
+  if (isOffline()) {
+    const edits = useOfflineQueue.getState().data.playlists ?? {};
+    for (const p of lists) {
+      report(p.id, presentIn(edits[p.id]?.songIds ?? stored.get(p.id) ?? [], songIds));
+    }
+    return;
+  }
+  const versions = await mirror.playlistVersions();
+  const stale = lists.filter((p) => needsFetch(p, versions));
+  const fetching = new Set(stale.map((p) => p.id));
+  // A changed list shows what was stored while it comes down; only one never
+  // stored has nothing to show yet.
+  for (const p of lists) {
+    if (!fetching.has(p.id) || p.id in versions) {
+      report(p.id, presentIn(stored.get(p.id) ?? [], songIds));
+    }
+  }
+  const a = auth();
+  const CONCURRENCY = 4;
+  for (let i = 0; i < stale.length && !stop(); i += CONCURRENCY) {
+    await Promise.all(
+      stale.slice(i, i + CONCURRENCY).map(async (p) => {
+        try {
+          const res = await Subsonic.getPlaylist(a, p.id);
+          mirror.savePlaylistDetail(p.id, res.playlist, res.songs);
+          report(p.id, presentIn(res.songs.map((s) => s.id), songIds));
+        } catch {
+          report(p.id, presentIn(stored.get(p.id) ?? [], songIds));
+        }
+      }),
+    );
+  }
+}
+
+/** Adds the songs a playlist doesn't hold yet, reading it first: the marks may be stale. */
+export async function addSongsToPlaylist(id: string, songs: Subsonic.Song[]): Promise<void> {
+  if (isOffline()) {
+    const current = serverOffline()
+      ? await currentPlaylistSongIds(id)
+      : ((await Local.playlistTracklists()).get(id) ?? []);
+    for (const s of missingFrom(current, songs)) await addToPlaylist(id, s.id);
+    return;
+  }
+  const a = auth();
+  const { playlist, songs: current } = await Subsonic.getPlaylist(a, id);
+  const adding = missingFrom(current.map((s) => s.id), songs);
+  for (const s of adding) await Subsonic.addToPlaylist(a, id, s.id);
+  saveMembershipChange(id, playlist, [...current, ...adding]);
+}
+
+/**
+ * Takes every copy of these songs out. The whole list is rewritten rather than
+ * removed by index: Navidrome's positions count tracks whose file is missing and
+ * `getPlaylist` leaves those out, so an index could take a different song. Only
+ * an empty result goes by index, as the playlist screen does.
+ */
+export async function removeSongsFromPlaylist(id: string, songIds: string[]): Promise<void> {
+  const drop = new Set(songIds);
+  if (isOffline()) {
+    const current = serverOffline()
+      ? await currentPlaylistSongIds(id)
+      : ((await Local.playlistTracklists()).get(id) ?? []);
+    await reorderPlaylist(id, current.filter((sid) => !drop.has(sid)));
+    return;
+  }
+  const a = auth();
+  // From the backend, not `getPlaylist`: that one hides turned-off libraries,
+  // and a rewrite from it would delete their tracks.
+  const { playlist, songs } = await Subsonic.getPlaylist(a, id);
+  const ids = songs.map((s) => s.id);
+  const left = songs.filter((s) => !drop.has(s.id));
+  if (left.length > 0) {
+    if (left.length < songs.length) await Subsonic.reorderPlaylist(a, id, left.map((s) => s.id));
+  } else {
+    for (const i of indicesToRemove(ids, songIds)) await Subsonic.removeFromPlaylist(a, id, i);
+  }
+  saveMembershipChange(id, playlist, left);
+}
+
+/** Written now rather than in a few seconds, or reopening the sheet shows the old marks. */
+function saveMembershipChange(id: string, playlist: Subsonic.Playlist, songs: Subsonic.Song[]) {
+  const mirror = useLibraryMirror.getState();
+  mirror.savePlaylistDetail(id, playlist, songs);
+  void mirror.flush();
 }
 
 // ── Multi-library merging (subset mode) ──

@@ -24,6 +24,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { FrameMeter } from '@/components/FrameMeter';
 import { GlobalMiniPlayer } from '@/components/GlobalMiniPlayer';
 import { GlobalTabBar } from '@/components/GlobalTabBar';
+import { ArtistMenuSheet } from '@/components/ArtistMenuSheet';
 import { MediaMenuSheet } from '@/components/MediaMenuSheet';
 import { PodcastMenuSheet } from '@/components/PodcastMenuSheet';
 import { GlobalPlaylistPicker } from '@/components/PlaylistPickerSheet';
@@ -35,6 +36,7 @@ import { UpdatePrompt } from '@/components/UpdatePrompt';
 import { SELF_UPDATES } from '@/lib/distribution';
 import { installAppFont, setAppFont } from '@/lib/appFont';
 import { initAppLocale } from '@/lib/appLocale';
+import { startDiscordPresence } from '@/lib/discordPresence';
 import { initHomeWidget } from '@/lib/homeWidget';
 import { loadCustomFont } from '@/lib/customFont';
 import { removeLegacyRadioCovers } from '@/lib/legacyRadioCovers';
@@ -42,6 +44,7 @@ import { systemAccentAvailable } from '@/lib/materialYou';
 import { loadPastEvents, startPerfLog } from '@/lib/perfLog';
 import { queryClient } from '@/lib/query';
 import { primaryUrl } from '@/lib/serverUrls';
+import { useLocalAutoRefresh } from '@/hooks/useLocalAutoRefresh';
 import { useAuthStore } from '@/store/auth';
 import { useAutoDownloads } from '@/store/autoDownloads';
 import { checkAutoUrlNow, initAutoUrl } from '@/store/autoUrl';
@@ -148,6 +151,7 @@ export default function RootLayout() {
   // flag: settings hydrate after the first render, and a flag already set by
   // then would apply a family that isn't loaded yet.
   const [loadedCustom, setLoadedCustom] = useState<string | null>(null);
+  useLocalAutoRefresh();
 
   useEffect(() => {
     if (appFont !== 'custom' || !customFontFamily || !customFontUri) return;
@@ -336,6 +340,9 @@ export default function RootLayout() {
     };
   }, [keepScreenAwake]);
 
+  const discordPresence = useSettings((s) => s.discordPresence);
+  useEffect(() => (discordPresence ? startDiscordPresence() : undefined), [discordPresence]);
+
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.background }}>
       <QueryClientProvider client={queryClient}>
@@ -401,9 +408,11 @@ export default function RootLayout() {
                 <Stack.Screen name="settings/library" />
                 <Stack.Screen name="settings/playback" />
                 <Stack.Screen name="settings/player" />
+                <Stack.Screen name="settings/lyrics" />
                 <Stack.Screen name="settings/language" />
                 <Stack.Screen name="settings/font" />
                 <Stack.Screen name="settings/personalization" />
+                <Stack.Screen name="settings/home-navigation" />
                 <Stack.Screen name="settings/home-chips" />
                 <Stack.Screen name="settings/home-sections" />
                 <Stack.Screen name="settings/radios" />
@@ -469,6 +478,7 @@ export default function RootLayout() {
             {auth || offline ? <ArtistPickerSheet /> : null}
             {auth || offline ? <RadioMenuSheet /> : null}
             {auth || offline ? <MediaMenuSheet /> : null}
+            {auth || offline ? <ArtistMenuSheet /> : null}
             {/* Not behind the profile guard: a show has no server, so its menu
                 opens with no account and offline too, like the Library's shelf. */}
             <PodcastMenuSheet />

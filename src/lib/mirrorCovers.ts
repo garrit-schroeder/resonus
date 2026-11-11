@@ -25,6 +25,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { COVER, coverArtUrl, type SubsonicAuth } from '@/api/backend';
 import { isOfflineMode } from '@/api/netGate';
 import { whenIdle } from '@/lib/idle';
+import { speculationOpen } from '@/lib/speculation';
 import { bump, netTally } from '@/lib/perfLog';
 import { hashKey, localCoverUrl, registerCover } from '@/lib/localLibrary';
 import * as Db from './mirrorDb';
@@ -321,6 +322,7 @@ function runCovers(
           if (!url) return;
           const file = fileFor(profile, id);
           await FileSystem.makeDirectoryAsync(DIR, { intermediates: true }).catch(() => {});
+          await speculationOpen();
           netTally('coverArt.view (mirror)');
           const res = await FileSystem.downloadAsync(url, file);
           // A server that answers an error writes that error to the file, and a

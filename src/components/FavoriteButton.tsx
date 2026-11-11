@@ -21,6 +21,17 @@ interface Props {
   /** Song lists only: take the favourite off behind an «Undo» toast (#98). */
   undo?: boolean;
   /**
+   * What holding the heart does: opens the sheet that adds the song to a
+   * playlist, and nothing is asked of the favourite. Only the screens that
+   * have such a sheet and a song that can go into one pass it; a heart in a
+   * song list passes nothing and stays a tap.
+   *
+   * Offering it is also what makes React Native swallow the tap that comes
+   * with a hold: `Pressability` cancels `onPress` once the press reached its
+   * long-press state, so a hold never reads as an un-favourite (#286).
+   */
+  hold?: () => void;
+  /**
    * Podcasts keep their hearts in SQLite, not the server's starring. The heart
    * behaves the same — it lights, it is guarded against a double tap, it toasts
    * — but the tap writes the device's own favorite and refreshes the podcast
@@ -30,7 +41,7 @@ interface Props {
   podcast?: { kind: 'channel' | 'episode'; channelId: string };
 }
 
-export function FavoriteButton({ id, type = 'song', starred, size = 22, undo, podcast }: Props) {
+export function FavoriteButton({ id, type = 'song', starred, size = 22, undo, podcast, hold: onHold }: Props) {
   const auth = useAuthStore((s) => s.auth);
   const offline = useAuthStore((s) => s.offline);
   const t = useT();
@@ -99,10 +110,26 @@ export function FavoriteButton({ id, type = 'song', starred, size = 22, undo, po
     }
   }
 
+  /** What a hold does: the caller's action, and nothing else. The favourite
+   *  stays exactly as it was: React Native drops the tap that comes with a
+   *  hold once a long-press handler is offered (see `hold`). The stop is what
+   *  keeps the mini player's card, which opens the player when pressed, from
+   *  answering under the finger. No session, no sheet: it is mounted only with
+   *  one (`_layout.tsx`), same as the tap's guard above. */
+  function held(e: GestureResponderEvent) {
+    e.stopPropagation();
+    if (!auth && !offline) return;
+    haptic('medium');
+    onHold?.();
+  }
+
   return (
     <Pressable
       hitSlop={10}
       onPress={toggle}
+      // Where nothing was offered, a hold stays a tap: the tap of a hold is
+      // only dropped by React Native when a long-press handler is here at all.
+      onLongPress={onHold ? held : undefined}
       accessibilityRole="button"
       accessibilityLabel={fav ? t('Remove from favorites') : t('Add to favorites')}
     >

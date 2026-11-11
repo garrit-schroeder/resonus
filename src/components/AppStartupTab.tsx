@@ -13,6 +13,7 @@ import { AppState } from 'react-native';
 import { mark } from '@/lib/perfLog';
 import { useAutoDownloads } from '@/store/autoDownloads';
 import { useSettings, type DefaultTab } from '@/store/settings';
+import { refreshAutoDownloadShows } from '@/api/podcasts';
 
 const TAB_HREF: Record<DefaultTab, '/' | '/search' | '/library' | '/explore'> = {
   index: '/',
@@ -76,8 +77,12 @@ export function AppStartupTab() {
     const sub = AppState.addEventListener('change', (state) => {
       // On return, sync auto-download playlists (catch what was added from
       // another client while the app was in the background).
-      if (state === 'active') void useAutoDownloads.getState().reconcileAll();
+      if (state === 'active') {
+        void useAutoDownloads.getState().reconcileAll();
+        void refreshAutoDownloadShows().catch(() => {});
+      }
     });
+    void refreshAutoDownloadShows().catch(() => {});
     return () => sub.remove();
   }, []);
 

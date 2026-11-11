@@ -6,10 +6,11 @@
 import Icon from '@/components/Icon';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Link, useRouter } from 'expo-router';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Animated,
+  type FlatList,
   Keyboard,
   Platform,
   Pressable,
@@ -29,6 +30,12 @@ import {
   GestureDetector,
   type GestureType,
 } from 'react-native-gesture-handler';
+import ReorderableList, {
+  type ReorderableListDragStartEvent,
+  type ReorderableListReorderEvent,
+} from 'react-native-reorderable-list';
+import { useAnimatedScrollHandler, useSharedValue } from 'react-native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
 
 import { type Song, type StarType } from '@/api/subsonic';
 import { useCoverTint } from '@/hooks/useDominantColor';
@@ -40,18 +47,19 @@ import { useT } from '@/i18n';
 import { artistTargets } from '@/lib/artistNav';
 import { easedFade } from '@/lib/fade';
 import { haptic } from '@/lib/haptics';
-import { listPerf } from '@/lib/listPerf';
+import { listPerf, reorderListPerf } from '@/lib/listPerf';
+import { applyDrag } from '@/lib/listOrder';
 import { useArtistPicker } from '@/store/artistPicker';
 import { usePlayerStore } from '@/store/player';
 import { colors, fontSize, radius, restyled, spacing, themed, tracking } from '@/theme';
 import { motion } from '@/theme/motion';
 import { BackChevron } from './BackChevron';
-import { TopBarBackground } from './BarBlur';
+import { TopBarBackground, TopBarPaint } from './BarBlur';
 import { Cover, useCoverRadius } from './Cover';
 import { ExplicitBadge, useExplicitBadge } from './ExplicitBadge';
 import { FavoriteButton } from './FavoriteButton';
 import { SelectionBar, type SelectionAction } from './SelectionBar';
-import { TrackRow } from './TrackRow';
+import { DragTrackRow, TrackRow } from './TrackRow';
 
 /**
  * The cover across the top of an album or a playlist.
@@ -149,8 +157,10 @@ interface Props {
    * width, only the picture takes the whole screen.
    */
   wideCover?: {
+    /** Albums keep the whole width-sized cover; radio headers keep their existing clamp. */
+    preserveHeight?: boolean;
     height: number;
-    render: (width: number, height: number) => ReactNode;
+    render: (width: number, height: number, visible: boolean) => ReactNode;
   };
   /** Gradient/bar color if there's no cover with a dominant color. */
   accentColor?: string;
@@ -179,7 +189,7 @@ interface Props {
    *  screen builds it once from the episodes it already holds; absent for
    *  albums and playlists, whose rows keep the artist line.
    */
-  episodeInfo?: Map<string, { description?: string; publishedAt?: number; fresh: boolean }>;
+  episodeInfo?: Map<string, { description?: string; publishedAt?: number; fresh: boolean; played: boolean }>;
   /** Offline download button (album/playlist header). */
   download?: {
     status: 'none' | 'active' | 'done';
@@ -228,6 +238,23 @@ interface Props {
     onDownload?: (songs: Song[]) => void;
     /** Favorites screen: there, "Remove" already is unfavouriting. */
     favorites?: boolean;
+    /**
+     * Where the order of the list is the app's to rewrite (a playlist): its rows
+     *  live under the engine whose rows answer a hold by travelling, for the
+     *  whole life of the screen, and the screen is handed the whole new sequence
+     *  each time a row lands. `serverOrder` says whether the view on screen
+     *  is the order the server keeps - the only view a row may be moved in, since
+     *  moving a row in an A-Z or Recently-added view would write that view back
+     *  as a sort the hand never asked for and cannot undo. Outside a selection a
+     *  vertical drag is the list's scroll, and the row's own sideways swipe is a
+     *  pan that would fight the list's (#279). `openRef` is the way in from the
+     *  screen's ⋯ menu: it opens the selection, with nothing marked.
+     */
+    reorder?: {
+      onSave: (songIds: string[]) => void;
+      serverOrder: boolean;
+      openRef?: MutableRefObject<() => void>;
+    };
   };
   /** `opts` goes straight to `playQueue`: the shuffle button asks for the list
    *  dealt, which the screen owning the songs is the one who can request. */
@@ -335,6 +362,9 @@ export function TrackListView({
   const [descriptionHasMore, setDescriptionHasMore] = useState(false);
   /** Last real scroll offset (the gesture only reveals at the top). */
   const lastOffsetY = useRef(0);
+  /** The offset the reorderable engine last handed over, so its worklet can
+   *  skip the JS hop for a scroll that did not move. */
+  const lastScrollWritten = useSharedValue(0);
   const searchH = useRef(new Animated.Value(0)).current;
   const searchBar = !!searchable && songs.length > 0;
 
@@ -368,6 +398,11 @@ export function TrackListView({
   // and several would pass the `!revealed` guard before the re-render, each
   // triggering haptic. The ref updates instantly and stops the rest.
   const revealedRef = useRef(false);
+  /** Whether a row is under a hand mid-drag, which is what tells the reveal
+   *  below that a pull down belongs to the row and not to the search bar. The
+   *  engine says both ends of it - see `dragStarted` and `dragEnded`, which the
+   *  list below hands its events to. */
+  const dragArmed = useRef(false);
 
   function revealSearchBar() {
     if (revealedRef.current) return;
@@ -393,6 +428,18 @@ export function TrackListView({
     }).start(() => setMeasureTick((v) => v + 1));
   }
 
+  /**
+   * The half of the reveal a worklet cannot answer for: a pan this list owns is
+   *  also the drag a row rides, so the pull that reveals the bar is only the
+   *  one that is not moving a row, is not a search already open, and starts
+   *  where the page is still at the top.
+   */
+  function revealIfAtTop() {
+    if (!searchBar || searching || revealedRef.current) return;
+    if (dragArmed.current) return;
+    if (lastOffsetY.current <= 1) revealSearchBar();
+  }
+
   // Simultaneous pan with the list scroll: doesn't steal the gesture, just
   // observes. Android doesn't fire overscroll events (the list clamps offset
   // at 0), so the "pull down at the top" must be detected separately. The
@@ -408,6 +455,34 @@ export function TrackListView({
     .onChange((e) => {
       if (!searchBar || searching || revealed) return;
       if (lastOffsetY.current <= 1 && e.translationY > 60) revealSearchBar();
+    });
+
+  /**
+   * The same reveal, for the engine that owns the pan of its own area.
+   *
+   *  The reorderable list wraps itself in `Gesture.Simultaneous(Gesture.Native(),
+   *  pan)`, so a detector of ours around the list would sit above the library's
+   *  and never see a drag — the app hands this pan to the library instead, as
+   *  its `panGesture`, and the library decorates it with its own `onBegin`,
+   *  `onUpdate`, `onEnd` and `onFinalize`, all worklets (`ReorderableListCore.tsx:346`).
+   *  Two things follow. The answer has to live in the one slot the library does
+   *  not take — `onChange` — and it has to be a worklet as well, because one
+   *  recognizer runs on one thread: a `runOnJS(true)` pan leaves the library's
+   *  worklet callbacks with nowhere to run, which is what made a row arm a drag
+   *  and then never move. And the pan must not carry the upward `failOffsetY`
+   *  the ordinary one uses to cancel a scroll — a drag that may travel up a
+   *  list is the same pan — nor an `activeOffsetY`, which delays `onBegin` past
+   *  the touchdown the library measures the drag from.
+   *
+   *  A worklet sees numbers, not the app's state, so it answers only the travel
+   *  it can see and hands the rest of the decision over to JS.
+   */
+  const revealPanList = Gesture.Pan()
+    .onChange((e) => {
+      'worklet';
+      if (e.translationY > 60) {
+        scheduleOnRN(revealIfAtTop);
+      }
     });
 
   // ── Multi-select ────────────────────────────────────────────────────────
@@ -436,12 +511,47 @@ export function TrackListView({
   // null = normal mode; a Set (even empty) = selecting.
   const [selectedIds, setSelectedIds] = useState<Set<string> | null>(null);
   const selecting = selectedIds !== null;
+  const reorderOpenRef = selection?.reorder?.openRef;
+  useEffect(() => {
+    if (reorderOpenRef) reorderOpenRef.current = () => setSelectedIds(new Set());
+  });
   // Row that just entered selection via long-press. On release, the `onPress` of
   // that same gesture arrives with `selecting` already active and would undo the
   // selection; we discard it once. Reset in `onPressIn` (start of each press),
   // so no residue remains even if `onPress` doesn't fire after the long-press.
   const justLongPressed = useRef<string | null>(null);
   const allSelected = selecting && selectedIds.size === songs.length && songs.length > 0;
+
+  /**
+   * The reorderable engine's own view, for the one scroll it has to send back
+   *  to the top when a search is cancelled (`cancelSearch`).
+   */
+  const dragListRef = useRef<FlatList<{ song: Song; index: number }>>(null);
+  /**
+   * The order a drop made, until `songs` answers with it. Each row keeps its
+   *  place in the `songs` it was made over, so the order is void once `songs`
+   *  changes, in the same render.
+   */
+  const [draggedRows, setDraggedRows] = useState<{
+    rows: { song: Song; index: number }[];
+    over: Song[];
+  } | null>(null);
+
+  /** Leaving selection mode. Orders were written as each row landed. */
+  function exitSelection() {
+    setSelectedIds(null);
+    // Leaving is also the release of whatever row was under the hand: the flag
+    //  that says a row is under a hand is cleared by that row's own press, and
+    //  a drag that was cancelled mid-way leaves no press behind it, which would
+    //  otherwise keep the search bar's reveal from answering for the rest of the
+    //  screen. The hand that left is a hand, so its press is discarded as well.
+    dragArmed.current = false;
+    justLongPressed.current = null;
+    // Nothing to put back in step any more: the engine does not change when the
+    // selection leaves, nor when the view is switched, so the list that answers
+    // for `scrollY` is the one that was answering for it before it came in, and
+    // the page keeps its place.
+  }
 
   function toggleSelect(key: string) {
     setSelectedIds((cur) => {
@@ -462,7 +572,7 @@ export function TrackListView({
         indices.push(playlistIndices ? playlistIndices[i] : i);
       }
     });
-    setSelectedIds(null);
+    exitSelection();
     if (sel.length > 0) fn(sel, indices);
   }
 
@@ -470,7 +580,8 @@ export function TrackListView({
     favorites: selection?.favorites,
   });
   // What this list lets you do with a selection, each one built once: the bar
-  // takes two of them and ⋯ holds whatever is left.
+  // takes the ones that work on what is marked and, unless the drag's button
+  // needs the room, adding to a playlist as well, and ⋯ holds what is left.
   const addToAction: SelectionAction[] = selection?.onAddTo
     ? [
         {
@@ -508,7 +619,8 @@ export function TrackListView({
   // it goes under the bar - but is clamped so it ends just above where this
   // one would, on every screen there is.
   const albumPadTop = insets.top + TOPBAR_H + spacing.md;
-  const wideH = wideCover ? Math.min(wideCover.height, albumPadTop + art - 24) : 0;
+  const [wideVisible, setWideVisible] = useState(true);
+  const wideH = wideCover ? wideCover.preserveHeight ? wideCover.height : Math.min(wideCover.height, albumPadTop + art - 24) : 0;
   const cover = wideCover || hideCover ? 0 : art;
   const collapse = wideCover ? wideH : hideCover ? 120 : art;
   // Down past the title and the buttons, so the header is the cover's colour
@@ -604,11 +716,17 @@ export function TrackListView({
   const playDockY = scrollY.interpolate({
     inputRange: [0, dockAt],
     outputRange: [playContentY, dockTop - searchShift],
-    // Left extends, right clamps: once docked the button goes no further, but
-    // while the list is rubber-banded past the top the header keeps moving down
-    // and the button has to move with it instead of sitting still (#overscroll).
+    // Left extends, right clamps or not: once docked the button goes no
+    // further, but while the list is rubber-banded past the top the header
+    // keeps moving down and the button has to move with it instead of sitting
+    // still (#overscroll). While a selection is up the line is not held at
+    // all: the same slope keeps running, so the button leaves with the
+    // header instead of stopping at the bar - a selection's bar is the
+    // selection's own controls, and a button that stopped there would sit
+    // over them; it is drawn under the bar, so it slips behind it instead
+    // (see the copy of the button drawn before the bar).
     extrapolateLeft: 'extend',
-    extrapolateRight: 'clamp',
+    extrapolateRight: selecting ? 'extend' : 'clamp',
   });
 
   // Which of the two circles shows. Until the bar reaches it, the one laid out
@@ -638,6 +756,60 @@ export function TrackListView({
     }
   }, [behindAt, playContentY]);
 
+  /**
+   * The reorderable engine's answer for the page's one scroll number.
+   *
+   *  Everything the page paints outside the list — the cover's fade, the bar's
+   *  colour and its title, the play button's dock, the accent's parallax —
+   *  follows `scrollY`, and it followed it only for the ordinary list. A list
+   *  that does not answer for the number leaves the header painting a scroll
+   *  that is no longer on screen: the cover stays at opacity 0 and never fades
+   *  back, the bar is solid at the very top of the page, the button stays welded
+   *  in the bar (#279 on the device). One number, one owner, whichever list is
+   *  up — and the library hands this engine its own composed scroll handler
+   *  (`ReorderableListCore.tsx:1145`), so the number leaves the worklet into
+   *  JS once per scroll event, which is what the ordinary list's own listener
+   *  already costs at throttle 16.
+   */
+  const dragScroll = useAnimatedScrollHandler({
+    onScroll: (e) => {
+      const y = e.contentOffset.y;
+      // A scroll event that answers a place already written is not worth a
+      // hop across: the library fires this handler on every event it gets.
+      if (Math.abs(y - lastScrollWritten.value) < 1) return;
+      lastScrollWritten.value = y;
+      scheduleOnRN(listScrolled, y);
+    },
+  });
+
+  /**
+   * What a scroll answers for, whichever list made it: where the page is now,
+   *  whether that is deep enough to collapse the revealed search bar, and
+   *  whether the bar has reached the play button - from there the copy drawn
+   *  over the bar takes the taps and is the one the screen reader is offered.
+   *  The ordinary list's listener runs on this side and answers with it
+   *  directly; the reorderable engine's listener has to be a worklet to be
+   *  accepted at all, which is why that one hands the answers across.
+   */
+  function scrolledTo(y: number) {
+    lastOffsetY.current = y;
+    if (wideCover) setWideVisible(y < wideH && !searching);
+    // Scrolling down with the bar open collapses it.
+    if (revealedRef.current && !searching && y > 30) collapseSearchBar();
+    const should = playContentY > 0 && y >= behindAtRef.current;
+    if (should !== overBarRef.current) {
+      overBarRef.current = should;
+      setOverBar(should);
+    }
+  }
+
+  // The JS half of the above: this engine's listener is a worklet, so the
+  // number has to be written here as well as read.
+  function listScrolled(y: number) {
+    scrollY.setValue(y);
+    scrolledTo(y);
+  }
+
   // Live filtering; preserves each song's original index so play/enqueue/remove
   // still point to the correct position.
   const filtered = useMemo(() => {
@@ -660,7 +832,8 @@ export function TrackListView({
     setQuery('');
     setSearching(false);
     collapseSearchBar();
-    listRef.current?.scrollToOffset({ offset: 0, animated: false });
+    // Whichever engine is up holds the scroll; only one of the two is mounted.
+    (listRef.current ?? dragListRef.current)?.scrollToOffset({ offset: 0, animated: false });
   }
 
   function shufflePlay() {
@@ -671,11 +844,168 @@ export function TrackListView({
     void onPlay(0, { shuffled: true });
   }
 
+  /**
+   * The engine the screen runs. A playlist whose order is the app's to rewrite
+   *  holds its rows under the reorderable engine for the whole life of the
+   *  screen, and not only while a hand is arranging them: swapping engines when
+   *  the selection came in left one page carrying two lists and one scroll
+   *  number, and that number answered for whichever list is no longer up - the
+   *  cover, the bar and the play button painted a scroll the rows under them
+   *  had not made (see `dragScroll`, and the six-frame climb that used to push
+   *  a fresh list down to where the finger came down). One engine, one scroll,
+   *  nothing to hand over.
+   */
+  const reorderEngine = !!selection?.reorder;
+  /**
+   * The rows the reorderable engine holds: the display order, each carrying its
+   *  place in the screen's list, or the live search results. The engine does not
+   *  swap when a selection comes in, so the search has to be visible in the data
+   *  it is handed as well — the other engine takes `shownSongs` for the same
+   *  reason one screen down.
+   */
+  const dragRows = useMemo(
+    () =>
+      filtered
+        ? filtered.map((r) => ({ song: r.song, index: r.index }))
+        : songs.map((song, index) => ({ song, index })),
+    [filtered, songs],
+  );
+
+  /**
+   * Where a hold on a row moves it: only while selecting, only where the view
+   *  on screen is the order the server keeps (the screen says so, see
+   *  `serverOrder`), only while not searching, and only where there is
+   *  somewhere to travel - a drag needs two places, which a list of a single
+   *  row does not have, and answering it here is what keeps the grip off a row
+   *  the engine could only ever refuse.
+   *
+   *  Outside a selection a vertical drag is the list's scroll, and the row's
+   *  own sideways swipe is a pan that would fight the list's; while searching,
+   *  the rows shown are not the whole list, and moving part of a list through
+   *  another part is not a thing that has a meaning.
+   */
+  const serverOrder = selection?.reorder?.serverOrder;
+  const dragging =
+    reorderEngine && selecting && !searching && serverOrder && dragRows.length > 1;
+
+  const dragOrder = draggedRows?.over === songs ? draggedRows.rows : null;
+
+  /**
+   * The two ends of a hand on a row, which the engine reports rather than the
+   *  app guessing: `startDrag` runs `onDragStart` only inside the branch that
+   *  really started a drag (ReorderableListCore.tsx:1026 - an arm asked while
+   *  another drag is still in flight is refused and says nothing), and a press
+   *  never answers for the release of a drag at all, since the row rides inside
+   *  that drag and its release does not reach the row's own Pressable. The app
+   *  asked its own arm callback for both, which set the flag for the arms that
+   *  were refused and left it standing for the rest of the screen once a row
+   *  had moved (see `dragArmed`). The library's callbacks are worklets, so both
+   *  ends hand their bookkeeping back to JS.
+   *
+   *  It answers with the rows the engine is holding: the ones on screen, which
+   *  is `dragOrder` where a hand has made an order and `dragRows` otherwise —
+   *  and that is why it sits below those two and `rowKeys`: the place a row
+   *  lifted from is a place in the list on screen, and the key it answers with
+   *  is that row's own.
+   */
+  function dragStarted(index: number) {
+    dragArmed.current = true;
+    // The place the row lifted from, in the screen's own list, which is the key
+    //  the row answers with: `index` counts the rows on the list, and a row that
+    //  travelled still carries its old place.
+    const place = (dragOrder ?? dragRows)[index]?.index;
+    if (place != null) justLongPressed.current = rowKeys[place];
+  }
+
+  function dragEnded() {
+    dragArmed.current = false;
+  }
+
+  /**
+   * One row of the list, for both list engines: the reorderable one hands a row
+   * to another place on the list, so the row is told where it sits in the
+   * screen's own list and not only where it sits on the screen — everything the
+   * rows answer with (the play button, the ⋯ menu, removing) still points at
+   * the same song after the row travelled.
+   *
+   *  It is one row and nothing above it: what sits above a row (a disc header
+   *  of a multi-disc album) is said where the list assembles its rows, since it
+   *  is a part of the list's shape rather than of the row's.
+   */
+  function renderRow(song: Song, index: number, draggable: boolean) {
+    const rowKey = rowKeys[index];
+    // This episode's description and date, when the screen passed them
+    // (only the show's own does); the row's identity is stable, so the
+    // row's memo holds across repaints.
+    const ep = episodeInfo?.get(song.id);
+    // The hold that opens the selection marks its song. The press the release
+    // brings is discarded, so the same hold cannot unmark it.
+    const enterSelection =
+      selection && !selecting
+        ? () => {
+            haptic('medium');
+            setSelectedIds(new Set([rowKey]));
+            justLongPressed.current = rowKey;
+          }
+        : undefined;
+    const rowProps = {
+      song,
+      episode: ep,
+      // With artwork visible the number is omitted: the album stays as
+      // usual (only the artist's Popular shows number + cover).
+      position: numbered && !showArtwork ? song.track ?? index + 1 : undefined,
+      isCurrent: currentId === song.id,
+      showArtwork,
+      podcastFavIds,
+      menuContext:
+        playlistId
+          ? { playlistId, index: playlistIndices ? playlistIndices[index] : index }
+          : undefined,
+      selecting,
+      selected: !!selectedIds?.has(rowKey),
+      onLongPress: enterSelection,
+      onPressIn: () => {
+        justLongPressed.current = null;
+      },
+      onPress: () => {
+        // Discards the press that follows a hold the row was armed with: the one
+        //  that opened a selection, and the release of a drag the row rode (see
+        //  `dragStarted`) - an order the hand made is not a mark the hand made,
+        //  and a drag that ticked the row it travelled would move what Remove and
+        //  Download act on under a hand that never meant to.
+        if (justLongPressed.current === rowKey) return;
+        if (selecting) toggleSelect(rowKey);
+        else onPlay(index);
+      },
+    };
+    // A row of the reorderable engine keeps its swipe: outside a selection the
+    // swipe is what queues the song, and the row's own handler sits below the
+    // list's pan, which is what lets it have the finger. While a selection is
+    // up the row turns its swipe off itself (see `TrackRow`'s `enabled`).
+    // What a drag means for the list - that a row is under a hand, and that the
+    // press whose release follows the arm belongs to the drag rather than to the
+    // hand, so that an order the hand made is not a mark the hand made: a drag
+    // that ticked the row it travelled would move what Remove and Download act
+    // on under a hand that never meant to - is the engine's to say, through
+    // `onDragStart` and `onDragEnd` on the list (see `dragStarted`). All the row
+    // needs is the grip: the icon at its right edge that says it can travel, and
+    // the arm for a hold on the row or on that icon.
+    return draggable
+      ? <DragTrackRow {...rowProps} grip={dragging} />
+      : <TrackRow {...rowProps} />;
+  }
+
+  /** The whole list's footer, whichever list is on screen. */
+  const listFooter = footer ? <>{footer}</> : null;
+
   // The play button over the bar. It follows the place laid out for it in the
   // header - the search row's height riding in the outer wrapper, the scroll
   // in the one inside it - until it reaches the bar's line, and holds there:
   // half in the bar, half below its lower edge. Drawn after the bar (below),
-  // so it is in front of it. Until the bar reaches it, it is the header's own
+  // so it is in front of it. While a selection is up it is drawn before the
+  // bar instead, and does not hold at the line at all, so the bar's colour and
+  // its own controls stay over it and the button goes behind them with the
+  // header (see `playDockY`). Until the bar reaches it, it is the header's own
   // circle that shows (see `slotOpacity`), and the taps and the screen reader
   // are the header's too.
   const playOverlay =
@@ -701,11 +1031,346 @@ export function TrackListView({
       </Animated.View>
     );
 
+  /**
+   * The header above the rows, taken out of the list so both list engines
+   *  mount it: it is the same furniture above the rows whichever way the
+   *  rows can be answered, and a drag surface without it would be a cover
+   *  and a title vanishing under the finger the moment the selection came
+   *  in.
+   */
+  const listHeader = (
+    <View>
+      {searchBar ? (
+        /* Collapsed = height 0 (invisible); the gesture reveals it. The clip
+           goes in a no-padding container: any padding would impose a
+           minimum height and show a sliver. */
+        <Animated.View style={[styles.searchClip, { height: searchH }]}>
+        <View style={styles.searchRow}>
+          <View style={styles.searchBox}>
+            <Icon name="search" size={18} color={colors.textSecondary} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder={searchPlaceholder ?? t('Find in playlist')}
+              placeholderTextColor={colors.textSecondary}
+              value={query}
+              onChangeText={setQuery}
+              onFocus={() => setSearching(true)}
+              returnKeyType="search"
+              autoCorrect={false}
+            />
+            {query.length > 0 ? (
+              <Pressable
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel={t('Clear')}
+                onPress={() => setQuery('')}
+              >
+                <Icon name="close-circle" size={18} color={colors.textSecondary} />
+              </Pressable>
+            ) : null}
+          </View>
+          {searching ? (
+            <Pressable hitSlop={8} accessibilityRole="button" onPress={cancelSearch}>
+              <Text style={styles.searchCancel}>{t('Cancel')}</Text>
+            </Pressable>
+          ) : null}
+        </View>
+        </Animated.View>
+      ) : null}
+      {/* While searching, the large header is hidden: results stay flush
+          with the bar, which is what Spotify does. It is also what the
+          button's place is measured against, and not the wrapper: the
+          search row above it is not scroll, and its height travels with
+          the button on its own (see `searchShift`). */}
+      {searching ? null : (
+    <View ref={headerRootRef} style={styles.header}>
+      {wideCover ? (
+        /* Paint above the first pixel: the pull-down bounce reveals
+           whatever sits above the content - the page background by
+           default - and on the radio that strip must stay the accent,
+           the cover's own colour. Zero net layout: it hangs off the top
+           of the header, off screen until a pull uncovers it. */
+        <View
+          pointerEvents="none"
+          style={{
+            width: screenW,
+            height: OVERSCROLL_H,
+            marginTop: -OVERSCROLL_H,
+            marginHorizontal: -centredPadding(screenW, spacing.lg),
+            backgroundColor: headerColor,
+          }}
+        />
+      ) : null}
+      {wideCover ? (
+        /* The picture at the very top, pulled out of the rows' inset to
+           the edges of the display: it fades with the scroll the way
+           the square one does, and the bar rides over it. */
+        <Animated.View
+          style={[
+            styles.wideCover,
+            {
+              width: screenW,
+              height: wideH,
+              opacity: coverOpacity,
+              marginHorizontal: -centredPadding(screenW, spacing.lg),
+            },
+          ]}
+        >
+          {onCoverPress ? (
+            <Pressable
+              onPress={onCoverPress}
+              accessibilityRole="imagebutton"
+              accessibilityLabel={t('View cover')}
+            >
+              {wideCover.render(screenW, wideH, wideVisible)}
+            </Pressable>
+          ) : (
+            wideCover.render(screenW, wideH, wideVisible)
+          )}
+        </Animated.View>
+      ) : hideCover ? null : (
+        <Animated.View style={[styles.coverCenter, { opacity: coverOpacity }]}>
+          {/* Android draws no shadow from a transparent view's content
+              the way iOS does: there it is a box shadow the size and
+              shape of the cover. */}
+          <View
+            style={
+              Platform.OS === 'android'
+                ? { borderRadius: artRadius, boxShadow: '0px 10px 32px rgba(0, 0, 0, 0.45)' }
+                : null
+            }
+          >
+            {onCoverPress ? (
+              <Pressable
+                onPress={onCoverPress}
+                accessibilityRole="imagebutton"
+                accessibilityLabel={t('View cover')}
+              >
+                {renderCover ? renderCover(art) : <Cover uri={coverUri} size={art} />}
+              </Pressable>
+            ) : renderCover ? (
+              renderCover(art)
+            ) : (
+              <Cover uri={coverUri} size={art} />
+            )}
+          </View>
+        </Animated.View>
+      )}
+      <Text style={styles.title} numberOfLines={2}>
+        {title}
+      </Text>
+      {subtitle ? (
+        onSubtitlePress ? (
+          <Pressable hitSlop={6} style={styles.subtitleRow} onPress={onSubtitlePress}>
+            {artistImageUri ? (
+              <View style={styles.artistPhoto}>
+                <Cover uri={artistImageUri} size={24} />
+              </View>
+            ) : null}
+            <Text style={[styles.subtitle, styles.subtitleLink]}>{subtitle}</Text>
+          </Pressable>
+        ) : (
+          <Text style={styles.subtitle}>{subtitle}</Text>
+        )
+      ) : null}
+      {description?.trim() ? (
+        <View>
+          {/* The whole text, drawn invisibly: with `numberOfLines` set,
+              onTextLayout only reports the lines that survived, so the
+              copy below can't tell whether anything was cut. */}
+          <Text
+            style={styles.descriptionMeasure}
+            onTextLayout={(e) =>
+              setDescriptionHasMore(e.nativeEvent.lines.length > DESCRIPTION_LINES)
+            }
+          >
+            {description.trim()}
+          </Text>
+          <Text
+            style={styles.description}
+            numberOfLines={descriptionExpanded ? undefined : DESCRIPTION_LINES}
+          >
+            {description.trim()}
+          </Text>
+          {descriptionHasMore ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setDescriptionExpanded((v) => !v)}
+              style={styles.descriptionMore}
+              hitSlop={spacing.sm}
+            >
+              <Text style={styles.descriptionMoreText}>
+                {descriptionExpanded ? t('Show less') : t('Show more')}
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+      {showExplicit || meta ? (
+        <View style={styles.metaRow}>
+          {showExplicit ? <ExplicitBadge status="explicit" /> : null}
+          {meta ? <Text style={styles.meta}>{meta}</Text> : null}
+        </View>
+      ) : null}
+      {/* Deliberately quiet: same weight as the metadata line above, so
+          it reads as one more piece of album info and not as a control.
+          Horizontal because an album with eight tags shouldn't push the
+          play button down the screen. */}
+      {genres && genres.length > 0 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.genres}
+          contentContainerStyle={styles.genresContent}
+        >
+          {genres.map((g) => (
+            <Link key={g} href={`/genre/${encodeURIComponent(g)}`} asChild>
+              <Pressable style={styles.genreChip}>
+                <Text style={styles.genreText}>{g}</Text>
+              </Pressable>
+            </Link>
+          ))}
+        </ScrollView>
+      ) : null}
+  
+      <View style={styles.actions}>
+        <View style={styles.actionsLeft}>
+          {favorite ? (
+            <FavoriteButton
+              id={favorite.id}
+              type={favorite.type}
+              starred={favorite.starred}
+              podcast={favorite.podcast ? { kind: 'channel', channelId: favorite.id } : undefined}
+              size={28}
+            />
+          ) : null}
+          {download ? (
+            <Pressable
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel={
+                download.status === 'done' ? t('Remove download') : t('Download')
+              }
+              onPress={download.onPress}
+              style={styles.downloadWrap}
+            >
+              {download.status === 'active' ? (
+                <>
+                  <ActivityIndicator size="small" color={colors.accent} />
+                  <Text style={[styles.downloadProgress, { color: colors.accent }]}>
+                    {Math.round(download.progress * 100)}%
+                  </Text>
+                </>
+              ) : (
+                <Icon
+                  name={
+                    download.status === 'done'
+                      ? 'arrow-down-circle'
+                      : 'arrow-down-circle-outline'
+                  }
+                  size={26}
+                  color={download.status === 'done' ? colors.accent : colors.textSecondary}
+                />
+              )}
+            </Pressable>
+          ) : null}
+          {onSort ? (
+            <Pressable
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel={t('Sort')}
+              onPress={onSort}
+            >
+              <Icon name="swap-vertical" size={24} color={colors.textSecondary} />
+            </Pressable>
+          ) : null}
+          {onMenu ? (
+            <Pressable
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel={t('More options')}
+              onPress={onMenu}
+            >
+              <Icon name="ellipsis-horizontal" size={26} color={colors.textSecondary} />
+            </Pressable>
+          ) : null}
+        </View>
+  
+        <View style={styles.actionsRight}>
+          <Pressable
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel={t('Shuffle')}
+            onPress={shufflePlay}
+          >
+            <Icon
+              name="shuffle"
+              size={26}
+              color={shuffleActive ? colors.accent : colors.textSecondary}
+            />
+          </Pressable>
+          {/* The button while it is still in the header: drawn here so
+              it moves with the list, overscroll included, and taking the
+              taps from there down - a dragger that starts on it is the
+              list's, as it always was. */}
+          <Pressable
+            ref={playBtnRef}
+            style={styles.playSlot}
+            collapsable={false}
+            accessibilityElementsHidden={overBar && !selecting}
+            importantForAccessibility={
+              overBar && !selecting ? 'no-hide-descendants' : 'auto'
+            }
+            accessibilityRole="button"
+            accessibilityLabel={t('Play')}
+            onPress={() => songs.length > 0 && onPlay(0)}
+          >
+            <Animated.View
+              style={[
+                styles.playButton,
+                { backgroundColor: colors.accent, opacity: slotOpacity },
+              ]}
+            >
+              <Icon name="play" size={28} color={colors.onAccent} />
+            </Animated.View>
+          </Pressable>
+        </View>
+      </View>
+  
+      {addAction ? (
+        <Pressable
+          accessibilityRole="button"
+          onPress={addAction.onPress}
+          style={({ pressed }) => [styles.addRow, pressed && { opacity: 0.6 }]}
+        >
+          <View style={styles.addBox}>
+            <Icon
+              name={addAction.icon ?? 'add'}
+              size={26}
+              color={colors.textSecondary}
+            />
+          </View>
+          <Text style={styles.addLabel}>{addAction.label}</Text>
+        </Pressable>
+      ) : null}
+    </View>
+      )}
+    </View>
+  );
+
   return (
     <View style={styles.root}>
       <View style={{ flex: 1 }}>
       {/* Dominant color gradient; scrolls with 1:1 parallax. Hidden in search
-          mode to keep the screen flat black. */}
+          mode to keep the screen flat black. It stays where the rows can be
+          dragged: the colour is what says which playlist this is, and an
+          accent that went out the moment the selection came in would leave a
+          accent that went out the moment the selection came in would leave a
+          black page under a hand that is about to arrange that playlist. The
+          tint follows `scrollY` whichever list made it, the reorderable one
+          included - its handler answers for the number the same way the
+          ordinary list's listener does (see `dragScroll`, and the reads the
+          two share in `scrolledTo`). */}
       {searching ? null : (
         <Animated.View
           pointerEvents="none"
@@ -761,444 +1426,166 @@ export function TrackListView({
         </Animated.View>
       )}
 
-      <GestureDetector gesture={revealPan}>
-      <AnimatedList
-        ref={listRef}
-        simultaneousHandlers={revealPanRef}
-        {...listPerf}
-        // Each row mounts a ReanimatedSwipeable (gestures + reanimated); with
-        // `removeClippedSubviews` (known Android bug) those heavy rows render
-        // blank and take a while to appear when scrolling large lists.
-        // Disabling it here keeps them mounted within the virtual window.
-        removeClippedSubviews={false}
-        data={shownSongs}
-        // The row's own key, not the song's: the same song can be in the list
-        // twice and React was being handed the same key for both.
-        keyExtractor={(_, index) => rowKeys[filtered ? filtered[index].index : index]}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-        contentContainerStyle={[
-          styles.list,
-          {
-            paddingTop: listPadTop,
-            paddingBottom: bottomPad,
-            // Centred on a wide screen instead of stretched across it: a row
-            // whose title is at one edge and whose duration is at the other,
-            // a hand's width apart, is a phone screen that was pulled (#131).
-            paddingHorizontal: centredPadding(screenW, spacing.lg),
-          },
-        ]}
-        scrollEventThrottle={16}
-        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
-          // The listener still runs on this side: a native event is delivered to
-          // JS as well, it just no longer has to be for the animation to move.
-          useNativeDriver: true,
-          listener: (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-            const y = e.nativeEvent.contentOffset.y;
-            lastOffsetY.current = y;
-            // Scrolling down with the bar open collapses it.
-            if (revealed && !searching && y > 30) collapseSearchBar();
-            // The bar reaching the button hands the taps (and the screen
-            // reader) over to what is drawn above the bar.
-            const should = y >= behindAtRef.current;
-            if (should !== overBarRef.current) {
-              overBarRef.current = should;
-              setOverBar(should);
-            }
-          },
-        })}
-        ListHeaderComponent={
-          <View>
-            {searchBar ? (
-              /* Collapsed = height 0 (invisible); the gesture reveals it. The clip
-                 goes in a no-padding container: any padding would impose a
-                 minimum height and show a sliver. */
-              <Animated.View style={[styles.searchClip, { height: searchH }]}>
-              <View style={styles.searchRow}>
-                <View style={styles.searchBox}>
-                  <Icon name="search" size={18} color={colors.textSecondary} />
-                  <TextInput
-                    style={styles.searchInput}
-                    placeholder={searchPlaceholder ?? t('Find in playlist')}
-                    placeholderTextColor={colors.textSecondary}
-                    value={query}
-                    onChangeText={setQuery}
-                    onFocus={() => setSearching(true)}
-                    returnKeyType="search"
-                    autoCorrect={false}
-                  />
-                  {query.length > 0 ? (
-                    <Pressable
-                      hitSlop={8}
-                      accessibilityRole="button"
-                      accessibilityLabel={t('Clear')}
-                      onPress={() => setQuery('')}
-                    >
-                      <Icon name="close-circle" size={18} color={colors.textSecondary} />
-                    </Pressable>
-                  ) : null}
-                </View>
-                {searching ? (
-                  <Pressable hitSlop={8} accessibilityRole="button" onPress={cancelSearch}>
-                    <Text style={styles.searchCancel}>{t('Cancel')}</Text>
-                  </Pressable>
-                ) : null}
-              </View>
-              </Animated.View>
-            ) : null}
-            {/* While searching, the large header is hidden: results stay flush
-                with the bar, which is what Spotify does. It is also what the
-                button's place is measured against, and not the wrapper: the
-                search row above it is not scroll, and its height travels with
-                the button on its own (see `searchShift`). */}
-            {searching ? null : (
-          <View ref={headerRootRef} style={styles.header}>
-            {wideCover ? (
-              /* Paint above the first pixel: the pull-down bounce reveals
-                 whatever sits above the content - the page background by
-                 default - and on the radio that strip must stay the accent,
-                 the cover's own colour. Zero net layout: it hangs off the top
-                 of the header, off screen until a pull uncovers it. */
-              <View
-                pointerEvents="none"
-                style={{
-                  width: screenW,
-                  height: OVERSCROLL_H,
-                  marginTop: -OVERSCROLL_H,
-                  marginHorizontal: -centredPadding(screenW, spacing.lg),
-                  backgroundColor: headerColor,
-                }}
-              />
-            ) : null}
-            {wideCover ? (
-              /* The picture at the very top, pulled out of the rows' inset to
-                 the edges of the display: it fades with the scroll the way
-                 the square one does, and the bar rides over it. */
-              <Animated.View
-                style={[
-                  styles.wideCover,
-                  {
-                    width: screenW,
-                    height: wideH,
-                    opacity: coverOpacity,
-                    marginHorizontal: -centredPadding(screenW, spacing.lg),
-                  },
-                ]}
-              >
-                {onCoverPress ? (
-                  <Pressable
-                    onPress={onCoverPress}
-                    accessibilityRole="imagebutton"
-                    accessibilityLabel={t('View cover')}
-                  >
-                    {wideCover.render(screenW, wideH)}
-                  </Pressable>
-                ) : (
-                  wideCover.render(screenW, wideH)
-                )}
-              </Animated.View>
-            ) : hideCover ? null : (
-              <Animated.View style={[styles.coverCenter, { opacity: coverOpacity }]}>
-                {/* Android draws no shadow from a transparent view's content
-                    the way iOS does: there it is a box shadow the size and
-                    shape of the cover. */}
-                <View
-                  style={
-                    Platform.OS === 'android'
-                      ? { borderRadius: artRadius, boxShadow: '0px 10px 32px rgba(0, 0, 0, 0.45)' }
-                      : null
-                  }
-                >
-                  {onCoverPress ? (
-                    <Pressable
-                      onPress={onCoverPress}
-                      accessibilityRole="imagebutton"
-                      accessibilityLabel={t('View cover')}
-                    >
-                      {renderCover ? renderCover(art) : <Cover uri={coverUri} size={art} />}
-                    </Pressable>
-                  ) : renderCover ? (
-                    renderCover(art)
-                  ) : (
-                    <Cover uri={coverUri} size={art} />
-                  )}
-                </View>
-              </Animated.View>
-            )}
-            <Text style={styles.title} numberOfLines={2}>
-              {title}
-            </Text>
-            {subtitle ? (
-              onSubtitlePress ? (
-                <Pressable hitSlop={6} style={styles.subtitleRow} onPress={onSubtitlePress}>
-                  {artistImageUri ? (
-                    <View style={styles.artistPhoto}>
-                      <Cover uri={artistImageUri} size={24} />
-                    </View>
-                  ) : null}
-                  <Text style={[styles.subtitle, styles.subtitleLink]}>{subtitle}</Text>
-                </Pressable>
-              ) : (
-                <Text style={styles.subtitle}>{subtitle}</Text>
-              )
-            ) : null}
-            {description?.trim() ? (
-              <View>
-                {/* The whole text, drawn invisibly: with `numberOfLines` set,
-                    onTextLayout only reports the lines that survived, so the
-                    copy below can't tell whether anything was cut. */}
-                <Text
-                  style={styles.descriptionMeasure}
-                  onTextLayout={(e) =>
-                    setDescriptionHasMore(e.nativeEvent.lines.length > DESCRIPTION_LINES)
-                  }
-                >
-                  {description.trim()}
-                </Text>
-                <Text
-                  style={styles.description}
-                  numberOfLines={descriptionExpanded ? undefined : DESCRIPTION_LINES}
-                >
-                  {description.trim()}
-                </Text>
-                {descriptionHasMore ? (
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={() => setDescriptionExpanded((v) => !v)}
-                    style={styles.descriptionMore}
-                    hitSlop={spacing.sm}
-                  >
-                    <Text style={styles.descriptionMoreText}>
-                      {descriptionExpanded ? t('Show less') : t('Show more')}
-                    </Text>
-                  </Pressable>
-                ) : null}
-              </View>
-            ) : null}
-            {showExplicit || meta ? (
-              <View style={styles.metaRow}>
-                {showExplicit ? <ExplicitBadge status="explicit" /> : null}
-                {meta ? <Text style={styles.meta}>{meta}</Text> : null}
-              </View>
-            ) : null}
-            {/* Deliberately quiet: same weight as the metadata line above, so
-                it reads as one more piece of album info and not as a control.
-                Horizontal because an album with eight tags shouldn't push the
-                play button down the screen. */}
-            {genres && genres.length > 0 ? (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={styles.genres}
-                contentContainerStyle={styles.genresContent}
-              >
-                {genres.map((g) => (
-                  <Link key={g} href={`/genre/${encodeURIComponent(g)}`} asChild>
-                    <Pressable style={styles.genreChip}>
-                      <Text style={styles.genreText}>{g}</Text>
-                    </Pressable>
-                  </Link>
-                ))}
-              </ScrollView>
-            ) : null}
-
-            <View style={styles.actions}>
-              <View style={styles.actionsLeft}>
-                {favorite ? (
-                  <FavoriteButton
-                    id={favorite.id}
-                    type={favorite.type}
-                    starred={favorite.starred}
-                    podcast={favorite.podcast ? { kind: 'channel', channelId: favorite.id } : undefined}
-                    size={28}
-                  />
-                ) : null}
-                {download ? (
-                  <Pressable
-                    hitSlop={10}
-                    accessibilityRole="button"
-                    accessibilityLabel={
-                      download.status === 'done' ? t('Remove download') : t('Download')
-                    }
-                    onPress={download.onPress}
-                    style={styles.downloadWrap}
-                  >
-                    {download.status === 'active' ? (
-                      <>
-                        <ActivityIndicator size="small" color={colors.accent} />
-                        <Text style={[styles.downloadProgress, { color: colors.accent }]}>
-                          {Math.round(download.progress * 100)}%
-                        </Text>
-                      </>
-                    ) : (
-                      <Icon
-                        name={
-                          download.status === 'done'
-                            ? 'arrow-down-circle'
-                            : 'arrow-down-circle-outline'
-                        }
-                        size={26}
-                        color={download.status === 'done' ? colors.accent : colors.textSecondary}
-                      />
-                    )}
-                  </Pressable>
-                ) : null}
-                {onSort ? (
-                  <Pressable
-                    hitSlop={10}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('Sort')}
-                    onPress={onSort}
-                  >
-                    <Icon name="swap-vertical" size={24} color={colors.textSecondary} />
-                  </Pressable>
-                ) : null}
-                {onMenu ? (
-                  <Pressable
-                    hitSlop={10}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('More options')}
-                    onPress={onMenu}
-                  >
-                    <Icon name="ellipsis-horizontal" size={26} color={colors.textSecondary} />
-                  </Pressable>
-                ) : null}
-              </View>
-
-              <View style={styles.actionsRight}>
-                <Pressable
-                  hitSlop={10}
-                  accessibilityRole="button"
-                  accessibilityLabel={t('Shuffle')}
-                  onPress={shufflePlay}
-                >
-                  <Icon
-                    name="shuffle"
-                    size={26}
-                    color={shuffleActive ? colors.accent : colors.textSecondary}
-                  />
-                </Pressable>
-                {/* The button while it is still in the header: drawn here so
-                    it moves with the list, overscroll included, and taking the
-                    taps from there down - a dragger that starts on it is the
-                    list's, as it always was. */}
-                <Pressable
-                  ref={playBtnRef}
-                  style={styles.playSlot}
-                  collapsable={false}
-                  accessibilityElementsHidden={overBar && !selecting}
-                  importantForAccessibility={
-                    overBar && !selecting ? 'no-hide-descendants' : 'auto'
-                  }
-                  accessibilityRole="button"
-                  accessibilityLabel={t('Play')}
-                  onPress={() => songs.length > 0 && onPlay(0)}
-                >
-                  <Animated.View
-                    style={[
-                      styles.playButton,
-                      { backgroundColor: colors.accent, opacity: slotOpacity },
-                    ]}
-                  >
-                    <Icon name="play" size={28} color={colors.onAccent} />
-                  </Animated.View>
-                </Pressable>
-              </View>
-            </View>
-
-            {addAction ? (
-              <Pressable
-                accessibilityRole="button"
-                onPress={addAction.onPress}
-                style={({ pressed }) => [styles.addRow, pressed && { opacity: 0.6 }]}
-              >
-                <View style={styles.addBox}>
-                  <Icon
-                    name={addAction.icon ?? 'add'}
-                    size={26}
-                    color={colors.textSecondary}
-                  />
-                </View>
-                <Text style={styles.addLabel}>{addAction.label}</Text>
-              </Pressable>
-            ) : null}
-          </View>
-            )}
-          </View>
-        }
-        extraData={selectedIds}
-        renderItem={({ item, index }) => {
-          // With an active filter, `index` is the position in results; everything
-          // else (play, remove, numbering) uses the original position.
-          const origIndex = filtered ? filtered[index].index : index;
-          const rowKey = rowKeys[origIndex];
-          // Disc header (only when not searching, where origIndex === index).
-          const discLabel = filtered ? undefined : discHeaders?.[origIndex];
-          // This episode's description and date, when the screen passed them
-          // (only the show's own does); the row's identity is stable, so the
-          // row's memo holds across repaints.
-          const ep = episodeInfo?.get(item.id);
-          const row = (
-            <TrackRow
-              song={item}
-              episode={ep}
-              // With artwork visible the number is omitted: the album stays as
-              // usual (only the artist's Popular shows number + cover).
-              position={numbered && !showArtwork ? item.track ?? origIndex + 1 : undefined}
-              isCurrent={currentId === item.id}
-              showArtwork={showArtwork}
-              podcastFavIds={podcastFavIds}
-              menuContext={
-                playlistId
-                  ? { playlistId, index: playlistIndices ? playlistIndices[origIndex] : origIndex }
-                  : undefined
-              }
-              selecting={selecting}
-              selected={!!selectedIds?.has(rowKey)}
-              onPressIn={() => {
-                justLongPressed.current = null;
-              }}
-              onLongPress={
-                selection && !selecting
-                  ? () => {
-                      haptic('medium');
-                      setSelectedIds(new Set([rowKey]));
-                      justLongPressed.current = rowKey;
-                    }
-                  : undefined
-              }
-              onPress={() => {
-                // Discards the onPress that follows the selection long-press:
-                // otherwise it would deselect the song you entered selection with.
-                if (justLongPressed.current === rowKey) return;
-                if (selecting) toggleSelect(rowKey);
-                else onPlay(origIndex);
-              }}
-            />
-          );
-          if (!discLabel) return row;
-          return (
-            <>
-              <DiscHeader label={discLabel} />
-              {row}
-            </>
-          );
-        }}
-        ListEmptyComponent={
-          filtered ? (
-            <Text style={styles.noResults}>{t('No results for “{q}”', { q: query.trim() })}</Text>
-          ) : emptyState ? (
-            <>{emptyState}</>
-          ) : null
-        }
-        ListFooterComponent={footer ? <>{footer}</> : null}
-      />
-      </GestureDetector>
+      {/* The rows of a playlist whose order is the app's to rewrite: the
+          library's reorderable engine, under the same header, for the whole
+          life of the screen. Its rows answer a hold by going to the list's own
+          pan while a selection is up — outside one the same vertical drag is a
+          scroll, which is what `dragEnabled` says — and the row keeps answering
+          a swipe with its own handler, which sits below the list's pan and so
+          has the finger. The bar carries the button that keeps the new order.
+          The pull-down that reveals the search bar is the same gesture here as
+          anywhere else: it is handed to the list as its `panGesture`, since the
+          library owns the pan of this area and the app's own detector would sit
+          above it and never see the drag. */}
+      {reorderEngine ? (
+        <ReorderableList
+          {...reorderListPerf}
+          ref={dragListRef}
+          onScroll={dragScroll}
+          dragEnabled={dragging}
+          // The library owns the pan of this area, so the app's reveal goes to
+          // it rather than fighting it from a detector above (see `revealPanList`
+          // for why this pan answers in a worklet and carries no `failOffsetY`).
+          panGesture={revealPanList}
+          // The rows are told where they sit in the screen's list: one engine is
+          // up the whole time, so the measurements the drop needs — the index a
+          // row lifts from, how far it travelled, the place it drops into — are
+          // the measurements of cells this list has laid out itself, and the
+          // list is never asked to believe a promise about rows it has not
+          // mounted, which is what used to stop it measuring at all.
+          // A search shows the rows that match, and an order is over the whole list.
+          data={dragging ? dragOrder ?? dragRows : dragRows}
+          keyExtractor={(row) => rowKeys[row.index]}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={[
+            styles.list,
+            {
+              paddingTop: listPadTop,
+              paddingBottom: bottomPad,
+              // Centred on a wide screen instead of stretched across it: a row
+              // whose title is at one edge and whose duration is at the other,
+              // a hand's width apart, is a phone screen that was pulled (#131).
+              paddingHorizontal: centredPadding(screenW, spacing.lg),
+            },
+          ]}
+          extraData={selectedIds}
+          renderItem={({ item }) => renderRow(item.song, item.index, true)}
+          ListEmptyComponent={
+            filtered ? (
+              <Text style={styles.noResults}>{t('No results for “{q}”', { q: query.trim() })}</Text>
+            ) : emptyState ? (
+              <>{emptyState}</>
+            ) : null
+          }
+          ListFooterComponent={listFooter}
+          ListHeaderComponent={listHeader}
+          onReorder={({ from, to }: ReorderableListReorderEvent) => {
+            // The engine reports a release only for a row that left the place it
+            //  came down (ReorderableListCore.tsx:514), so an event here is a
+            //  row that moved, and the new order is written straight away.
+            const rows = applyDrag(dragOrder ?? dragRows, from, to);
+            setDraggedRows({ rows, over: songs });
+            selection?.reorder?.onSave(rows.map((r) => r.song.id));
+          }}
+          // The engine saying a drag started: what the app needs to know is that
+          //  a row is under a hand, which is `startDrag`'s own branch - it is
+          //  reached only when a drag really started (an arm asked while another
+          //  drag is still in flight is refused before it), so the flag has one
+          //  answer for both the pull down that must not open the search bar and
+          //  the `onPress` that must not mark the row that travels.
+          onDragStart={(e: ReorderableListDragStartEvent) => {
+            'worklet';
+            scheduleOnRN(dragStarted, e.index);
+          }}
+          // The same hand leaving: the row is no longer under it, and the pull
+          //  down that finds a song answers again. Only the release says so -
+          //  the row sits inside the library's drag and the release of that drag
+          //  never reaches the row's own Pressable, which is what left the flag
+          //  standing for the rest of the screen after any drag (see
+          //  `dragArmed`).
+          onDragEnd={() => {
+            'worklet';
+            scheduleOnRN(dragEnded);
+          }}
+        />
+      ) : (
+        <GestureDetector gesture={revealPan}>
+        <AnimatedList
+          ref={listRef}
+          simultaneousHandlers={revealPanRef}
+          {...listPerf}
+          // Each row mounts a ReanimatedSwipeable (gestures + reanimated); with
+          // `removeClippedSubviews` (known Android bug) those heavy rows render
+          // blank and take a while to appear when scrolling large lists.
+          // Disabling it here keeps them mounted within the virtual window.
+          removeClippedSubviews={false}
+          data={shownSongs}
+          // The row's own key, not the song's: the same song can be in the list
+          // twice and React was being handed the same key for both.
+          keyExtractor={(_, index) => rowKeys[filtered ? filtered[index].index : index]}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          contentContainerStyle={[
+            styles.list,
+            {
+              paddingTop: listPadTop,
+              paddingBottom: bottomPad,
+              // Centred on a wide screen instead of stretched across it: a row
+              // whose title is at one edge and whose duration is at the other,
+              // a hand's width apart, is a phone screen that was pulled (#131).
+              paddingHorizontal: centredPadding(screenW, spacing.lg),
+            },
+          ]}
+          scrollEventThrottle={16}
+          onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
+            // The listener still runs on this side: a native event is delivered to
+            // JS as well, it just no longer has to be for the animation to move.
+            useNativeDriver: true,
+            // The same answers the reorderable engine hands across: this
+            //  listener runs on this side already, and the event mapping above
+            //  wrote `scrollY` for it.
+            listener: (e: NativeSyntheticEvent<NativeScrollEvent>) =>
+              scrolledTo(e.nativeEvent.contentOffset.y),
+          })}
+          ListHeaderComponent={listHeader}
+          extraData={selectedIds}
+          renderItem={({ item, index }) => {
+            // With an active filter, `index` is the position in results; everything
+            // else (play, remove, numbering) uses the original position.
+            const origIndex = filtered ? filtered[index].index : index;
+            const row = renderRow(item, origIndex, false);
+            // A disc header goes above the row it came with, and only where the
+            //  rows are the whole list: over the rows that match, a header would
+            //  say a disc whose other songs did not match, which the list on
+            //  screen does not hold.
+            const disc = filtered ? undefined : discHeaders?.[origIndex];
+            return disc ? (
+              <>
+                <DiscHeader label={disc} />
+                {row}
+              </>
+            ) : (
+              row
+            );
+          }}
+          ListEmptyComponent={
+            filtered ? (
+              <Text style={styles.noResults}>{t('No results for “{q}”', { q: query.trim() })}</Text>
+            ) : emptyState ? (
+              <>{emptyState}</>
+            ) : null
+          }
+          ListFooterComponent={listFooter}
+        />
+        </GestureDetector>
+      )}
       </View>
 
-      {/* In selection mode the button is drawn under the bar: that bar belongs
-          to the selection, and the button would land on its own controls -
-          which is where the header's button always was, behind it. */}
+      {/* While a selection is up the button is drawn under the bar: the bar of
+          a selection is the selection's own colour and controls, and nothing
+          of the header may sit over them. It is not held there any more - the
+          line it used to stop at runs on, so the button slips behind the bar
+          with the header instead of being cut by it (see `playDockY`). */}
       {selecting ? playOverlay : null}
 
       {/* Fixed top bar: the background and title appear on collapse. In
@@ -1206,20 +1593,23 @@ export function TrackListView({
       <View style={[styles.bar, { height: insets.top + TOPBAR_H, paddingTop: insets.top }]}>
         {selecting ? (
           <>
-            {/* The same bar, the same colour falling away: the two swap in
-                place, and a flat one behind the counter would read as the
-                bar changing rather than as what it says changing. */}
-            <TopBarBackground color={headerColor} opacity={1} />
+            {/* The bar of a selection keeps the header's colour at every
+                scroll: what changes is what it says, not the bar. The
+                header's own title scrolls behind it and is hidden here, so
+                the bar never thins over the list under it - and it is laid
+                flat rather than the one above pinned opaque, which is a
+                style an animation has nothing to hold (see `TopBarPaint`). */}
+            <TopBarPaint color={headerColor} />
             <Pressable
               hitSlop={12}
               accessibilityRole="button"
               accessibilityLabel={t('Close')}
-              onPress={() => setSelectedIds(null)}
+              onPress={exitSelection}
             >
               <Icon name="close" size={26} color={colors.text} />
             </Pressable>
             <Text style={styles.barTitle} numberOfLines={1}>
-              {t('{n} selected', { n: selectedIds.size })}
+              {t(selectedIds.size === 1 ? '{n} selected::one' : '{n} selected', { n: selectedIds.size })}
             </Text>
             <Pressable
               hitSlop={12}
@@ -1259,17 +1649,21 @@ export function TrackListView({
         )}
       </View>
 
-      {/* Over the bar everywhere else: it is the only copy of the button
-          there is, so it has to be in front of it at all times. */}
+      {/* Over the bar everywhere else: outside a selection this is the copy of
+          the button that belongs to the bar, held at its line, so it has to be
+          in front of it; a selection draws its travelling copy above the bar
+          instead (above). */}
       {selecting ? null : playOverlay}
 
       {selecting ? (
         <SelectionBar
           count={selectedIds.size}
-          // Second slot: taking songs out of this list where that is a thing,
-          // and downloading where it isn't. Whichever one loses the slot is
-          // the one behind ⋯.
-          actions={[...addToAction, ...(removeAction.length > 0 ? removeAction : downloadAction)]}
+          // Taking songs out of this list where that is a thing, and downloading
+          //  where it isn't. Whichever one loses the slot is the one behind ⋯.
+          actions={[
+            ...addToAction,
+            ...(removeAction.length > 0 ? removeAction : downloadAction),
+          ]}
           menu={[
             ...(removeAction.length > 0 ? downloadAction : []),
             ...selectionMenu.actions,

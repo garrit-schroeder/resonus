@@ -48,7 +48,7 @@ import { serializeLrc } from '@/lib/lrc';
 import { siblingLrcUri } from '@/lib/localLyrics';
 import * as Db from '@/lib/downloadsDb';
 import type { DlAlbum } from '@/lib/downloadsDb';
-import { netTally, timed } from '@/lib/perfLog';
+import { netTally, note, timed } from '@/lib/perfLog';
 import { queryClient } from '@/lib/query';
 import { primaryUrl } from '@/lib/serverUrls';
 import { isManualOffline } from '@/api/netGate';
@@ -553,6 +553,14 @@ function songFileUrl(
   return fileUrlFor(auth, song, bitRate, format);
 }
 
+/** Why a song did not download, for the Diagnostics report. No URL: it carries credentials. */
+function noteFailure(auth: SubsonicAuth, song: Song, e: unknown) {
+  const why = (e instanceof Error ? e.message : String(e)).replace(/https?:\/\/\S*/g, '<url>').slice(0, 120);
+  const { ext, bitRate } = songFileUrl(auth, song);
+  const as = bitRate ? ` as ${ext} ${bitRate}k` : '';
+  note(`download failed: ${why} (${song.suffix ?? '?'}${as})`);
+}
+
 /** Where to fetch a song's file from at this quality, and what it will be. */
 export function fileUrlFor(
   auth: SubsonicAuth,
@@ -907,6 +915,8 @@ interface DownloadsState {
    */
   downloadPodcast: (channelId: string) => Promise<void>;
   downloadPodcastEpisode: (episode: EpisodeSource) => Promise<void>;
+  /** New episodes of a favorite show: only on Wi-Fi, whatever the setting says. */
+  autoDownloadEpisodes: (channelId: string, episodes: EpisodeSource[]) => Promise<void>;
   /** Deletes downloaded episode files and drops them from the podcast record. */
   deletePodcastDownloads: (episodeIds: string[]) => Promise<void>;
   /** Deletes every downloaded episode of a show, however many the screen
@@ -1173,6 +1183,8 @@ export const useDownloads = create<DownloadsState>((set, get) => {
               const status = e instanceof TransferError ? e.status : undefined;
               if (attempt === ATTEMPTS || !worthRetrying(status)) {
                 failed++;
+                // The first few only: the report keeps 30 events (#328).
+                if (failed <= 3) noteFailure(auth, song, e);
                 break;
               }
             } finally {
@@ -1223,7 +1235,11 @@ export const useDownloads = create<DownloadsState>((set, get) => {
    * server: the bytes come straight from each episode's own address, and the
    * record of them lives in that profile's SQLite rather than a server catalog.
    */
-  async function downloadPodcastGroup(groupKey: string, episodes: EpisodeSource[]): Promise<void> {
+  async function downloadPodcastGroup(
+    groupKey: string,
+    episodes: EpisodeSource[],
+    wifiOnly = false,
+  ): Promise<void> {
     // A podcast download never touches the server: the bytes come from the
     // publisher. Automatic offline (server down) may still download; only a
     // manual "use no network" says no. The rule lives here because the
@@ -1309,7 +1325,7 @@ export const useDownloads = create<DownloadsState>((set, get) => {
         while (next < pending.length) {
           if (cancelling.has(groupKey) || onData) break; // stop requested by user
           // Same as songs: no new episode on mobile data once the Wi-Fi went.
-          if (await lostWifi()) {
+          if ((await lostWifi()) || (wifiOnly && (await onMobileData()))) {
             onData = true;
             break;
           }
@@ -1505,6 +1521,12 @@ export const useDownloads = create<DownloadsState>((set, get) => {
     downloadPodcastEpisode: async (episode) => {
       // Its own group, so a stop on one episode doesn't disturb another.
       await downloadPodcastGroup(`episode:${episode.id}`, [episode]);
+      queryClient.invalidateQueries({ queryKey: ['podcastDownloads'] });
+    },
+
+    autoDownloadEpisodes: async (channelId, episodes) => {
+      if (await onMobileData()) return;
+      await downloadPodcastGroup(`podcast:${channelId}`, episodes, true);
       queryClient.invalidateQueries({ queryKey: ['podcastDownloads'] });
     },
 

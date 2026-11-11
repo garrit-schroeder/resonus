@@ -960,6 +960,11 @@ export const TAB_BAR_HEIGHT = 60;
 /** The same bar on a screen too short for it, names beside the icons (#131). */
 export const TAB_BAR_HEIGHT_COMPACT = 44;
 
+/** The optional pill shape of the navigation bar and the MiniPlayer. */
+export const PILL_RADIUS = 32;
+/** How far a pill-shaped navigation bar floats from the screen's edges. */
+export const PILL_MARGIN = 8;
+
 /** Approximate height of the floating MiniPlayer (44px artwork + padding). */
 export const MINI_PLAYER_HEIGHT = 60;
 

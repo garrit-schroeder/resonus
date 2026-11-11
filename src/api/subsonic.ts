@@ -339,10 +339,14 @@ export interface Playlist {
   public?: boolean;
   /** Playlist owner ("System" for Ampache stock smartlists). */
   owner?: string;
+  /** OpenSubsonic: this user can't change the tracks (smart, synced, someone else's). */
+  readonly?: boolean;
   /** Creation date (ISO); sent by Navidrome/Subsonic and the local profile. */
   created?: string;
   /** Last modification (ISO). */
   changed?: string;
+  /** Offline only: whether any of its songs can play. Unset online. */
+  availableOffline?: boolean;
 }
 
 /** Generates a random salt in hexadecimal. */
@@ -432,11 +436,12 @@ function authParams(auth: SubsonicAuth): URLSearchParams {
 function buildUrl(
   auth: SubsonicAuth,
   endpoint: string,
-  extra: Record<string, string | number | undefined> = {},
+  extra: Record<string, string | number | string[] | undefined> = {},
 ): string {
   const params = authParams(auth);
   for (const [key, value] of Object.entries(extra)) {
-    if (value !== undefined) params.set(key, String(value));
+    if (Array.isArray(value)) for (const v of value) params.append(key, v);
+    else if (value !== undefined) params.set(key, String(value));
   }
   return `${auth.serverUrl}/rest/${endpoint}?${params.toString()}`;
 }
@@ -453,7 +458,12 @@ const REQUEST_TIMEOUT_MS = 15000;
  * also ran out their timeout before leaving the phone. Two at a time leaves the
  * others free, and the timeout starts when the request does.
  */
-const AGENT_ENDPOINTS = new Set(['getSimilarSongs2.view', 'getTopSongs.view', 'getArtistInfo2.view']);
+const AGENT_ENDPOINTS = new Set([
+  'getSimilarSongs2.view',
+  'getTopSongs.view',
+  'getArtistInfo2.view',
+  'getAlbumInfo2.view',
+]);
 const agentSlots = createSlots(2);
 
 /** Makes a request and unwraps the Subsonic response. */
@@ -504,7 +514,7 @@ export const ERR_NOT_FOUND = 70;
 async function retryWithCanonicalId<T>(
   auth: SubsonicAuth,
   endpoint: string,
-  extra: Record<string, string | number | undefined>,
+  extra: Record<string, string | number | string[] | undefined>,
   allowOffline: boolean,
 ): Promise<T | null> {
   const id = extra.id;
@@ -527,7 +537,7 @@ async function retryWithCanonicalId<T>(
 async function request<T>(
   auth: SubsonicAuth,
   endpoint: string,
-  extra: Record<string, string | number | undefined> = {},
+  extra: Record<string, string | number | string[] | undefined> = {},
   allowOffline = false,
   /** Set on the retry itself, so one failure is never retried twice. */
   retried = false,
@@ -1300,6 +1310,19 @@ export interface ArtistInfo {
   similarArtists: Artist[];
 }
 
+/**
+ * An address for the album's cover that carries no credentials: Navidrome
+ * answers `getAlbumInfo2` with a signed `/share/img` link, the one Feishin
+ * hands to Discord too. Other servers may send an outside image or nothing.
+ */
+export async function getPublicAlbumArt(auth: SubsonicAuth, id: string): Promise<string | undefined> {
+  const res = await request<{
+    albumInfo?: { largeImageUrl?: string; mediumImageUrl?: string; smallImageUrl?: string };
+  }>(auth, 'getAlbumInfo2.view', { id });
+  const info = res.albumInfo ?? {};
+  return [info.largeImageUrl, info.mediumImageUrl, info.smallImageUrl].find((u) => u?.startsWith('http'));
+}
+
 /** Extended artist info (bio, photo and similars) from getArtistInfo2. */
 export async function getArtistInfo(
   auth: SubsonicAuth,
@@ -1776,13 +1799,15 @@ export async function deleteRadioStation(
  * small circle, anything card-sized up to the player's full width, and the
  * viewer, which is the picture on its own. `thumb` is also what the palette
  * asks for, so the tint of a list comes from the file the list already has.
+ * The default is `card`, one of the three: a caller that omits `size` must
+ * not invent a fourth one, it would split the cache.
  */
 export const COVER = { thumb: 200, card: 600, full: 1200 } as const;
 
 export function coverArtUrl(
   auth: SubsonicAuth,
   id: string | undefined,
-  size = 300,
+  size: number = COVER.card,
 ): string | undefined {
   if (!id) return undefined;
   return buildUrl(auth, 'getCoverArt.view', { id, size });
@@ -1858,7 +1883,7 @@ function parseJukeboxStatus(raw: unknown): JukeboxStatus {
 async function jukeboxControl(
   auth: SubsonicAuth,
   action: string,
-  extra: Record<string, string | number | undefined> = {},
+  extra: Record<string, string | number | string[] | undefined> = {},
 ): Promise<JukeboxStatus> {
   const res = await request<{ jukeboxStatus?: unknown; jukeboxPlaylist?: unknown }>(
     auth,
@@ -1870,8 +1895,13 @@ async function jukeboxControl(
 }
 
 export const jukeboxStatus = (auth: SubsonicAuth) => jukeboxControl(auth, 'status');
-/** Replaces the server's playlist with a single track (library id). */
-export const jukeboxSet = (auth: SubsonicAuth, id: string) => jukeboxControl(auth, 'set', { id });
+/** Replaces the server's playlist with these tracks (library ids), in order. */
+export const jukeboxSet = (auth: SubsonicAuth, ids: string[]) => jukeboxControl(auth, 'set', { id: ids });
+/** Appends tracks to the end of the server's playlist. */
+export const jukeboxAdd = (auth: SubsonicAuth, ids: string[]) => jukeboxControl(auth, 'add', { id: ids });
+/** Removes one entry of the server's playlist; the current one keeps playing. */
+export const jukeboxRemove = (auth: SubsonicAuth, index: number) =>
+  jukeboxControl(auth, 'remove', { index });
 export const jukeboxStart = (auth: SubsonicAuth) => jukeboxControl(auth, 'start');
 export const jukeboxStop = (auth: SubsonicAuth) => jukeboxControl(auth, 'stop');
 /** Skips to the given index (with optional offset in seconds within the track). */

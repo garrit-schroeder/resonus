@@ -4,7 +4,7 @@
  */
 import Icon from '@/components/Icon';
 import { useEffect } from 'react';
-import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   Extrapolation,
@@ -16,7 +16,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
-import { COVER, songCoverUrl, type Song } from '@/api/data';
+import { COVER, canGoIntoPlaylist, songCoverUrl, type Song } from '@/api/data';
 import { episodeHeart, heartedSong } from '@/api/podcasts';
 import { usePodcastFavoriteIds } from '@/lib/podcastFavorites';
 import { useDominantColor } from '@/hooks/useDominantColor';
@@ -24,13 +24,14 @@ import { useFavoriteIds } from '@/hooks/useFavoriteIds';
 import { useT } from '@/i18n';
 import { haptic } from '@/lib/haptics';
 import { router } from 'expo-router';
-import { revealOffset } from '@/lib/playerReveal';
+import { playerOnTop, revealOffset } from '@/lib/playerReveal';
 import { pushOnce } from '@/lib/pushOnce';
 import { currentSong, useLiveInfo, usePlayerStore } from '@/store/player';
+import { usePlaylistPicker } from '@/store/playlistPicker';
 import { CONTENT_MAX_WIDTH, useScreenSize } from '@/hooks/useScreenSize';
 import { useSettings } from '@/store/settings';
 import { useToast } from '@/store/toast';
-import { colors, fontSize, radius, restyled, spacing, themed } from '@/theme';
+import { colors, fontSize, PILL_RADIUS, radius, restyled, spacing, themed } from '@/theme';
 import { motion } from '@/theme/motion';
 import { BarBlur, useBarBlur } from './BarBlur';
 import { Cover } from './Cover';
@@ -65,7 +66,7 @@ function MiniProgress({ song }: { song: Song }) {
   );
 }
 
-export function MiniPlayer() {
+export function MiniPlayer({ active = true }: { active?: boolean }) {
   const { width: screenW, height: screenH, wide } = useScreenSize();
   const song = usePlayerStore(currentSong);
   // A radio saying what it plays says it here too: down here there is only room
@@ -92,7 +93,7 @@ export function MiniPlayer() {
   // Down at the bottom, out of sight: it is let go of (`revealOffset` back to
   // -1) by the player as it unmounts, or it would flash back up for a frame.
   const cancelReveal = () => {
-    if (router.canGoBack()) router.back();
+    if (playerOnTop.current) router.back();
     else revealOffset.value = -1;
   };
   const pan = Gesture.Pan()
@@ -191,6 +192,7 @@ export function MiniPlayer() {
   const dominant = useDominantColor(miniColor ? colorSource : undefined);
   const bg = miniColor ? dominant : colors.surfaceHighlight;
   const blur = useBarBlur('miniPlayer');
+  const pills = useSettings((s) => s.miniPlayerPills);
   const buttons = useSettings((s) => s.miniPlayerButtons);
   const showProgress = useSettings((s) => s.miniPlayerProgress);
   // Not "unless the file is on the phone": see the player screen, which had the
@@ -206,6 +208,16 @@ export function MiniPlayer() {
   const favorited = heartedSong(song, podcastFav, favIds);
   // The heart writes the device's own SQLite favorite for an episode.
   const podcastHeart = episodeHeart(song);
+  /**
+   * What holding the heart does: the app's playlist sheet, with this song
+   *  (#286). The sheet is the one mounted in the root layout above this bar,
+   *  so opening it is a store write and no navigation. A station's and an
+   *  episode's id names no track a playlist can take (`canGoIntoPlaylist`),
+   *  so those are handed nothing and their heart stays a tap, as it was.
+   */
+  const openPlaylistSheet = canGoIntoPlaylist(song)
+    ? () => usePlaylistPicker.getState().open([song])
+    : undefined;
 
   return (
     <GestureDetector gesture={pan}>
@@ -215,14 +227,14 @@ export function MiniPlayer() {
             and nothing about a bar with three things in it needs 1280 points
             (#131). */}
         {/* The shadow sits outside the card, which clips its own contents. */}
-        <View style={[styles.card, wide && styles.narrow]}>
+        <View style={[styles.card, wide && styles.narrow, pills && { borderRadius: PILL_RADIUS, boxShadow: undefined }]}>
         <Pressable
-          style={[styles.container, { backgroundColor: blur ? 'transparent' : bg }]}
+          style={[styles.container, { backgroundColor: blur ? 'transparent' : bg }, pills && { borderRadius: PILL_RADIUS }]}
           onPress={() => pushOnce('/player')}
         >
           {blur ? <BarBlur tint={bg} alpha={0.55} /> : null}
       <Animated.View style={[styles.details, detailsStyle]}>
-        <Cover uri={cover} size={44} placeholderIcon={song.url ? 'radio' : 'musical-notes'} />
+        <Cover uri={cover} size={44} autoplay={active} placeholderIcon={song.url ? 'radio' : 'musical-notes'} />
         <View style={styles.info}>
           <MarqueeText
             text={live?.title ?? song.title}
@@ -237,7 +249,13 @@ export function MiniPlayer() {
         </View>
       </Animated.View>
       {buttons === 'favorite' ? (
-        <FavoriteButton id={song.id} starred={favorited} podcast={podcastHeart} size={24} />
+        <FavoriteButton
+          id={song.id}
+          starred={favorited}
+          podcast={podcastHeart}
+          size={24}
+          hold={openPlaylistSheet}
+        />
       ) : null}
       {buttons === 'previousNext' ? (
         <Pressable
@@ -298,6 +316,7 @@ export function MiniPlayer() {
       ) : null}
 
           {showProgress ? <MiniProgress song={song} /> : null}
+          {pills ? <View pointerEvents="none" style={styles.pillOutline} /> : null}
         </Pressable>
         </View>
       </Animated.View>
@@ -321,6 +340,12 @@ const styles = themed((colors) => ({
     // lg with Round, a step down with Pointier.
     borderRadius: restyled(radius.lg, radius.md),
     overflow: 'hidden',
+  },
+  pillOutline: {
+    ...StyleSheet.absoluteFill,
+    borderRadius: PILL_RADIUS,
+    borderWidth: 0.5,
+    borderColor: colors.highlight,
   },
   /** Centred and no wider than a wide screen wants it. */
   narrow: { maxWidth: CONTENT_MAX_WIDTH, width: '100%', alignSelf: 'center' },

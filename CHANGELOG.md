@@ -11,8 +11,117 @@ Releases before 0.2.1 are only listed on the
 
 ### Added
 
+- Local profile: music added to or removed from the phone shows up when the app opens or comes back, without a rescan.
+- Local profile: an album with no embedded cover uses the `cover.jpg` or `folder.jpg` in its folder.
+- Local profile: an `artist.jpg` in an artist's folder is used as their picture (#337).
+- Local profile: Explore has a Folders section that browses the music folders.
+- Local profile: `.m3u` and `.m3u8` files in the music folders become playlists, and a playlist can be exported as M3U (#335).
+- Local profile: Settings › Local music shows the number of songs and the last scan.
+- Settings: a search box at the top finds a setting by name, scrolls to it and highlights it.
+- Your library: its chips can be reordered and hidden, in Settings › Navigation.
+- Podcasts: a show's episodes can be sorted newest first, oldest first or A to Z, and play in that order.
+- Explore: albums can be sorted by album artist.
+
+### Changed
+
+- Settings: each category says what is inside it, and Navigation is now Home & tabs.
+- Settings: lyrics have their own screen inside Player, and the equalizer is the first row under Sound.
+- Podcasts: shows you add stay in Explore, and the ones you favorite also appear in Your library.
+- Podcasts: Download new episodes is now chosen per show, in its ⋯ menu.
+- Your library: fully downloaded playlists show ↓, as albums do.
+- Settings: Home & navigation is now called Navigation.
+- Explore: the Downloads chip is now a Downloaded filter that keeps Playlists, Albums, Artists and Songs to what is on your phone.
+- Player: the playback speed and Preserve pitch are kept when the app is closed.
+- Android: Resonus is declared as a music app, for widgets and launchers that look for one (#309).
+
+### Fixed
+
+- Local profile: playlists and selections no longer offer Export and Delete downloads.
+- Your library: with favorite songs and nothing else, it no longer says there is nothing there.
+- The screen could stop answering taps after letting go of the mini player halfway up.
+- Jellyfin: Recently played and Most played albums follow your plays instead of the alphabet.
+- Lyrics: a word synced by syllables no longer splits across two lines.
+- Spanish and Catalan: one selected song no longer reads as plural.
+- Podcasts: downloading a whole show asks first, with how many episodes and how long they run.
+- Home widget: no longer rewritten every few seconds while music plays in the background.
+- Casting: a song no longer starts halfway through when you start a new list.
+- Casting: more renderers move on to the next song when one ends.
+- Jukebox: the whole queue plays, also with the screen off (#333).
+- Garmin watches and other devices: Next works every time (#307).
+- Turning shuffle off keeps the songs added to the queue while it was on, and the ones removed stay removed.
+- UPnP and jukebox: every song the speaker moves on to by itself is scrobbled, not only the first.
+- A playlist created offline is no longer created twice when part of its upload fails.
+- Favorites and ratings of songs deleted from the server are no longer retried forever.
+- A listen recorded right after opening the app no longer replaces the ones waiting to be sent.
+- Settings: the downloads count is translated in Spanish and Catalan, and the scan count groups its thousands.
+
+## [0.8.7] - 2026-11-01
+
+### Added
+
+- Holding an artist opens a menu with Play, radio and favorite.
+- Your library: albums and playlists with nothing to play are dimmed or hidden offline, and downloaded albums show ↓.
+- Your library: the empty Podcasts list has a button to find one.
+
+### Changed
+
+- Moving a song in a playlist saves the new order right away, and the selection bar has Add to playlist and Remove again (#279).
+- Holding a song to start a selection marks that song again (#279).
+- Lyrics settings are back in the Settings > Player page.
+- Explore > Podcasts lists only the shows you added, and its + finds a show or takes a feed address.
+- Your library: a new playlist opens as soon as it is created.
+- Your library: the search stays when you open a result and come back.
+- Your library: podcasts sort by when you favorited or last listened to them.
+
+### Fixed
+
+- Your library: Favorites no longer shows up in search results or under the playlist filters.
+- Your library: a failed refresh no longer replaces the list with an error.
+- Your library: podcast search ignores accents and forgives typos, like the rest.
+- Your library: artists sort by their sort name, and "+" playlists stay on top in the mixed list.
+- Your library: every row and card responds to a press, and albums keep the explicit badge in the mixed list.
+- Casting: more cases where the queue stayed on a song after it ended are handled (#285).
+
+## [0.8.6] - 2026-10-31
+
+### Added
+
+- Explore has a Downloads chip with your downloaded albums (#310).
+- Podcasts: mark episodes as played or unplayed.
+- Podcasts: new episodes of favorite shows can download by themselves over Wi-Fi.
+- Option to show album artwork across the full width (#289).
+- Option to show the player artwork across the full width (#290).
+- Option to keep motion artwork off mobile data, on by default (#294).
+
+### Changed
+
+- Settings: list, album and swipe options are now in Appearance, and keeping a radio playing in Quality & playback.
+- Animated covers on Android stay in a 150 MB cache instead of downloading again (#293).
+- To reorder a playlist, choose Reorder in its ⋯ menu or hold a song, drag the rows, and press Save order (#279).
+- Holding a song to start a selection no longer marks that song (#279).
+- Add to a playlist marks the playlists a song is already in, and a tap adds or removes it without closing the sheet.
+- Settings has a new Home & navigation category, with what used to fill Appearance: Home, Explore, the navigation bar, swipes and haptics.
+- Lyrics settings have their own screen, inside Settings > Player.
+- Clear cache is now Clear temporary data, in Settings > Downloads & offline.
+- Song lists settings are now Lists & albums, and options that did nothing on Jellyfin or the local profile are gone.
+
+### Fixed
+
+- With on-screen navigation buttons, the mini player no longer covers the last option in Settings.
+- A playlist's page no longer freezes while songs are selected, and leaving the selection no longer jumps to the top (#279).
+- The progress bar looks the same on every Android phone.
+- Next and previous from other apps and devices, like Garmin watches, should now work (#307).
+- Podcast episodes pick up where you left them, even after playing music or restarting the app.
+- The podcasts screen says how to find a show when it is empty, and the feed address field is ready to type in.
+
+## [0.8.5] - 2026-10-30
+
+### Added
+
 - Playback speed: a slider and −/+ buttons in steps of 0.01, a Preserve pitch switch that, turned off, lets the pitch follow the speed like a record, and the resulting BPM when the song has one (#277).
 - Podcasts: download episodes to play offline, favorite them, queue them, and find them in Library, search and Home. Thanks to Garrit Schröder.
+- Optional pill shapes for the navigation bar and the Mini Player.
+- Holding the heart in the player or the Mini Player opens the sheet to add the song to a playlist (#286). Thanks to @Lennardsmw.
 
 ### Changed
 
@@ -36,6 +145,13 @@ Releases before 0.2.1 are only listed on the
 - A cover on screen no longer turns into the placeholder when the app goes offline.
 - "Download over Wi-Fi only" now stops a download that is running when the Wi-Fi drops, instead of carrying on over mobile data.
 - Cover art no longer passes your server login to other apps that read what is playing (lock screen widgets, watches, the car). On Android Automotive the covers in the browse lists show up again.
+- A tapped song no longer waits behind preloading and cover downloads on servers that fetch each track first (#269).
+- Dates on the History screen now follow the app language.
+- Pulling to refresh on the Library's All tab now also updates podcasts.
+- Android Auto now updates a list that is already open when the library finishes loading.
+- Albums in Android Auto no longer open empty when they are beyond the first 40 loaded.
+- Android Auto no longer crashes on a queue with the same song twice, and shows what is playing when it connects after playback started.
+- On iOS, tapping the song on the lock screen now opens the app.
 - The screen shown when something crashes is now in your language instead of always in Spanish.
 
 ## [0.8.4] - 2026-10-20

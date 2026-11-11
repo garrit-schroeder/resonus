@@ -1,4 +1,5 @@
 /** App settings (persisted): streaming quality and language. */
+import { isAnimatedArtworkMode, savedAnimatedArtworkMode, type AnimatedArtworkMode } from '@/lib/artworkLayout';
 import { Platform } from 'react-native';
 import { create } from 'zustand';
 
@@ -476,7 +477,10 @@ function normalizeExploreSections(raw: unknown): ExploreSection[] {
     out.push({ key, enabled: typeof enabled === 'boolean' ? enabled : true });
   }
   for (const def of DEFAULT_EXPLORE_SECTIONS) {
-    if (!seen.has(def.key)) out.push({ ...def });
+    // The filter pill goes ahead of the sections, where it starts out.
+    if (seen.has(def.key)) continue;
+    if (def.key === 'downloaded') out.unshift({ ...def });
+    else out.push({ ...def });
   }
   return out;
 }
@@ -558,7 +562,9 @@ export type ExploreSectionKey =
   | 'genres'
   | 'radio'
   | 'podcasts'
-  | 'folders';
+  | 'folders'
+  /** Not a section: the pill that keeps the others to what is downloaded (#310). */
+  | 'downloaded';
 
 /** A section with its state, the shape the Home chips already have (order is
  *  its position in the list). */
@@ -568,6 +574,7 @@ export interface ExploreSection {
 }
 
 const EXPLORE_SECTION_KEYS: ExploreSectionKey[] = [
+  'downloaded',
   'playlists',
   'albums',
   'artists',
@@ -592,6 +599,39 @@ export const DEFAULT_EXPLORE_SECTIONS: ExploreSection[] = EXPLORE_SECTION_KEYS.m
   key,
   enabled: true,
 }));
+
+/** One of the chips at the top of Your library. */
+export type LibraryChipKey = 'playlists' | 'albums' | 'artists' | 'podcasts';
+
+export interface LibraryChip {
+  key: LibraryChipKey;
+  enabled: boolean;
+}
+
+const LIBRARY_CHIP_KEYS: LibraryChipKey[] = ['playlists', 'albums', 'artists', 'podcasts'];
+
+/** All on. Unlike Explore they can all go: with no chip the tab is still everything you keep. */
+export const DEFAULT_LIBRARY_CHIPS: LibraryChip[] = LIBRARY_CHIP_KEYS.map((key) => ({
+  key,
+  enabled: true,
+}));
+
+/** Same as the Explore sections. */
+function normalizeLibraryChips(raw: unknown): LibraryChip[] {
+  if (!Array.isArray(raw)) return DEFAULT_LIBRARY_CHIPS.map((c) => ({ ...c }));
+  const seen = new Set<LibraryChipKey>();
+  const out: LibraryChip[] = [];
+  for (const item of raw) {
+    const key = item?.key as LibraryChipKey;
+    if (!LIBRARY_CHIP_KEYS.includes(key) || seen.has(key)) continue;
+    seen.add(key);
+    out.push({ key, enabled: typeof item.enabled === 'boolean' ? item.enabled : true });
+  }
+  for (const def of DEFAULT_LIBRARY_CHIPS) {
+    if (!seen.has(def.key)) out.push({ ...def });
+  }
+  return out;
+}
 
 /**
  * The bar at the bottom: which tabs are on it and in what order.
@@ -862,6 +902,7 @@ type Reshaped =
   | 'homeSections'
   | 'homeChips'
   | 'exploreSections'
+  | 'libraryChips'
   | 'bottomTabs'
   | 'homeButtons'
   | 'playerButtons'
@@ -889,6 +930,7 @@ type CustomSetter =
   | 'setThemeLightFrom'
   | 'setThemeDarkFrom'
   | 'setPureBlack'
+  | 'setAnimatedArtworkMode'
   | 'setAnimatedArtworkFps'
   | 'setAnimatedArtworkUrls'
   | 'setBackgroundTint';
@@ -1037,6 +1079,8 @@ interface SettingsState extends Omit<AutoSetters, CustomSetter> {
    * offline library only shows playable content.
    */
   hideUnavailableOffline: boolean;
+  /** The old switch for every favorite, read once by `refreshAutoDownloadShows`. */
+  podcastAutoDownload: boolean;
   /** Volume normalization (ReplayGain): off, per track, or per album. */
   replayGain: ReplayGainMode;
   /**
@@ -1048,6 +1092,8 @@ interface SettingsState extends Omit<AutoSetters, CustomSetter> {
   replayGainPreampDb: number;
   /** Keep screen on while the app is in the foreground. */
   keepScreenAwake: boolean;
+  /** The song playing on the Discord profile, through the Discord app (Android). */
+  discordPresence: boolean;
   /** Subtle vibration on key actions (favorite, long-press, drag…). */
   hapticsEnabled: boolean;
   /** Lyrics screen background: flat, cover color, or blurred cover art. */
@@ -1105,12 +1151,13 @@ interface SettingsState extends Omit<AutoSetters, CustomSetter> {
   batteryWarning: boolean;
   /** Player background: flat, cover color, or blurred cover art. */
   playerBackground: ScreenBackground;
-  /**
-   * When the cover art is animated (GIF, animated WebP, APNG), use it as
-   * the fullscreen player background and show a small static copy beside
-   * the title. Off by default: the cover plays inside the square as before.
-   */
+  playerFullBleed: boolean;
+  albumFullBleed: boolean;
+  navbarPills: boolean;
+  miniPlayerPills: boolean;
+  /** Legacy export compatibility; animatedArtworkMode controls the player. */
   animatedCoverBackground: boolean;
+  animatedArtworkMode: AnimatedArtworkMode;
   /**
    * The fps animated covers encode at for the lock screen (30 or 60). A clip
    * already on disk keeps the rate it was written at; the next one picks up
@@ -1129,6 +1176,7 @@ interface SettingsState extends Omit<AutoSetters, CustomSetter> {
    * its first frame, and the endpoint is kept but not asked.
    */
   animatedCovers: boolean;
+  motionArtworkWifiOnly: boolean;
   /**
    * Play endpoint clips as in-app video (cover square and background).
    * Kills the video players without touching the lock-screen tall clips:
@@ -1209,6 +1257,7 @@ interface SettingsState extends Omit<AutoSetters, CustomSetter> {
   homeChips: HomeChip[];
   /** The order of the pills at the top of Explore. */
   exploreSections: ExploreSection[];
+  libraryChips: LibraryChip[];
   bottomTabs: BottomTab[];
   /** Whether those chips carry their icon, or are their name and nothing else. */
   homeChipIcons: boolean;
@@ -1298,6 +1347,7 @@ interface SettingsState extends Omit<AutoSetters, CustomSetter> {
   customFontUri: string | null;
   setLanguage: (language: Language) => void;
   setDiagnostics: (value: boolean) => void;
+  setAnimatedArtworkMode: (value: AnimatedArtworkMode) => void;
   setAnimatedArtworkFps: (value: number) => void;
   resetScrobbleRules: () => void;
   setHideUnavailableOffline: (value: boolean) => void;
@@ -1308,6 +1358,7 @@ interface SettingsState extends Omit<AutoSetters, CustomSetter> {
   setHomeChip: (key: HomeChipKey, value: boolean) => void;
   /** One section on or off, by key, the way the Home chips do it. */
   setExploreSection: (key: ExploreSectionKey, value: boolean) => void;
+  setLibraryChip: (key: LibraryChipKey, value: boolean) => void;
   setBottomTab: (key: TabSegment, value: boolean) => void;
   setHomeButton: (key: HomeButtonKey, value: boolean) => void;
   setPlayerButton: (key: PlayerButtonKey, value: boolean) => void;
@@ -1363,6 +1414,10 @@ function snapshot(get: () => SettingsState): Persisted {
 
 /** Factory default values for all preferences. */
 const DEFAULTS = {
+  playerFullBleed: false,
+  albumFullBleed: false,
+  navbarPills: false,
+  miniPlayerPills: false,
   maxBitRate: 0,
   maxBitRateCellular: 0,
   downloadBitRate: 0,
@@ -1408,9 +1463,11 @@ const DEFAULTS = {
   preferPreciseTiming: false,
   autoOfflineSwitch: true,
   hideUnavailableOffline: false,
+  podcastAutoDownload: false,
   replayGain: 'off' as ReplayGainMode,
   replayGainPreampDb: 0,
   keepScreenAwake: false,
+  discordPresence: false,
   hapticsEnabled: false,
   // Same as the player's: the blurred artwork, which is what the screen it
   // opens from is already showing.
@@ -1436,6 +1493,7 @@ const DEFAULTS = {
   batteryWarning: true,
   playerBackground: 'cover' as ScreenBackground,
   animatedCoverBackground: false,
+  animatedArtworkMode: 'cover' as AnimatedArtworkMode,
   // 30: half the frames of 60 for a cover that reads the same; see
   // `ANIMATED_ARTWORK_FPS_OPTIONS`.
   animatedArtworkFps: 30,
@@ -1445,6 +1503,7 @@ const DEFAULTS = {
   animatedCoverVideo: true,
   // On: what the app always did with an animated cover.
   animatedCovers: true,
+  motionArtworkWifiOnly: true,
   // Empty: search decides everything.
   animatedArtworkUrls: {},
   fitCoverArt: false,
@@ -1483,6 +1542,7 @@ const DEFAULTS = {
   customGreeting: '',
   homeChips: DEFAULT_HOME_CHIPS.map((c) => ({ ...c })),
   exploreSections: DEFAULT_EXPLORE_SECTIONS.map((s) => ({ ...s })),
+  libraryChips: DEFAULT_LIBRARY_CHIPS.map((c) => ({ ...c })),
   bottomTabs: DEFAULT_BOTTOM_TABS.map((t) => ({ ...t })),
   homeChipIcons: true,
   showFolderBrowser: false,
@@ -1602,6 +1662,7 @@ function applySaved(raw: unknown, set: (partial: Partial<SettingsState>) => void
     homeSections?: unknown;
     homeChips?: unknown;
     exploreSections?: unknown;
+    libraryChips?: unknown;
     bottomTabs?: unknown;
     homeButtons?: unknown;
     playerButtons?: unknown;
@@ -1627,6 +1688,8 @@ function applySaved(raw: unknown, set: (partial: Partial<SettingsState>) => void
     if (typeof DEFAULTS[key] === 'boolean' && typeof value === 'boolean') flags[key] = value;
   }
   set(flags as Partial<SettingsState>);
+  const motionMode = savedAnimatedArtworkMode(parsed);
+  if (motionMode) set({ animatedArtworkMode: motionMode, animatedCoverBackground: motionMode === 'background' });
   // One switch used to blur both bars.
   if (typeof parsed.blurMiniPlayer !== 'boolean' && typeof parsed.blurBars === 'boolean') {
     set({ blurMiniPlayer: parsed.blurBars });
@@ -1865,6 +1928,9 @@ function applySaved(raw: unknown, set: (partial: Partial<SettingsState>) => void
   if (Array.isArray(parsed.exploreSections)) {
     set({ exploreSections: normalizeExploreSections(parsed.exploreSections) });
   }
+  if (Array.isArray(parsed.libraryChips)) {
+    set({ libraryChips: normalizeLibraryChips(parsed.libraryChips) });
+  }
   if (Array.isArray(parsed.homeButtons)) {
     set({ homeButtons: normalizeHomeButtons(parsed.homeButtons) });
   } else if (parsed.showHistoryButton === false) {
@@ -2029,6 +2095,12 @@ export const useSettings = create<SettingsState>((set, get) => ({
     persist(snapshot(get));
   },
 
+  setAnimatedArtworkMode: (animatedArtworkMode) => {
+    if (!isAnimatedArtworkMode(animatedArtworkMode)) return;
+    set({ animatedArtworkMode, animatedCoverBackground: animatedArtworkMode === 'background' });
+    persist(snapshot(get));
+  },
+
   setAnimatedArtworkFps: (animatedArtworkFps) => {
     set({ animatedArtworkFps });
     persist(snapshot(get));
@@ -2101,6 +2173,13 @@ export const useSettings = create<SettingsState>((set, get) => ({
       exploreSections: get().exploreSections.map((s) =>
         s.key === key ? { ...s, enabled: value } : s,
       ),
+    });
+    persist(snapshot(get));
+  },
+
+  setLibraryChip: (key, value) => {
+    set({
+      libraryChips: get().libraryChips.map((c) => (c.key === key ? { ...c, enabled: value } : c)),
     });
     persist(snapshot(get));
   },

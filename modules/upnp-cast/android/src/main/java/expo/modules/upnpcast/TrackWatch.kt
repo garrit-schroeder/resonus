@@ -34,8 +34,15 @@ internal class TrackWatch(private val clock: () -> Long = System::currentTimeMil
   private var lastSeenPositionMs = -1L
   private var lastSeenPlayback = ""
   private var frozenSinceMs = 0L
+  private var playingSeenAtMs = 0L
+  /** How far the track can have got by the first poll that found it stopped. */
+  private var reachedMs = 0L
+  private var pastEndSinceMs = 0L
 
   fun reset(positionMs: Long = 0) {
+    playingSeenAtMs = 0
+    pastEndSinceMs = 0
+    reachedMs = 0
     observedPlaying = false
     lastPositionMs = positionMs.coerceAtLeast(0)
     lastDurationMs = 0
@@ -51,6 +58,13 @@ internal class TrackWatch(private val clock: () -> Long = System::currentTimeMil
     if (durationMs > 0) lastDurationMs = durationMs
     if (playback == PLAYING) observedPlaying = true
     if (playback == STOPPED) stoppedPolls++ else if (playback != TRANSITIONING) stoppedPolls = 0
+
+    // Polls can be missing for a long while (Wi-Fi napping, phone dozing), and
+    // the last position seen then says nothing about where the stop happened.
+    if (playback == STOPPED && stoppedPolls == 1) {
+      reachedMs = lastPositionMs + if (playingSeenAtMs > 0) clock() - playingSeenAtMs else 0
+    }
+    if (playback != STOPPED) playingSeenAtMs = if (playback == PLAYING) clock() else 0
 
     // The clock counts as stuck only for as long as the state holds: a pause
     // near the end, played again, is not a track that has been over for as
@@ -69,12 +83,14 @@ internal class TrackWatch(private val clock: () -> Long = System::currentTimeMil
     observedPlaying = false
     stoppedPolls = 0
     frozenSinceMs = 0
+    pastEndSinceMs = 0
   }
 
   fun verdict(playback: String, expectedDurationMs: Long, stoppedByController: Boolean): Verdict {
     if (!observedPlaying || stoppedByController) return Verdict.NONE
     if (playback == STOPPED) {
-      if (GenericQueueProgression.isNearEnd(lastPositionMs, lastDurationMs, expectedDurationMs)) {
+      if (GenericQueueProgression.isNearEnd(maxOf(lastPositionMs, reachedMs), lastDurationMs, expectedDurationMs)) {
+        endReason = "stop near the end"
         return Verdict.ENDED
       }
       return if (stoppedPolls >= INTERRUPTED_POLLS) Verdict.INTERRUPTED else Verdict.NONE
@@ -83,12 +99,42 @@ internal class TrackWatch(private val clock: () -> Long = System::currentTimeMil
     // what is left to play: whatever the renderer says, the song is over. A
     // clock that is not known to be near any end is a stream buffering, and
     // is left alone.
-    val frozenFor = if (frozenSinceMs == 0L) 0L else clock() - frozenSinceMs
-    if (frozenFor < STALLED_MS) return Verdict.NONE
     val reference = GenericQueueProgression.referenceDurationMs(lastDurationMs, expectedDurationMs)
     if (reference <= 0) return Verdict.NONE
-    return if (lastPositionMs >= reference - STALLED_WINDOW_MS) Verdict.ENDED else Verdict.NONE
+    val sounding = playback != PAUSED
+    // A clock that runs on past the song's own length: the server's, since a
+    // renderer can guess one shorter than what it plays.
+    val songMs = if (expectedDurationMs > 0) expectedDurationMs else lastDurationMs
+    // For a while: the first polls after a load can still carry the last
+    // song's clock.
+    if (sounding && lastPositionMs >= songMs + PAST_END_MS) {
+      if (pastEndSinceMs == 0L) pastEndSinceMs = clock()
+      if (clock() - pastEndSinceMs >= STALLED_MS) {
+        endReason = "clock past the end"
+        return Verdict.ENDED
+      }
+    } else {
+      pastEndSinceMs = 0
+    }
+    val frozenFor = if (frozenSinceMs == 0L) 0L else clock() - frozenSinceMs
+    if (frozenFor < STALLED_MS) return Verdict.NONE
+    if (lastPositionMs >= reference - STALLED_WINDOW_MS) {
+      endReason = "clock stuck at the end"
+      return Verdict.ENDED
+    }
+    // Stuck short of the window, for long enough that the song would be over
+    // had the clock kept going. Not for a pause: one from the TV's own remote
+    // can last any time.
+    if (sounding && lastPositionMs + frozenFor >= reference + OVERDUE_MS) {
+      endReason = "clock stuck short of the end"
+      return Verdict.ENDED
+    }
+    return Verdict.NONE
   }
+
+  /** How the last ENDED off the clock was read, for the diagnostics. */
+  var endReason = ""
+    private set
 
   companion object {
     const val PLAYING = "PLAYING"
@@ -104,6 +150,12 @@ internal class TrackWatch(private val clock: () -> Long = System::currentTimeMil
 
     /** How near the end a stuck clock has to be. */
     const val STALLED_WINDOW_MS = 5_000L
+
+    /** How far past the song's length a running clock has to get. */
+    const val PAST_END_MS = 10_000L
+
+    /** How long past the end a clock stuck short of it would have had to run. */
+    const val OVERDUE_MS = 20_000L
 
     /** The renderer's own words for its state, in the four above. */
     fun normalize(rendererState: String): String {

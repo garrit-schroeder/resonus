@@ -2,7 +2,7 @@
   "expo": {
     "name": "Resonus",
     "slug": "resonus",
-    "version": "0.8.4",
+    "version": "0.8.7",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "resonus",
@@ -23,13 +23,22 @@
     },
     "android": {
       "package": "com.juananzzz.resonus",
-      "versionCode": 61,
+      "versionCode": 64,
       "adaptiveIcon": {
         "backgroundColor": "#1CD667",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
+      "intentFilters": [
+        {
+          "action": "MAIN",
+          "category": [
+            "APP_MUSIC",
+            "DEFAULT"
+          ]
+        }
+      ],
       "permissions": [
         "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.FOREGROUND_SERVICE",
@@ -47,6 +56,8 @@
       "./plugins/withoutFontWeightAdjustment",
       "./plugins/withTrimmedPermissions",
       "./plugins/withAppLocales",
+      "./plugins/withoutUserScriptSandboxing",
+      "./plugins/withFixedSeekBar",
       "./plugins/withResonusWidget",
       "expo-router",
       [

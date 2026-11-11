@@ -5,7 +5,7 @@
  *
  * The tree is a flat parentId → children map pushed in full to the native
  * module (`setNodes`), because the native service doesn't fetch: it reads
- * from the cached tree. That's why we prefetch each album/playlist's tracks.
+ * from the cached tree. Missing albums are filled on demand when opened.
  *
  * Adapted from the wavio pattern (github.com/Joel-Mercier/wavio, MIT).
  */
@@ -46,7 +46,7 @@ function concurrency(): number {
 /**
  * Ceilings for what gets fetched ahead of a car that may never be plugged in.
  * Everything above them still appears in the browse tree; what it doesn't have
- * yet is the list of songs inside, which arrives on the next rebuild.
+ * yet is the list of songs inside, which is loaded when the album is opened.
  */
 const MAX_PREFETCH_ALBUMS = 40;
 const MAX_PREFETCH_ARTISTS = 15;
@@ -241,8 +241,8 @@ const SHUFFLE_SONGS = 100;
  */
 export async function buildBrowseTree(deep = true): Promise<CarTree> {
   const profile = profileScopeId();
-  // A full build replaces what it knows; a partial one adds to it. What is
-  // dropped either way is another account's, which nothing here can resolve.
+  // A full build bounds these maps. A later tap on a native-cached album can
+  // restore its track map from the shared album query via buildAlbumChildren.
   if (deep || profile !== mapsProfile) {
     songById.clear();
     parentTracks.clear();
@@ -295,6 +295,7 @@ export async function buildBrowseTree(deep = true): Promise<CarTree> {
       return { title: tg(s.titleKey), albums: albums.slice(0, HOME_SHELF_SIZE) };
     }),
   );
+  if (profile !== profileScopeId()) return { nodes: {}, profile };
 
   // What the tabs land on: favourite songs, playlists, starred albums and
   // starred artists. Folders are left out, as they were before: a handful of
@@ -309,6 +310,7 @@ export async function buildBrowseTree(deep = true): Promise<CarTree> {
       .fetchQuery({ queryKey: ['playlists'], queryFn: () => data.getPlaylists() })
       .catch(() => [] as Playlist[]),
   ]);
+  if (profile !== profileScopeId()) return { nodes: {}, profile };
 
   // Favourites lead the playlists: they are the one list nobody made and
   // everybody plays, and on a phone they sit above them too.
@@ -379,7 +381,7 @@ export async function buildBrowseTree(deep = true): Promise<CarTree> {
       .slice(0, MAX_PREFETCH_PLAYLISTS)
       .map((p) => p.id),
     concurrency(),
-    (id) => fillPlaylist(tree, id),
+    (id) => fillPlaylist(tree, id, profile),
   );
 
   // Prefetch songs for each album (to browse them in the car), up to a point.
@@ -388,12 +390,12 @@ export async function buildBrowseTree(deep = true): Promise<CarTree> {
   // songs, every time the app opened. What a car needs at hand is the top of
   // each list; the rest can be empty until someone asks for it (#50).
   await mapConcurrent(Array.from(albumIds).slice(0, MAX_PREFETCH_ALBUMS), concurrency(), (id) =>
-    fillAlbum(tree, id),
+    fillAlbum(tree, id, profile),
   );
 
   // Prefetch for starred artists: top songs + albums (and their tracks).
   await mapConcurrent(starred.artists.slice(0, MAX_PREFETCH_ARTISTS).map((a) => a.id), concurrency(), (id) =>
-    fillArtist(tree, id),
+    fillArtist(tree, id, profile),
   );
 
   return { nodes: tree, profile };
@@ -401,10 +403,12 @@ export async function buildBrowseTree(deep = true): Promise<CarTree> {
 
 // ── The songs inside one collection ──────────────────────────────────────────
 
-async function fillAlbum(tree: Record<string, CarNode[]>, id: string): Promise<void> {
+async function fillAlbum(tree: Record<string, CarNode[]>, id: string, profile: string): Promise<void> {
+  if (profile !== profileScopeId()) return;
   const parent = `album:${id}`;
   try {
     const { songs } = await albumDetail(id);
+    if (profile !== profileScopeId()) return;
     tree[parent] = songs.map((s) => songNode(s, parent));
     parentTracks.set(parent, tree[parent].map((n) => n.id));
   } catch {
@@ -412,10 +416,30 @@ async function fillAlbum(tree: Record<string, CarNode[]>, id: string): Promise<v
   }
 }
 
-async function fillPlaylist(tree: Record<string, CarNode[]>, id: string): Promise<void> {
+/** One requested album, using the same online/offline data and query cache as
+ * the phone. Errors propagate: a failed request is not an empty album. */
+export async function buildAlbumChildren(parentId: string, profile: string): Promise<CarTree | null> {
+  if (!parentId.startsWith('album:') || !parentId.slice(6) || profile !== profileScopeId()) return null;
+  const { songs } = await albumDetail(parentId.slice(6));
+  // Check before mutating the tap-resolution maps, not just before publishing.
+  if (profile !== profileScopeId()) return null;
+  if (profile !== mapsProfile) {
+    songById.clear();
+    parentTracks.clear();
+    nodeTitles.clear();
+    mapsProfile = profile;
+  }
+  const children = songs.map((song) => songNode(song, parentId));
+  parentTracks.set(parentId, children.map((node) => node.id));
+  return { nodes: { [parentId]: children }, partial: true, profile };
+}
+
+async function fillPlaylist(tree: Record<string, CarNode[]>, id: string, profile: string): Promise<void> {
+  if (profile !== profileScopeId()) return;
   const parent = `playlist:${id}`;
   try {
     const { songs } = await playlistDetail(id);
+    if (profile !== profileScopeId()) return;
     tree[parent] = songs.map((s) => songNode(s, parent));
     parentTracks.set(parent, tree[parent].map((n) => n.id));
   } catch {
@@ -424,16 +448,19 @@ async function fillPlaylist(tree: Record<string, CarNode[]>, id: string): Promis
 }
 
 /** Top songs and albums, and the songs of the first few of those. */
-async function fillArtist(tree: Record<string, CarNode[]>, id: string): Promise<void> {
+async function fillArtist(tree: Record<string, CarNode[]>, id: string, profile: string): Promise<void> {
+  if (profile !== profileScopeId()) return;
   const parent = `artist:${id}`;
   try {
     const { artist, albums } = await data.getArtist(id);
+    if (profile !== profileScopeId()) return;
     const top = artist.name ? await data.getTopSongs(artist.name, 10, id).catch(() => [] as Song[]) : [];
+    if (profile !== profileScopeId()) return;
     const children: CarNode[] = [...top.map((s) => songNode(s, parent)), ...albums.map(albumNode)];
     tree[parent] = children;
     parentTracks.set(parent, children.filter((n) => n.playable).map((n) => n.id));
     for (const a of albums.slice(0, MAX_ARTIST_ALBUMS)) {
-      if (!tree[`album:${a.id}`]) await fillAlbum(tree, a.id);
+      if (!tree[`album:${a.id}`]) await fillAlbum(tree, a.id, profile);
     }
   } catch {
     tree[parent] = [];
@@ -456,9 +483,9 @@ export async function buildLatestRecent(): Promise<CarTree | null> {
   const tree: Record<string, CarNode[]> = {};
   const [kind, ...rest] = latest.id.split(':');
   const id = rest.join(':');
-  if (kind === 'album') await fillAlbum(tree, id);
-  else if (kind === 'playlist') await fillPlaylist(tree, id);
-  else if (kind === 'artist') await fillArtist(tree, id);
+  if (kind === 'album') await fillAlbum(tree, id, profile);
+  else if (kind === 'playlist') await fillPlaylist(tree, id, profile);
+  else if (kind === 'artist') await fillArtist(tree, id, profile);
   return { nodes: tree, partial: true, profile };
 }
 
@@ -509,6 +536,14 @@ export async function handleBrowsePlay(mediaId: string, parentId?: string): Prom
     const parts = mediaId.split('|');
     const parent = parts[1] || parentId;
     const songId = parts.slice(2).join('|');
+    // Native children can survive a process restart while the JS tap maps do
+    // not. Resolve that album before selecting a track from its saved list.
+    const profile = profileScopeId();
+    if (profile !== mapsProfile) return;
+    if (parent?.startsWith('album:') && !parentTracks.has(parent)) {
+      await buildAlbumChildren(parent, profile).catch(() => null);
+      if (profile !== profileScopeId()) return;
+    }
     const ids = parent ? parentTracks.get(parent) : undefined;
     if (ids && ids.length > 0) {
       const songs = ids
