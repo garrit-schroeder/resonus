@@ -63,6 +63,16 @@
     is not re-reported; what the attempt learned stays in its verdict as a record of the
     attempt, not as a claim about the code, and a later attempt re-argues constants rather
     than copying them.
+10. **Endpoint facts come from the upstream server's own documentation, not from behaviour**
+    (recorded 2026-11-12, when the person asked to read the official spec before a fix was proposed).
+    A request that succeeds while silently omitting a field looks identical to one that did the work
+    — the UI can answer "updated" for a change that cannot happen — so behaviour cannot distinguish
+    them. Fetch the published specification (here: the stable OpenAPI document at api.jellyfin.org,
+    quoting its `info.version`), copy the model's field list into the verdict, and name what could
+    not be read: a per-version document the docs do not publish under that name (every such fetch
+    answered 404). When no door has the field, the defect is the **affordance**, and the fix hides the
+    row (the codebase's idiom: `hidePublic`, capability gates on `serverType`) and omits the field
+    from the edit, so an offline-queued patch cannot carry something the server will drop.
 
 ## MASTER PROMPT (fill placeholders, then split per the fan-out)
 
