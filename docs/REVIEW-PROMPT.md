@@ -80,6 +80,22 @@
     measured where — the agent's check suite on the branch, the reporter's manual run on the device,
     the endpoint's own published documentation — and never counts a human's run as the agent's test
     coverage. Itemise only what the human stated they observed; do not infer the rest.
+12. **When upstream `main` moves, re-sync and re-measure before working anything** (recorded
+    2026-11-12, when the report's own pull requests were merged upstream and the fork was synced
+    on GitHub). Fetch both remotes and bring the fork's local `main` across with **`git merge
+    --ff-only origin/main`** — fast-forward only, never a rebase and never a force: a moved `main`
+    must not paper over a commit that belongs on a branch, and if it cannot fast-forward, stop and
+    report it. Then re-measure in order: the **check suite** on the new head (its numbers become the
+    bar from here on), and every still-open item's **own `Verify:` as written**. Record the answers
+    in a dated re-run section near the top of the report — one row per item, what its `Verify:`
+    answers on the new head, and what that leaves owed — rather than editing items to fit: an item
+    whose fix **merged** stops being owed and its "open, not merged" prose is corrected in place;
+    anchors that moved get the new numbers; a claim that no longer reproduces is a correction.
+    A fix branch cut off the **old** head is stale — when it touches files upstream also touched,
+    its pull request reads `CONFLICTING`/`DIRTY`, and re-cutting it off the new head re-opens a
+    landing that was already recorded, so measure the overlap file by file first and let the
+    re-cut itself wait for an explicit instruction. The report's own branch never moves: it stays
+    the baseline commit plus documents.
 
 ## MASTER PROMPT (fill placeholders, then split per the fan-out)
 
