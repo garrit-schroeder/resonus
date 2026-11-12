@@ -34,6 +34,18 @@
 7. **Carry-over notes**: if the report is later merged after main moved on,
    add an "Update after the tree moved on" section at the top — line anchors
    re-drift; the symbol names stay trustworthy, re-measure baselines.
+8. **Landing discipline for the fix work packages the report proposes** (recorded
+   2026-11-12, it applies to every later round as well): code never changes on
+   `main` and never on the report's own branch — each work package gets a fresh
+   branch `fix/<what-it-does>` off the report's baseline commit, checked out in
+   its own worktree, and one branch carries one feature or one bug fix only.
+   Related changes do not share a branch; grouping belongs in prose. Nothing
+   merges anything: the fix branch is never merged into the branch that carries
+   the report, so the report's `src/` stays the pre-fix tree and the verdicts in
+   the report are the record of what landed where. **A pull request is never
+   opened, edited or merged by the agent** — landing stops at `git push origin
+   <branch>`, and the human opens the pull request manually. Hand over the exact
+   `gh pr create` line, never run it.
 
 ## MASTER PROMPT (fill placeholders, then split per the fan-out)
 
