@@ -45,7 +45,10 @@
    the report are the record of what landed where. **A pull request is never
    opened, edited or merged by the agent** — landing stops at `git push origin
    <branch>`, and the human opens the pull request manually. Hand over the exact
-   `gh pr create` line, never run it. **And when the user does open one, it is
+   `gh pr create` line, never run it — unless the user instructs it in the
+   conversation, which counts as their confirmation and must be recorded as such
+   (and the record must always name which pull requests were opened by whom,
+   flagging the one case where nobody asked). **And when one does get opened, it is
    opened against the upstream repo, never against the fork** —
    `gh pr create --repo <upstream>/<repo> --base main --head '<fork-owner>:<branch>'`:
    the fork is only the push target, so the branch can be seen, while the review and
