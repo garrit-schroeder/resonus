@@ -53,6 +53,13 @@
    of <upstream>"). **Issues follow the same two rules** — never opened by the agent,
    and always against `<upstream>/<repo>`: hand over the `gh issue create --repo
    <upstream>/<repo> …` line instead of running it.
+ 9. **Withdrawal**: a package the user rejects is deleted everywhere — unlink the worktree's
+    `node_modules` symlink and `git worktree remove`, `git branch -D`, `git push origin
+    --delete <branch>` — and its item goes back to open: a FIXED verdict may only name a
+    branch that still exists, so re-check the branch before trusting a verdict. The finding
+    is not re-reported; what the attempt learned stays in its verdict as a record of the
+    attempt, not as a claim about the code, and a later attempt re-argues constants rather
+    than copying them.
 
 ## MASTER PROMPT (fill placeholders, then split per the fan-out)
 
