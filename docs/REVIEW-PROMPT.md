@@ -45,7 +45,14 @@
    the report are the record of what landed where. **A pull request is never
    opened, edited or merged by the agent** — landing stops at `git push origin
    <branch>`, and the human opens the pull request manually. Hand over the exact
-   `gh pr create` line, never run it.
+   `gh pr create` line, never run it. **And when the user does open one, it is
+   opened against the upstream repo, never against the fork** —
+   `gh pr create --repo <upstream>/<repo> --base main --head '<fork-owner>:<branch>'`:
+   the fork is only the push target, so the branch can be seen, while the review and
+   the merge happen upstream (`CONTRIBUTING.md` "open a Pull Request against `main`
+   of <upstream>"). **Issues follow the same two rules** — never opened by the agent,
+   and always against `<upstream>/<repo>`: hand over the `gh issue create --repo
+   <upstream>/<repo> …` line instead of running it.
 
 ## MASTER PROMPT (fill placeholders, then split per the fan-out)
 
