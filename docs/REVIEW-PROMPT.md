@@ -73,6 +73,13 @@
     answered 404). When no door has the field, the defect is the **affordance**, and the fix hides the
     row (the codebase's idiom: `hidePublic`, capability gates on `serverType`) and omits the field
     from the edit, so an offline-queued patch cannot carry something the server will drop.
+11. **Credit every observation to whoever made it, and keep the kinds of evidence apart** (recorded
+    2026-11-12, when the person verified a landed fix by hand against a real Jellyfin server and on an
+    Android emulator, superseding a verdict that claimed "not tested on a device"). "Not tested"
+    describes the agent's reach, not the app. When a human tests it, the verdict says which part was
+    measured where — the agent's check suite on the branch, the reporter's manual run on the device,
+    the endpoint's own published documentation — and never counts a human's run as the agent's test
+    coverage. Itemise only what the human stated they observed; do not infer the rest.
 
 ## MASTER PROMPT (fill placeholders, then split per the fan-out)
 
