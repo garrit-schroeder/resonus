@@ -31,9 +31,6 @@ export const SCROLL_LEAD_MAX_MS = 500;
 export const RISE_MIN_MS = 250;
 export const RISE_SETTLE_MS = 700;
 
-/** How far a sung word rises, in px (BitChord `WORD_RISE=2.dp`). */
-export const WORD_RISE_PX = 2;
-
 export function clamp01(value: number): number {
   'worklet';
   if (!Number.isFinite(value)) return 0;
