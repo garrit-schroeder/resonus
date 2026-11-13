@@ -65,6 +65,14 @@
     day: the version line came back as the template's example `0.8.5` from `bug_report.yml:11`,
     while `CHANGELOG.md`'s newest release was `0.8.7`), and name the commit a source-level
     finding was read at.
+    **Re-cutting a landed fix branch is allowed only against the current upstream head, and pushing it
+    is a force-push onto a branch an open pull request tracks** (same 2026-11-13: R3 was rebased
+    `--onto db1e1de8` from its stale `c66014b9`, and `--force-with-lease` moved PR #344's head by
+    itself, taking it from `CONFLICTING` to `MERGEABLE`/`CLEAN`). The conflict is resolved by taking
+    the **migrated** side of each hunk and re-deriving the upstream decision inside it — not by keeping
+    upstream's code and not by accepting git's guess; re-measure after with `git diff --stat <upstream>
+    HEAD` (it must answer the same file list as before) and re-run the whole suite on the rebased tree
+    before the push.
  9. **Withdrawal**: a package the user rejects is deleted everywhere — unlink the worktree's
     `node_modules` symlink and `git worktree remove`, `git branch -D`, `git push origin
     --delete <branch>` — and its item goes back to open: a FIXED verdict may only name a
