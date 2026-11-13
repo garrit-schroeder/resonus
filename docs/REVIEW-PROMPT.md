@@ -73,6 +73,14 @@
     upstream's code and not by accepting git's guess; re-measure after with `git diff --stat <upstream>
     HEAD` (it must answer the same file list as before) and re-run the whole suite on the rebased tree
     before the push.
+    **And a branch whose pull request is still open and unmerged keeps taking its follow-ups on that
+    same branch** — refinement of a landed-but-unmerged package is new commits on the branch plus a push,
+    never a second branch for the same feature, since the open pull request tracks the branch and follows
+    its head by itself (recorded 2026-11-13: R3's two recorded frame nits were closed as `f4c1bf74`/`b8b753dd`
+    on the branch, a **plain** push moved PR #344's head from `32b899e5` to `b8b753dd` and its diff from
+    9 to 10 files, and the agent merged nothing). Re-run the suite on the branch and re-measure the
+    pull request after such a push — its file count and head are the record, and a fix that reaches a
+    shared file widens the branch's file list, which the record has to name.
  9. **Withdrawal**: a package the user rejects is deleted everywhere — unlink the worktree's
     `node_modules` symlink and `git worktree remove`, `git branch -D`, `git push origin
     --delete <branch>` — and its item goes back to open: a FIXED verdict may only name a
