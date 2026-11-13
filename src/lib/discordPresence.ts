@@ -38,14 +38,6 @@ export function discordPresenceSupported(): boolean {
   return !!native;
 }
 
-export function discordInstalled(): boolean {
-  try {
-    return !!native?.isInstalled();
-  } catch {
-    return false;
-  }
-}
-
 /** Reachable from Discord's side: not a home network, not a tailnet. */
 function isPublicUrl(url: string): boolean {
   if (isLanUrl(url)) return false;
