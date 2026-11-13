@@ -11,8 +11,6 @@ import { requireOptionalNativeModule } from 'expo-modules-core';
 
 const native = requireOptionalNativeModule('CastMedia');
 
-export const castMediaAvailable = !!native;
-
 export interface CastNowPlaying {
   title?: string;
   artist?: string;
@@ -45,15 +43,6 @@ function payload(info: CastNowPlaying): string {
     positionMs: Math.max(0, Math.round(info.positionMs)),
     isPlaying: info.isPlaying,
   });
-}
-
-/** Starts the session with the current track (idempotent: if already active, updates). */
-export function castStart(info: CastNowPlaying): void {
-  try {
-    native?.start(payload(info));
-  } catch {
-    // ignore
-  }
 }
 
 /** Refreshes metadata + state on track change. */
