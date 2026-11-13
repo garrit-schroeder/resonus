@@ -55,7 +55,16 @@
    the merge happen upstream (`CONTRIBUTING.md` "open a Pull Request against `main`
    of <upstream>"). **Issues follow the same two rules** — never opened by the agent,
    and always against `<upstream>/<repo>`: hand over the `gh issue create --repo
-   <upstream>/<repo> …` line instead of running it.
+   <upstream>/<repo> …` line instead of running it — and when the person does instruct
+    it, the issue opens upstream and the record names whose instruction it was (recorded
+    2026-11-13: B11's decision question became upstream issue #345 on request). Measure
+    what the fork owner can and cannot do upstream — opening worked, but adding a label
+    failed (`AddLabelsToLabelable`: the fork owner lacks the permission), so the repo's
+    own title convention (`[Bug]:` / `[Feature]:`) is the marker that actually lands.
+    Fill an issue template from measurements, never from its `placeholder:` values (same
+    day: the version line came back as the template's example `0.8.5` from `bug_report.yml:11`,
+    while `CHANGELOG.md`'s newest release was `0.8.7`), and name the commit a source-level
+    finding was read at.
  9. **Withdrawal**: a package the user rejects is deleted everywhere — unlink the worktree's
     `node_modules` symlink and `git worktree remove`, `git branch -D`, `git push origin
     --delete <branch>` — and its item goes back to open: a FIXED verdict may only name a
