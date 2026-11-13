@@ -88,6 +88,20 @@
     is not re-reported; what the attempt learned stays in its verdict as a record of the
     attempt, not as a claim about the code, and a later attempt re-argues constants rather
     than copying them.
+    **Pruning is not withdrawal** (recorded 2026-11-13, when the person asked which worktrees,
+    local branches and fork branches could be deleted and then had them deleted): a package whose
+    pull request has **merged** is history, and its branch, worktree and fork ref may go. Decide by
+    measurement, never by memory — `git merge-base --is-ancestor <head> <current main>` answers
+    whether the deletion can lose anything. Worktrees go in the withdrawal order (unlink the `node_modules`
+    symlink, then `git worktree remove`, never `rm -rf`); local branches go with **`git branch -d`**
+    so git itself refuses anything unmerged; fork refs go with `git push origin --delete`. Never prune
+    the branch of a pull request that is open, or of one that is **closed without merging** (`merged_at`
+    null — the content landed nowhere), or a branch that was never opened as a pull request at all, or
+    the branch carrying the report. What pruning does to the record: the FIXED verdicts that named those
+    branch names now name refs that no longer resolve, so they are read from the **merge commit in
+    `main`** (where their anchors were re-measured) — a branch that was *withdrawn* is the other case and
+    says NOT LANDED. Record the pruning in the report: which worktrees, which local branches, which
+    remote heads, the counts before and after, and the list of what stayed and why.
 10. **Endpoint facts come from the upstream server's own documentation, not from behaviour**
     (recorded 2026-11-12, when the person asked to read the official spec before a fix was proposed).
     A request that succeeds while silently omitting a field looks identical to one that did the work
