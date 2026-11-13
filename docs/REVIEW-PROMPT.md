@@ -102,6 +102,16 @@
     `main`** (where their anchors were re-measured) — a branch that was *withdrawn* is the other case and
     says NOT LANDED. Record the pruning in the report: which worktrees, which local branches, which
     remote heads, the counts before and after, and the list of what stayed and why.
+    **Two exceptions to the "closed without merging ⇒ keep" half of that rule, both measured rather than
+    assumed.** A docs branch whose PR was closed unmerged may still go when its file is preserved
+    byte-identically elsewhere (`git rev-parse <head>:<path>` against the branch that carries it) — then
+    the citation is re-pointed at the branch that holds it, so a later round cannot be told to re-report
+    a document it can no longer find. And an unmerged fix branch may go when the issue it fixes was
+    **fixed upstream by a different implementation** (compare what the branch adds against what `main`
+    has: our module absent, upstream's module present; the upstream issue `closed`,
+    `state_reason=completed`): that verdict is **NOT LANDED, do not re-propose**, and the record names the
+    upstream commit and module that actually carries the fix, plus what the attempt had learned —
+    otherwise a later round rediscovers a dead design as if it were still an open problem.
 10. **Endpoint facts come from the upstream server's own documentation, not from behaviour**
     (recorded 2026-11-12, when the person asked to read the official spec before a fix was proposed).
     A request that succeeds while silently omitting a field looks identical to one that did the work
