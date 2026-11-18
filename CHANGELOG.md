@@ -9,15 +9,18 @@ Releases before 0.2.1 are only listed on the
 
 ## [Unreleased]
 
+## [0.8.8] - 2026-11-16
+
 ### Added
 
+- Podcasts: favorited shows check for new episodes once a day, without opening them.
 - Local profile: music added to or removed from the phone shows up when the app opens or comes back, without a rescan.
 - Local profile: an album with no embedded cover uses the `cover.jpg` or `folder.jpg` in its folder.
 - Local profile: an `artist.jpg` in an artist's folder is used as their picture (#337).
 - Local profile: Explore has a Folders section that browses the music folders.
 - Local profile: `.m3u` and `.m3u8` files in the music folders become playlists, and a playlist can be exported as M3U (#335).
 - Local profile: Settings › Local music shows the number of songs and the last scan.
-- Settings: a search box at the top finds a setting by name, scrolls to it and highlights it.
+- Settings: pulling down at the top shows a search box that finds a setting by name, scrolls to it and highlights it.
 - Your library: its chips can be reordered and hidden, in Settings › Navigation.
 - Podcasts: a show's episodes can be sorted newest first, oldest first or A to Z, and play in that order.
 - Explore: albums can be sorted by album artist.
@@ -33,9 +36,17 @@ Releases before 0.2.1 are only listed on the
 - Explore: the Downloads chip is now a Downloaded filter that keeps Playlists, Albums, Artists and Songs to what is on your phone.
 - Player: the playback speed and Preserve pitch are kept when the app is closed.
 - Android: Resonus is declared as a music app, for widgets and launchers that look for one (#309).
+- Local profile: Rescan reads again only the files that changed, so a large library no longer takes minutes (#338).
+- Search boxes look and behave the same on every screen.
 
 ### Fixed
 
+- Player: Previous back to the queue before a radio no longer leaves the radio switched on (#345).
+- Podcasts: a feed that stops answering halfway now fails after 20 seconds instead of loading forever.
+- Genres show as empty offline instead of failing to load.
+- Downloads: pressing download twice on the same playlist or favorites no longer downloads it twice.
+- Jellyfin: editing a playlist no longer offers a description the server cannot save.
+- Downloads: every Remove download says how many songs or episodes it deleted, or that there was nothing to delete.
 - Local profile: playlists and selections no longer offer Export and Delete downloads.
 - Your library: with favorite songs and nothing else, it no longer says there is nothing there.
 - The screen could stop answering taps after letting go of the mini player halfway up.

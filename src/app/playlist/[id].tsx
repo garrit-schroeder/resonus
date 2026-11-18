@@ -121,7 +121,7 @@ export default function PlaylistScreen() {
     }
   }, [autoDownload, data]);
   const cancelDownload = useDownloads((s) => s.cancelDownload);
-  const deleteSongs = useDownloads((s) => s.deleteSongs);
+  const deleteDownloadsOnDisk = useDownloads((s) => s.deleteDownloadsOnDisk);
   const downloadSongs = useDownloads((s) => s.downloadSongs);
   // Stable between progress ticks (only changes with status): prevents the
   // Pressable from losing its touch when its onPress is recreated on every update.
@@ -163,6 +163,21 @@ export default function PlaylistScreen() {
     // "Recently added" puts the latest at the top.
     defaultSort: { field: 'recent', dir: 'asc' },
   });
+
+  /**
+   * Can this server store a playlist description? Jellyfin cannot, and the
+   * official API spec says so rather than leaving it to be discovered: the
+   * documented `UpdatePlaylistDto` body is `Ids, IsPublic, Name, Users`,
+   * `CreatePlaylistDto` is `Ids, IsPublic, MediaType, Name, UserId, Users`, and
+   * the playlist object itself (`PlaylistDto`) is `ItemIds, OpenAccess, Shares` —
+   * there is no description to write anywhere. So the row is not offered
+   * (`PlaylistEditSheet`'s `hideComment`): typed text would be dropped by the
+   * server while the screen promised "Playlist updated". Reading one a server
+   * does carry is unaffected (`toPlaylist` maps the item's `Overview` into
+   * `comment`), and Subsonic (`comment`) plus the local profile (its own list)
+   * keep the row.
+   */
+  const canDescribePlaylist = auth?.serverType !== 'jellyfin';
 
   async function onSaveEdit(changes: PlaylistEdit) {
     setEditing(false);
@@ -655,6 +670,7 @@ export default function PlaylistScreen() {
         }}
         coverUri={coverArtUrl(data.playlist.coverArt ?? data.playlist.id, COVER.card)}
         hidePublic={offline}
+        hideComment={!canDescribePlaylist}
         coverUploadId={!offline && auth?.serverType === 'navidrome' ? id : undefined}
         localCoverId={offline ? id : undefined}
         onCancel={() => setEditing(false)}
@@ -670,10 +686,7 @@ export default function PlaylistScreen() {
         onCancel={() => setConfirmDeleteDl(false)}
         onConfirm={() => {
           setConfirmDeleteDl(false);
-          const files = useDownloads.getState().files;
-          const ids = songIds.filter((sid) => !!files[sid]);
-          void deleteSongs(ids);
-          toast(t('{n} songs deleted', { n: ids.length }));
+          void deleteDownloadsOnDisk(songIds);
         }}
       />
 
@@ -716,7 +729,7 @@ export default function PlaylistScreen() {
         onCancel={() => setConfirmRemoveDl(false)}
         onConfirm={() => {
           setConfirmRemoveDl(false);
-          void deleteSongs(songIds);
+          void deleteDownloadsOnDisk(songIds);
         }}
       />
 
