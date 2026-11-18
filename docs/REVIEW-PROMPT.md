@@ -25,12 +25,24 @@
    changes `⚠ BEHAVIOR`; keep a **Do-not-delete guard list** for apparent-dead
    items that have dynamic consumers (string-keyed maps, glyph names, i18n keys,
    expo-router route files).
-5. **Cross-check against the previous report** (`git show review-<prev>:docs/REVIEW-<prev>.md`):
-   verdict every still-open old finding as STILL OPEN (new anchors) / FIXED (cite
-   the commit via `git log -S <symbol>`) / SUPERSEDED, so work never gets re-proposed.
-6. **Land the report on its own branch**: `git branch review-<YYYY-MM-DD>` at
-   current main, write `docs/REVIEW-<YYYY-MM-DD>.md` (+ this protocol file),
-   commit only docs, so `git diff main...review-<date>` is just the documents.
+5. **Cross-check against the previous report** (`git show code-reviews:docs/REVIEW-<prev>.md`
+   — since 2026-11-18 every report lives on that one branch): verdict every still-open old
+   finding as STILL OPEN (new anchors) / FIXED (cite the commit via `git log -S <symbol>`) /
+   SUPERSEDED, so work never gets re-proposed.
+6. **The report goes on the branch that carries the reports — `code-reviews` — not on a
+   branch of its own** (changed 2026-11-18 on request: "the old branch `review-2026-11-17`
+   should not exist locally or on the fork any more, only `code-reviews`"). Write
+   `docs/REVIEW-<YYYY-MM-DD>.md` in the `code-reviews` worktree and commit documents only;
+   the document names the baseline its anchors hold on, since that branch's `src/` stays the
+   pre-fix tree. The earlier rounds cut a `review-<date>` branch off current main and later
+   had to carry the file across — and a **branch merge cannot do that carry**: `git merge-base
+   code-reviews review-2026-11-17` answers **`c66014b9`**, so merging would have put the 49
+   commits `main` gained after `c66014b9` (23 of them after the previous round's base
+   `2b5881e2`) onto a documents-only branch, code and all. The carry that works copies the
+   one file — `git show <branch>:docs/REVIEW-<date>.md > docs/REVIEW-<date>.md` — and proves
+   it with the blob: `git hash-object docs/…` against `git rev-parse <branch>:docs/…`, both
+   `bcbea62ce25c7bdb078afa36c51af3f1dcfbe4fe` for the 788-line 2026-11-17 report. After such a
+   carry the round's own branch goes: worktree, then `git branch -D`, then `git push origin --delete`.
 7. **Carry-over notes**: if the report is later merged after main moved on,
    add an "Update after the tree moved on" section at the top — line anchors
    re-drift; the symbol names stay trustworthy, re-measure baselines.
@@ -106,7 +118,19 @@
     assumed.** A docs branch whose PR was closed unmerged may still go when its file is preserved
     byte-identically elsewhere (`git rev-parse <head>:<path>` against the branch that carries it) — then
     the citation is re-pointed at the branch that holds it, so a later round cannot be told to re-report
-    a document it can no longer find. And an unmerged fix branch may go when the issue it fixes was
+    a document it can no longer find. **2026-11-18 is this exception, not the ancestor rule**: asked
+    to delete `review-2026-11-17` locally and on the fork, `git merge-base --is-ancestor 1cad8e36
+    abcdd8d2` answers **no** — so the rule by itself would refuse the deletion — but the branch's
+    only unique content is `docs/REVIEW-2026-11-17.md`, whose blob `bcbea62ce25c7bdb078afa36c51af3f1dcfbe4fe`
+    is byte-identical on `code-reviews` (`git diff review-2026-11-17 code-reviews -- docs/REVIEW-2026-11-17.md`
+    answers empty), so the deletion could lose nothing and went in withdrawal order. It needed **no
+    worktree removal**: the repo registers three (`git worktree list --porcelain` → `projects/resonus`,
+    `neon-canyon`, `proud-engine`), and the directory that held it, `…/worktree/f6e584/lively-canyon`,
+    was already gone. What went: one local branch (`git branch -D` — its head is unmerged, so a plain
+    `-d` had nothing merged to accept) and one fork ref (`git push origin --delete`). Counts before →
+    after: local branches **9 → 8**, fork heads **12 → 11**, worktrees **3 → 3**. Every citation of
+    that branch name in the reports is re-pointed at `code-reviews`, which holds the file.
+    And an unmerged fix branch may go when the issue it fixes was
     **fixed upstream by a different implementation** (compare what the branch adds against what `main`
     has: our module absent, upstream's module present; the upstream issue `closed`,
     `state_reason=completed`): that verdict is **NOT LANDED, do not re-propose**, and the record names the
@@ -143,8 +167,12 @@
     A fix branch cut off the **old** head is stale — when it touches files upstream also touched,
     its pull request reads `CONFLICTING`/`DIRTY`, and re-cutting it off the new head re-opens a
     landing that was already recorded, so measure the overlap file by file first and let the
-    re-cut itself wait for an explicit instruction. The report's own branch never moves: it stays
-    the baseline commit plus documents.
+    re-cut itself wait for an explicit instruction. The branch that carries the reports moves
+    only by documents: each round adds its own `docs/REVIEW-<date>.md` to `code-reviews` and
+    commits nothing else, so that branch's `src/` stays the pre-fix tree (measured: `git diff
+    --name-only c66014b9 code-reviews -- src` → **0** files) and every section keeps naming the
+    baseline its anchors hold on — a claim from an older section is read on the commit that section
+    shows, not on the branch head.
 
 ## MASTER PROMPT (fill placeholders, then split per the fan-out)
 
@@ -172,10 +200,12 @@ TASK — report exactly these four concerns, fresh against THIS tree:
    god components (count props) and god files (propose concrete extractions),
    same-named helpers defined in ≥2 files, hand-unrolled chains replaceable by
    a loop/table. Quantify each: "~X lines would disappear".
-4. CONTINUITY — previous report at <branch>:<docs/REVIEW-<prev>.md>: give every
-   still-open finding a verdict on THIS tree: STILL OPEN (re-anchored) / FIXED
-   (git log -S proof) / SUPERSEDED. List commits since the old baseline that
-   already shipped fixes so nobody re-proposes them.
+4. CONTINUITY — previous report at code-reviews:docs/REVIEW-<prev>.md — since
+   2026-11-18 the branch that carries the reports is always `code-reviews`, never
+   a `review-<date>` branch of its own: give every still-open finding a verdict on
+   THIS tree: STILL OPEN (re-anchored) / FIXED (git log -S proof) / SUPERSEDED.
+   List commits since the old baseline that already shipped fixes so nobody
+   re-proposes them.
 
 HARD RULES
 - Exact anchor `file:LINE` in the CURRENT tree for every finding.
