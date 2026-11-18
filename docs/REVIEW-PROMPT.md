@@ -33,16 +33,23 @@
    branch of its own** (changed 2026-11-18 on request: "the old branch `review-2026-11-17`
    should not exist locally or on the fork any more, only `code-reviews`"). Write
    `docs/REVIEW-<YYYY-MM-DD>.md` in the `code-reviews` worktree and commit documents only;
-   the document names the baseline its anchors hold on, since that branch's `src/` stays the
-   pre-fix tree. The earlier rounds cut a `review-<date>` branch off current main and later
-   had to carry the file across — and a **branch merge cannot do that carry**: `git merge-base
-   code-reviews review-2026-11-17` answers **`c66014b9`**, so merging would have put the 49
-   commits `main` gained after `c66014b9` (23 of them after the previous round's base
-   `2b5881e2`) onto a documents-only branch, code and all. The carry that works copies the
-   one file — `git show <branch>:docs/REVIEW-<date>.md > docs/REVIEW-<date>.md` — and proves
-   it with the blob: `git hash-object docs/…` against `git rev-parse <branch>:docs/…`, both
-   `bcbea62ce25c7bdb078afa36c51af3f1dcfbe4fe` for the 788-line 2026-11-17 report. After such a
-   carry the round's own branch goes: worktree, then `git branch -D`, then `git push origin --delete`.
+   the document names the baseline its anchors hold on. The earlier rounds cut a `review-<date>`
+   branch off current main and later had to carry the file across — and a **branch merge cannot
+   do that carry**: `git merge-base code-reviews review-2026-11-17` answers **`c66014b9`**, so
+   merging such a round branch in would have put the 49 commits `main` gained after `c66014b9`
+   (23 of them after the previous round's base `2b5881e2`) onto a documents-only branch, code
+   and all. The carry that works copies the one file — `git show <branch>:docs/REVIEW-<date>.md
+   > docs/REVIEW-<date>.md` — and proves it with the blob: `git hash-object docs/…` against
+   `git rev-parse <branch>:docs/…`, both `bcbea62ce25c7bdb078afa36c51af3f1dcfbe4fe` for the 788-line
+   2026-11-17 report. After such a carry the round's own branch goes: worktree, then `git branch -D`,
+   then `git push origin --delete`. The other direction is the one that is allowed and was asked for
+   on 2026-11-18: **merge `main`/`upstream/main` into the report branch**, which brings `main`'s own
+   commits under it and leaves `git diff main...code-reviews` documents-only, so the reports sit on
+   the current tree and their anchors hold at the branch head. Merging `upstream/main` (`abcdd8d2`)
+   into `code-reviews` landed **`22f2df9d`** (parents `50ed6855` × `abcdd8d2`, merge base `c66014b9`,
+   51 files / 2 363 insertions / 2 256 deletions over the old head, and `git diff --name-only code-reviews
+   upstream/main -- src` → **0**): no landing got re-opened, because the 49 commits came in as `main`'s
+   own, and `npm test` in that worktree still read **260 pass / 0 fail over 67 suites** — the bar holds.
 7. **Carry-over notes**: if the report is later merged after main moved on,
    add an "Update after the tree moved on" section at the top — line anchors
    re-drift; the symbol names stay trustworthy, re-measure baselines.
@@ -53,8 +60,12 @@
    its own worktree, and one branch carries one feature or one bug fix only.
    Related changes do not share a branch; grouping belongs in prose. Nothing
    merges anything: the fix branch is never merged into the branch that carries
-   the report, so the report's `src/` stays the pre-fix tree and the verdicts in
-   the report are the record of what landed where. **A pull request is never
+   the report, so no work package of the agent's ever lands on the report's own
+   branch and the verdicts in the report stay the record of what landed where.
+   (What that branch may take is `main`'s own tree by a merge — the 2026-11-18
+   merge of `upstream/main` into `code-reviews`, `22f2df9d`, brought 49 commits
+   that were already `main`'s and no fix of the agent's, which is why it did not
+   re-open a single landing.) **A pull request is never
    opened, edited or merged by the agent** — landing stops at `git push origin
    <branch>`, and the human opens the pull request manually. Hand over the exact
    `gh pr create` line, never run it — unless the user instructs it in the
@@ -167,12 +178,17 @@
     A fix branch cut off the **old** head is stale — when it touches files upstream also touched,
     its pull request reads `CONFLICTING`/`DIRTY`, and re-cutting it off the new head re-opens a
     landing that was already recorded, so measure the overlap file by file first and let the
-    re-cut itself wait for an explicit instruction. The branch that carries the reports moves
-    only by documents: each round adds its own `docs/REVIEW-<date>.md` to `code-reviews` and
-    commits nothing else, so that branch's `src/` stays the pre-fix tree (measured: `git diff
-    --name-only c66014b9 code-reviews -- src` → **0** files) and every section keeps naming the
-    baseline its anchors hold on — a claim from an older section is read on the commit that section
-    shows, not on the branch head.
+    re-cut itself wait for an explicit instruction. The branch that carries the reports grows
+    only by documents **and by merges of `main` itself**: each round adds its own `docs/REVIEW-<date>.md`
+    to `code-reviews` and commits nothing else, and when `upstream/main` was merged into that branch
+    on 2026-11-18 (**`22f2df9d`**) the only thing it took in was `main`'s own 49 commits — never a
+    fix of the agent's that is not already on `main`. Measured after that merge: `git diff --name-only
+    code-reviews upstream/main` answers **4** files, the four report documents, and `git diff --name-only
+    code-reviews upstream/main -- src` answers **0** — so the branch's `src/` is `main`'s tree and
+    `git diff main...code-reviews` is documents only. That supersedes the earlier claim that the branch's
+    `src/` stayed the pre-fix tree (`git diff --name-only c66014b9 code-reviews -- src` → 0 files, true
+    only until that merge); either way every section still names the baseline its anchors hold on, and
+    a claim from an older section is read on the commit that section shows.
 
 ## MASTER PROMPT (fill placeholders, then split per the fan-out)
 
